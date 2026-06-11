@@ -70,6 +70,10 @@ export class MemStorage implements IStorage {
       subBoxStyle: data.subBoxStyle || "card",
       subBoxPosition: data.subBoxPosition || "top-right",
       subBoxShowViewers: data.subBoxShowViewers ?? false,
+      chatEnabled: data.chatEnabled ?? false,
+      chatPosition: data.chatPosition || "bottom-right",
+      chatStyle: data.chatStyle || "list",
+      chatMaxMessages: data.chatMaxMessages ?? 5,
     };
     this.streams.set(id, stream);
     return stream;

@@ -10,6 +10,7 @@ import {
   getHeadlineTextFilePath, getTickerTextFilePath,
   getLtNameTextFilePath, getLtTitleTextFilePath,
   getMessageTextFilePath, getSubBoxTextFilePath,
+  getChatTextFilePath,
   startLiveCountPolling,
 } from "./youtube-counter";
 import type { WebSocket } from "ws";
@@ -300,45 +301,142 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
 
   if ((stream as any).subBoxEnabled && stream.youtubeChannelId) {
     const subStyle = (stream as any).subBoxStyle || "card";
-    const subFontSize = Math.max(10, Math.round(scaleH * 0.038));
-    const labelSize = Math.max(7, Math.round(subFontSize * 0.58));
-    const subPad = Math.round(subFontSize * 0.45);
-    const subW = Math.round(scaleW * 0.30);
-    const subH = labelSize + subFontSize + subPad * 2 + 8;
     const margin = Math.round(scaleW * 0.025);
     const sPos = (stream as any).subBoxPosition || "top-right";
-    let subX = scaleW - subW - margin;
-    let subY = margin;
-    switch (sPos) {
-      case "top-left": subX = margin; break;
-      case "top-right": break;
-      case "center-left": subX = margin; subY = Math.round((scaleH - subH) / 2); break;
-      case "center-right": subY = Math.round((scaleH - subH) / 2); break;
-      case "bottom-left": subX = margin; subY = scaleH - subH - margin; break;
-      case "bottom-right": subY = scaleH - subH - margin; break;
-    }
-    switch (subStyle) {
-      case "minimal":
-        parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x000000@0.62:t=fill`);
-        break;
-      case "card":
-        parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0d1629@0.92:t=fill`);
-        parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=3:color=0xff0000@1:t=fill`);
-        break;
-      case "broadcast":
-        parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0a0a1a@0.94:t=fill`);
-        parts.push(`drawbox=x=${subX}:y=${subY + subH - 3}:w=${subW}:h=3:color=0xDAA520@1:t=fill`);
-        break;
-    }
-    const labelColor = subStyle === "minimal" ? "0x999999" : "0x8899AA";
-    const showViewers = !!(stream as any).subBoxShowViewers;
-    const countLabel = showViewers ? "SUBS / VIEWERS" : "SUBSCRIBERS";
-    parts.push(`drawtext=fontfile='${fontEsc}':text='${countLabel}':fontcolor=${labelColor}:fontsize=${labelSize}:x=${subX + subPad}:y=${subY + subPad}`);
-    if (useTextfile) {
-      const subPath = escapeTextfilePath(getSubBoxTextFilePath(stream.id));
-      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${subPath}':reload=1:fontcolor=white:fontsize=${subFontSize}:x=${subX + subPad}:y=${subY + subPad + labelSize + 4}`);
+
+    if (subStyle === "recent-activity") {
+      // Live chat messages list
+      const chatMaxMsgs = Math.min((stream as any).chatMaxMessages || 5, 5);
+      const msgFont = Math.max(8, Math.round(scaleH * 0.026));
+      const lineH = msgFont + 7;
+      const headerH = Math.round(lineH * 1.4);
+      const chatW = Math.round(scaleW * 0.34);
+      const chatH = headerH + lineH * chatMaxMsgs + 6;
+      let chatX = scaleW - chatW - margin;
+      let chatY = margin;
+      switch (sPos) {
+        case "top-left": chatX = margin; break;
+        case "top-right": break;
+        case "center-left": chatX = margin; chatY = Math.round((scaleH - chatH) / 2); break;
+        case "center-right": chatY = Math.round((scaleH - chatH) / 2); break;
+        case "bottom-left": chatX = margin; chatY = scaleH - chatH - margin; break;
+        case "bottom-right": chatY = scaleH - chatH - margin; break;
+      }
+      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${chatH}:color=0x0d1629@0.93:t=fill`);
+      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${headerH}:color=0x38bdf81A@1:t=fill`);
+      parts.push(`drawbox=x=${chatX}:y=${chatY + headerH - 1}:w=${chatW}:h=1:color=0x38bdf840@1:t=fill`);
+      const hFont = Math.max(7, Math.round(msgFont * 0.82));
+      parts.push(`drawtext=fontfile='${fontEsc}':text='⚡ LIVE CHAT':fontcolor=0x38bdf8:fontsize=${hFont}:x=${chatX + 8}:y=${chatY + Math.round((headerH - hFont) / 2)}`);
+      if (useTextfile) {
+        for (let i = 0; i < chatMaxMsgs; i++) {
+          const chatPath = escapeTextfilePath(getChatTextFilePath(stream.id, i));
+          const msgY = chatY + headerH + i * lineH + 4;
+          parts.push(`drawtext=fontfile='${fontEsc}':textfile='${chatPath}':reload=1:fontcolor=0xCCCCCC:fontsize=${msgFont}:x=${chatX + 8}:y=${msgY}`);
+        }
+      }
     } else {
-      parts.push(`drawtext=fontfile='${fontEsc}':text='—':fontcolor=white:fontsize=${subFontSize}:x=${subX + subPad}:y=${subY + subPad + labelSize + 4}`);
+      // Subscriber count styles
+      const subFontSize = Math.max(10, Math.round(scaleH * 0.038));
+      const labelSize = Math.max(7, Math.round(subFontSize * 0.58));
+      const subPad = Math.round(subFontSize * 0.45);
+      const subW = Math.round(scaleW * 0.30);
+      const subH = labelSize + subFontSize + subPad * 2 + 8;
+      let subX = scaleW - subW - margin;
+      let subY = margin;
+      switch (sPos) {
+        case "top-left": subX = margin; break;
+        case "top-right": break;
+        case "center-left": subX = margin; subY = Math.round((scaleH - subH) / 2); break;
+        case "center-right": subY = Math.round((scaleH - subH) / 2); break;
+        case "bottom-left": subX = margin; subY = scaleH - subH - margin; break;
+        case "bottom-right": subY = scaleH - subH - margin; break;
+      }
+
+      switch (subStyle) {
+        case "minimal":
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x000000@0.62:t=fill`);
+          break;
+        case "card":
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0d1629@0.92:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=3:color=0xff0000@1:t=fill`);
+          break;
+        case "broadcast":
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0a0a1a@0.94:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY + subH - 3}:w=${subW}:h=3:color=0xDAA520@1:t=fill`);
+          break;
+        case "flip-counter": {
+          // Split-flap / departure board aesthetic
+          const counterH = subFontSize + Math.round(subFontSize * 0.55);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x1c1c1c@0.97:t=fill`);
+          parts.push(`drawbox=x=${subX + 2}:y=${subY + subPad}:w=${subW - 4}:h=${counterH}:color=0x141414@1:t=fill`);
+          parts.push(`drawbox=x=${subX + 2}:y=${subY + subPad + Math.round(counterH / 2) - 1}:w=${subW - 4}:h=2:color=0x2e2e2e@1:t=fill`);
+          break;
+        }
+        case "whatsapp":
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x25D366@0.96:t=fill`);
+          parts.push(`drawbox=x=${subX + Math.round(subW * 0.72)}:y=${subY + subH}:w=${Math.round(subW * 0.1)}:h=${Math.round(subFontSize * 0.4)}:color=0x25D366@0.96:t=fill`);
+          break;
+      }
+
+      const labelColor = subStyle === "minimal" ? "0x888888"
+        : subStyle === "whatsapp" ? "0xDCF8C6"
+        : subStyle === "flip-counter" ? "0x505050"
+        : "0x8899AA";
+      const countColor = subStyle === "flip-counter" ? "0xFFE000"
+        : subStyle === "whatsapp" ? "white"
+        : "white";
+      const showViewers = !!(stream as any).subBoxShowViewers;
+      const countLabel = showViewers ? "SUBS / VIEWERS" : "SUBSCRIBERS";
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${countLabel}':fontcolor=${labelColor}:fontsize=${labelSize}:x=${subX + subPad}:y=${subY + subPad}`);
+      if (useTextfile) {
+        const subPath = escapeTextfilePath(getSubBoxTextFilePath(stream.id));
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${subPath}':reload=1:fontcolor=${countColor}:fontsize=${subFontSize}:x=${subX + subPad}:y=${subY + subPad + labelSize + 4}`);
+      } else {
+        parts.push(`drawtext=fontfile='${fontEsc}':text='—':fontcolor=${countColor}:fontsize=${subFontSize}:x=${subX + subPad}:y=${subY + subPad + labelSize + 4}`);
+      }
+    }
+  }
+
+  // ── Live Chat Overlay ──────────────────────────────────────────────────────
+  if ((stream as any).chatEnabled && stream.youtubeChannelId) {
+    const chatStyle = (stream as any).chatStyle || "list";
+    const chatMaxMsgs = Math.min((stream as any).chatMaxMessages || 5, 10);
+    const msgFont = Math.max(8, Math.round(scaleH * 0.026));
+    const lineH = msgFont + 7;
+    const headerH = Math.round(lineH * 1.4);
+    const chatW = Math.round(scaleW * 0.34);
+    const chatH = headerH + lineH * chatMaxMsgs + 6;
+    const margin2 = Math.round(scaleW * 0.02);
+    const cPos = (stream as any).chatPosition || "bottom-right";
+    let chatX = scaleW - chatW - margin2;
+    let chatY = scaleH - chatH - effectiveTickerH - margin2;
+    switch (cPos) {
+      case "top-left": chatX = margin2; chatY = margin2; break;
+      case "top-right": chatX = scaleW - chatW - margin2; chatY = margin2; break;
+      case "bottom-left": chatX = margin2; break;
+      case "bottom-right": break;
+    }
+
+    if (chatStyle === "bubble") {
+      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${chatH}:color=0x0a2018@0.94:t=fill`);
+      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=3:color=0x25D366@1:t=fill`);
+      const hFont = Math.max(7, Math.round(msgFont * 0.82));
+      parts.push(`drawtext=fontfile='${fontEsc}':text='LIVE CHAT':fontcolor=0x25D366:fontsize=${hFont}:x=${chatX + 8}:y=${chatY + Math.round((headerH - hFont) / 2)}`);
+    } else {
+      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${chatH}:color=0x0d1629@0.90:t=fill`);
+      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${headerH}:color=0x38bdf81A@1:t=fill`);
+      parts.push(`drawbox=x=${chatX}:y=${chatY + headerH - 1}:w=${chatW}:h=1:color=0x38bdf840@1:t=fill`);
+      const hFont = Math.max(7, Math.round(msgFont * 0.82));
+      parts.push(`drawtext=fontfile='${fontEsc}':text='⚡ LIVE CHAT':fontcolor=0x38bdf8:fontsize=${hFont}:x=${chatX + 8}:y=${chatY + Math.round((headerH - hFont) / 2)}`);
+    }
+
+    if (useTextfile) {
+      const fcolor = chatStyle === "bubble" ? "0xDCF8C6" : "0xCCCCCC";
+      for (let i = 0; i < chatMaxMsgs; i++) {
+        const chatPath = escapeTextfilePath(getChatTextFilePath(stream.id, i));
+        const msgY = chatY + headerH + i * lineH + 4;
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${chatPath}':reload=1:fontcolor=${fcolor}:fontsize=${msgFont}:x=${chatX + 8}:y=${msgY}`);
+      }
     }
   }
 
@@ -467,7 +565,8 @@ function buildFFmpegArgs(
     ((stream as any).overlaySocialEnabled && (stream as any).overlaySocialHandle) ||
     ((stream as any).lowerThirdStyle && (stream as any).lowerThirdStyle !== "none") ||
     ((stream as any).messageEnabled && (stream as any).messageText) ||
-    ((stream as any).subBoxEnabled && stream.youtubeChannelId)
+    ((stream as any).subBoxEnabled && stream.youtubeChannelId) ||
+    ((stream as any).chatEnabled && stream.youtubeChannelId)
   );
   const useTextfile = stream.overlayEnabled && true;
 
@@ -634,7 +733,7 @@ export async function startStream(streamId: string) {
   }
   sendStatus(streamId, "reconnecting");
 
-  if (((stream.overlayLiveCount || (stream as any).subBoxEnabled)) && stream.youtubeChannelId) {
+  if ((stream.overlayLiveCount || (stream as any).subBoxEnabled || (stream as any).chatEnabled || (stream as any).subBoxStyle === "recent-activity") && stream.youtubeChannelId) {
     startLiveCountPolling();
   }
 

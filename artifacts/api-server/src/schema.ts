@@ -32,9 +32,13 @@ export const overlayConfigSchema = z.object({
   messageStyle: z.enum(["news-classic", "breaking-alert", "minimal-clean", "cinema", "social-card", "broadcast-official"]).default("news-classic"),
   messagePosition: z.enum(["top-left", "top-right", "center", "bottom-left", "bottom-right", "bottom-center"]).default("center"),
   subBoxEnabled: z.boolean().default(false),
-  subBoxStyle: z.enum(["minimal", "card", "broadcast"]).default("card"),
+  subBoxStyle: z.enum(["minimal", "card", "broadcast", "flip-counter", "whatsapp", "recent-activity"]).default("card"),
   subBoxPosition: z.enum(["top-left", "top-right", "center-left", "center-right", "bottom-left", "bottom-right"]).default("top-right"),
   subBoxShowViewers: z.boolean().default(false),
+  chatEnabled: z.boolean().default(false),
+  chatPosition: z.enum(["top-left", "top-right", "bottom-left", "bottom-right"]).default("bottom-right"),
+  chatStyle: z.enum(["bubble", "list"]).default("list"),
+  chatMaxMessages: z.number().default(5),
 });
 
 export type OverlayConfig = z.infer<typeof overlayConfigSchema>;

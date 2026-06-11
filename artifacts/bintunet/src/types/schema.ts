@@ -30,9 +30,13 @@ export type OverlayConfig = {
   messageStyle: "news-classic" | "breaking-alert" | "minimal-clean" | "cinema" | "social-card" | "broadcast-official";
   messagePosition: "top-left" | "top-right" | "center" | "bottom-left" | "bottom-right" | "bottom-center";
   subBoxEnabled: boolean;
-  subBoxStyle: "minimal" | "card" | "broadcast";
+  subBoxStyle: "minimal" | "card" | "broadcast" | "flip-counter" | "whatsapp" | "recent-activity";
   subBoxPosition: "top-left" | "top-right" | "center-left" | "center-right" | "bottom-left" | "bottom-right";
   subBoxShowViewers: boolean;
+  chatEnabled: boolean;
+  chatPosition: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  chatStyle: "bubble" | "list";
+  chatMaxMessages: number;
 };
 
 export type StreamConfig = OverlayConfig & {
