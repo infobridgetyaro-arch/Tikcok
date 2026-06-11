@@ -5,7 +5,7 @@ import { storage } from "./storage";
 const tmpDir = path.join(process.cwd(), "tmp_overlay");
 if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
 
-const liveCountCache = new Map<string, { count: string; lastFetch: number }>();
+const liveCountCache = new Map<string, { subs: string; viewers: string; lastFetch: number }>();
 let pollingInterval: NodeJS.Timeout | null = null;
 
 function formatCount(num: number): string {
@@ -14,23 +14,43 @@ function formatCount(num: number): string {
   return String(num);
 }
 
-async function fetchYouTubeSubscriberCount(channelId: string): Promise<string | null> {
+async function fetchYouTubeStats(channelId: string): Promise<{ subs: string | null; viewers: string | null }> {
   const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) return null;
+  if (!apiKey) return { subs: null, viewers: null };
 
   try {
-    const res = await fetch(
+    const chanRes = await fetch(
       `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${encodeURIComponent(channelId)}&key=${apiKey}`
     );
-    if (!res.ok) return null;
-    const data = await res.json();
-    const subCount = data.items?.[0]?.statistics?.subscriberCount;
-    if (subCount !== undefined) {
-      return formatCount(parseInt(subCount, 10));
+    let subs: string | null = null;
+    if (chanRes.ok) {
+      const data = await chanRes.json() as any;
+      const subCount = data.items?.[0]?.statistics?.subscriberCount;
+      if (subCount !== undefined) subs = formatCount(parseInt(subCount, 10));
     }
-    return null;
+
+    let viewers: string | null = null;
+    const searchRes = await fetch(
+      `https://www.googleapis.com/youtube/v3/search?part=id&channelId=${encodeURIComponent(channelId)}&eventType=live&type=video&key=${apiKey}`
+    );
+    if (searchRes.ok) {
+      const searchData = await searchRes.json() as any;
+      const videoId = searchData.items?.[0]?.id?.videoId;
+      if (videoId) {
+        const vidRes = await fetch(
+          `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(videoId)}&key=${apiKey}`
+        );
+        if (vidRes.ok) {
+          const vidData = await vidRes.json() as any;
+          const concurrent = vidData.items?.[0]?.liveStreamingDetails?.concurrentViewers;
+          if (concurrent !== undefined) viewers = formatCount(parseInt(concurrent, 10));
+        }
+      }
+    }
+
+    return { subs, viewers };
   } catch {
-    return null;
+    return { subs: null, viewers: null };
   }
 }
 
@@ -42,32 +62,70 @@ export function getTickerTextFilePath(streamId: string): string {
   return path.join(tmpDir, `ticker_${streamId}.txt`);
 }
 
+export function getLtNameTextFilePath(streamId: string): string {
+  return path.join(tmpDir, `ltname_${streamId}.txt`);
+}
+
+export function getLtTitleTextFilePath(streamId: string): string {
+  return path.join(tmpDir, `lttitle_${streamId}.txt`);
+}
+
+export function getMessageTextFilePath(streamId: string): string {
+  return path.join(tmpDir, `message_${streamId}.txt`);
+}
+
+export function getSubBoxTextFilePath(streamId: string): string {
+  return path.join(tmpDir, `subbox_${streamId}.txt`);
+}
+
+export function getViewerBoxTextFilePath(streamId: string): string {
+  return path.join(tmpDir, `viewerbox_${streamId}.txt`);
+}
+
 export function cleanupOverlayFiles(streamId: string) {
-  const headlinePath = getHeadlineTextFilePath(streamId);
-  const tickerPath = getTickerTextFilePath(streamId);
-  try { if (fs.existsSync(headlinePath)) fs.unlinkSync(headlinePath); } catch {}
-  try { if (fs.existsSync(tickerPath)) fs.unlinkSync(tickerPath); } catch {}
+  const paths = [
+    getHeadlineTextFilePath(streamId),
+    getTickerTextFilePath(streamId),
+    getLtNameTextFilePath(streamId),
+    getLtTitleTextFilePath(streamId),
+    getMessageTextFilePath(streamId),
+    getSubBoxTextFilePath(streamId),
+    getViewerBoxTextFilePath(streamId),
+  ];
+  paths.forEach((p) => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch {} });
 }
 
 export function writeOverlayTextFiles(streamId: string) {
   const stream = storage.getStream(streamId);
   if (!stream) return;
 
-  const headlinePath = getHeadlineTextFilePath(streamId);
-  const tickerPath = getTickerTextFilePath(streamId);
-
-  let headline = stream.overlayHeadline || "";
   const cached = liveCountCache.get(streamId);
-  if (stream.overlayLiveCount && cached?.count) {
-    headline = `${cached.count} Subscribers`;
+
+  let headline = (stream as any).overlayHeadline || "";
+  if (stream.overlayLiveCount && cached?.subs) {
+    headline = `${cached.subs} Subscribers`;
   }
-  fs.writeFileSync(headlinePath, headline, "utf-8");
-  fs.writeFileSync(tickerPath, stream.overlayTickerText || "", "utf-8");
+  safeWrite(getHeadlineTextFilePath(streamId), headline);
+  safeWrite(getTickerTextFilePath(streamId), (stream as any).overlayTickerText || "");
+  safeWrite(getLtNameTextFilePath(streamId), (stream as any).lowerThirdName || "");
+  safeWrite(getLtTitleTextFilePath(streamId), (stream as any).lowerThirdTitle || "");
+  safeWrite(getMessageTextFilePath(streamId), (stream as any).messageText || "");
+
+  const subDisplay = cached?.subs
+    ? ((stream as any).subBoxShowViewers && cached.viewers
+        ? `${cached.subs} SUBS  |  ${cached.viewers} WATCHING`
+        : `${cached.subs} SUBSCRIBERS`)
+    : "— SUBSCRIBERS";
+  safeWrite(getSubBoxTextFilePath(streamId), subDisplay);
+  safeWrite(getViewerBoxTextFilePath(streamId), cached?.viewers || "—");
+}
+
+function safeWrite(filePath: string, content: string) {
+  try { fs.writeFileSync(filePath, content, "utf-8"); } catch {}
 }
 
 export function cleanupTextFiles(streamId: string) {
-  try { fs.unlinkSync(getHeadlineTextFilePath(streamId)); } catch {}
-  try { fs.unlinkSync(getTickerTextFilePath(streamId)); } catch {}
+  cleanupOverlayFiles(streamId);
 }
 
 async function pollLiveCounts() {
@@ -76,16 +134,20 @@ async function pollLiveCounts() {
     if (
       stream.status === "streaming" &&
       stream.overlayEnabled &&
-      stream.overlayLiveCount &&
-      stream.youtubeChannelId
+      stream.youtubeChannelId &&
+      (stream.overlayLiveCount || (stream as any).subBoxEnabled)
     ) {
       const cached = liveCountCache.get(stream.id);
       const now = Date.now();
       if (cached && now - cached.lastFetch < 25000) continue;
 
-      const count = await fetchYouTubeSubscriberCount(stream.youtubeChannelId);
-      if (count) {
-        liveCountCache.set(stream.id, { count, lastFetch: now });
+      const { subs, viewers } = await fetchYouTubeStats(stream.youtubeChannelId);
+      if (subs || viewers) {
+        liveCountCache.set(stream.id, {
+          subs: subs || cached?.subs || "—",
+          viewers: viewers || cached?.viewers || "—",
+          lastFetch: now,
+        });
         writeOverlayTextFiles(stream.id);
       }
     }
@@ -106,5 +168,9 @@ export function stopLiveCountPolling() {
 }
 
 export function getLiveCount(streamId: string): string | null {
-  return liveCountCache.get(streamId)?.count || null;
+  return liveCountCache.get(streamId)?.subs || null;
+}
+
+export function getLiveViewerCount(streamId: string): string | null {
+  return liveCountCache.get(streamId)?.viewers || null;
 }

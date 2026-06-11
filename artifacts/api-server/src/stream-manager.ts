@@ -5,7 +5,13 @@ import { storage } from "./storage";
 import { logger } from "./lib/logger";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
 import { getYouTubeStreamUrl } from "./youtube-source";
-import { writeOverlayTextFiles, cleanupTextFiles, getHeadlineTextFilePath, getTickerTextFilePath, startLiveCountPolling } from "./youtube-counter";
+import {
+  writeOverlayTextFiles, cleanupTextFiles,
+  getHeadlineTextFilePath, getTickerTextFilePath,
+  getLtNameTextFilePath, getLtTitleTextFilePath,
+  getMessageTextFilePath, getSubBoxTextFilePath,
+  startLiveCountPolling,
+} from "./youtube-counter";
 import type { WebSocket } from "ws";
 import type { StreamConfig } from "./schema";
 
@@ -140,35 +146,82 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
   const tickerH = Math.round(scaleH * 0.06);
   const fontSize = Math.max(12, Math.round(bannerH * 0.55));
   const tickerFontSize = Math.max(10, Math.round(tickerH * 0.55));
+  const hasTickerText = !!stream.overlayTickerText;
+  const effectiveTickerH = hasTickerText ? tickerH : 0;
 
-  if (stream.overlayChannelName) {
-    const bannerColor = hexToFFmpeg(stream.overlayBannerColor || "#c41e1e");
-    const nameText = escapeDrawtext(stream.overlayChannelName);
-    const bannerY = scaleH - bannerH - tickerH - 4;
+  const ltStyle = (stream as any).lowerThirdStyle || "none";
 
-    parts.push(
-      `drawtext=fontfile='${fontEsc}':text='${nameText}':fontcolor=white:fontsize=${fontSize}:box=1:boxcolor=${bannerColor}@0.85:boxborderw=${Math.round(bannerH * 0.25)}:x=${Math.round(scaleW * 0.02)}:y=${bannerY}`
-    );
-  }
+  if (ltStyle === "l-cut") {
+    const ltNameSize = Math.max(14, Math.round(scaleH * 0.048));
+    const ltTitleSize = Math.max(10, Math.round(scaleH * 0.032));
+    const ltPadV = Math.round(scaleH * 0.018);
+    const ltH = ltNameSize + ltTitleSize + ltPadV * 2 + 8;
+    const ltW = Math.round(scaleW * 0.66);
+    const ltY = scaleH - ltH - effectiveTickerH - 4;
+    const accentColor = hexToFFmpeg((stream as any).lowerThirdAccentColor || "#e53935");
 
-  if (stream.overlayHeadline || (stream.overlayLiveCount && stream.youtubeChannelId)) {
-    const headlineFontSize = Math.max(10, Math.round(fontSize * 0.75));
-    const headlineY = scaleH - bannerH - tickerH - 4;
-
-    const nameWidth = stream.overlayChannelName
-      ? stream.overlayChannelName.length * fontSize * 0.6 + scaleW * 0.04 + fontSize * 0.5
-      : scaleW * 0.02;
+    parts.push(`drawbox=x=0:y=${ltY}:w=${ltW}:h=${ltH}:color=0x0c1524@0.95:t=fill`);
+    parts.push(`drawbox=x=0:y=${ltY}:w=6:h=${ltH}:color=${accentColor}@1:t=fill`);
 
     if (useTextfile) {
-      const textfilePath = escapeTextfilePath(getHeadlineTextFilePath(stream.id));
-      parts.push(
-        `drawtext=fontfile='${fontEsc}':textfile='${textfilePath}':reload=1:fontcolor=white:fontsize=${headlineFontSize}:box=1:boxcolor=0x222222@0.85:boxborderw=${Math.round(bannerH * 0.2)}:x=${Math.round(nameWidth)}:y=${headlineY}`
-      );
+      const ltNamePath = escapeTextfilePath(getLtNameTextFilePath(stream.id));
+      const ltTitlePath = escapeTextfilePath(getLtTitleTextFilePath(stream.id));
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltNamePath}':reload=1:fontcolor=white:fontsize=${ltNameSize}:x=14:y=${ltY + ltPadV}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltTitlePath}':reload=1:fontcolor=0xBBBBCC:fontsize=${ltTitleSize}:x=14:y=${ltY + ltPadV + ltNameSize + 6}`);
     } else {
-      const headlineText = escapeDrawtext(stream.overlayHeadline || "");
-      parts.push(
-        `drawtext=fontfile='${fontEsc}':text='  ${headlineText}  ':fontcolor=white:fontsize=${headlineFontSize}:box=1:boxcolor=0x222222@0.85:boxborderw=${Math.round(bannerH * 0.2)}:x=${Math.round(nameWidth)}:y=${headlineY}`
-      );
+      const nameText = escapeDrawtext((stream as any).lowerThirdName || "");
+      const titleText = escapeDrawtext((stream as any).lowerThirdTitle || "");
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${nameText}':fontcolor=white:fontsize=${ltNameSize}:x=14:y=${ltY + ltPadV}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${titleText}':fontcolor=0xBBBBCC:fontsize=${ltTitleSize}:x=14:y=${ltY + ltPadV + ltNameSize + 6}`);
+    }
+  } else if (ltStyle === "breaking-news") {
+    const bnH = Math.round(scaleH * 0.1);
+    const bnY = scaleH - bnH - effectiveTickerH - 4;
+    const badgeW = Math.round(scaleW * 0.24);
+    const bnMainSize = Math.max(12, Math.round(bnH * 0.40));
+    const bnSubSize = Math.max(9, Math.round(bnH * 0.28));
+    const bnAccent = hexToFFmpeg((stream as any).lowerThirdAccentColor || "#c41e1e");
+    const bnTextPad = Math.round(badgeW * 0.08);
+    const bnLabelSize = Math.max(9, Math.round(bnH * 0.24));
+    const mainY = bnY + Math.round((bnH - bnMainSize - bnSubSize - 6) / 2);
+
+    parts.push(`drawbox=x=0:y=${bnY}:w=${scaleW}:h=${bnH}:color=0x080808@0.96:t=fill`);
+    parts.push(`drawbox=x=0:y=${bnY}:w=${badgeW}:h=${bnH}:color=${bnAccent}@1:t=fill`);
+    parts.push(`drawtext=fontfile='${fontEsc}':text='BREAKING':fontcolor=white:fontsize=${bnLabelSize}:x=${bnTextPad}:y=${bnY + Math.round((bnH - bnMainSize - bnLabelSize - 4) / 2)}`);
+    parts.push(`drawtext=fontfile='${fontEsc}':text='NEWS':fontcolor=white:fontsize=${bnMainSize}:x=${bnTextPad}:y=${bnY + Math.round((bnH - bnMainSize - bnLabelSize - 4) / 2) + bnLabelSize + 4}`);
+
+    const textX = badgeW + 16;
+    if (useTextfile) {
+      const ltNamePath = escapeTextfilePath(getLtNameTextFilePath(stream.id));
+      const ltTitlePath = escapeTextfilePath(getLtTitleTextFilePath(stream.id));
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltNamePath}':reload=1:fontcolor=white:fontsize=${bnMainSize}:x=${textX}:y=${mainY}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltTitlePath}':reload=1:fontcolor=0xFFDD44:fontsize=${bnSubSize}:x=${textX}:y=${mainY + bnMainSize + 6}`);
+    } else {
+      const nameText = escapeDrawtext((stream as any).lowerThirdName || "");
+      const titleText = escapeDrawtext((stream as any).lowerThirdTitle || "");
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${nameText}':fontcolor=white:fontsize=${bnMainSize}:x=${textX}:y=${mainY}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${titleText}':fontcolor=0xFFDD44:fontsize=${bnSubSize}:x=${textX}:y=${mainY + bnMainSize + 6}`);
+    }
+  } else {
+    if (stream.overlayChannelName) {
+      const bannerColor = hexToFFmpeg(stream.overlayBannerColor || "#c41e1e");
+      const nameText = escapeDrawtext(stream.overlayChannelName);
+      const bannerY = scaleH - bannerH - effectiveTickerH - 4;
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${nameText}':fontcolor=white:fontsize=${fontSize}:box=1:boxcolor=${bannerColor}@0.85:boxborderw=${Math.round(bannerH * 0.25)}:x=${Math.round(scaleW * 0.02)}:y=${bannerY}`);
+    }
+    if (stream.overlayHeadline || (stream.overlayLiveCount && stream.youtubeChannelId)) {
+      const headlineFontSize = Math.max(10, Math.round(fontSize * 0.75));
+      const headlineY = scaleH - bannerH - effectiveTickerH - 4;
+      const nameWidth = stream.overlayChannelName
+        ? stream.overlayChannelName.length * fontSize * 0.6 + scaleW * 0.04 + fontSize * 0.5
+        : scaleW * 0.02;
+      if (useTextfile) {
+        const textfilePath = escapeTextfilePath(getHeadlineTextFilePath(stream.id));
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${textfilePath}':reload=1:fontcolor=white:fontsize=${headlineFontSize}:box=1:boxcolor=0x222222@0.85:boxborderw=${Math.round(bannerH * 0.2)}:x=${Math.round(nameWidth)}:y=${headlineY}`);
+      } else {
+        const headlineText = escapeDrawtext(stream.overlayHeadline || "");
+        parts.push(`drawtext=fontfile='${fontEsc}':text='  ${headlineText}  ':fontcolor=white:fontsize=${headlineFontSize}:box=1:boxcolor=0x222222@0.85:boxborderw=${Math.round(bannerH * 0.2)}:x=${Math.round(nameWidth)}:y=${headlineY}`);
+      }
     }
   }
 
@@ -176,48 +229,144 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
     const speed = stream.overlayTickerSpeed || 80;
     const tickerBg = hexToFFmpeg(stream.overlayTickerColor || "#1a1a2e");
     const tickerY = scaleH - tickerH;
-
-    parts.push(
-      `drawbox=x=0:y=${tickerY}:w=${scaleW}:h=${tickerH}:color=${tickerBg}@0.9:t=fill`
-    );
-
+    parts.push(`drawbox=x=0:y=${tickerY}:w=${scaleW}:h=${tickerH}:color=${tickerBg}@0.9:t=fill`);
     if (useTextfile) {
       const tickerFilePath = escapeTextfilePath(getTickerTextFilePath(stream.id));
-      parts.push(
-        `drawtext=fontfile='${fontEsc}':textfile='${tickerFilePath}':reload=1:fontcolor=white:fontsize=${tickerFontSize}:x=w-mod(t*${speed}\\,w+tw):y=${tickerY + Math.round(tickerH * 0.2)}`
-      );
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${tickerFilePath}':reload=1:fontcolor=white:fontsize=${tickerFontSize}:x=w-mod(t*${speed}\\,w+tw):y=${tickerY + Math.round(tickerH * 0.2)}`);
     } else {
       const tickerText = escapeDrawtext(stream.overlayTickerText);
-      parts.push(
-        `drawtext=fontfile='${fontEsc}':text='${tickerText}':fontcolor=white:fontsize=${tickerFontSize}:x=w-mod(t*${speed}\\,w+tw):y=${tickerY + Math.round(tickerH * 0.2)}`
-      );
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${tickerText}':fontcolor=white:fontsize=${tickerFontSize}:x=w-mod(t*${speed}\\,w+tw):y=${tickerY + Math.round(tickerH * 0.2)}`);
     }
   }
 
-  // QR overlay label (text drawn below the QR image in top-right)
+  if ((stream as any).messageEnabled && (stream as any).messageText) {
+    const msgStyle = (stream as any).messageStyle || "news-classic";
+    const msgFontSize = Math.max(12, Math.round(scaleH * 0.042));
+    const msgPad = Math.round(msgFontSize * 0.55);
+    const msgW = Math.round(scaleW * 0.56);
+    const msgH = msgFontSize + msgPad * 2 + 4;
+    const margin = Math.round(scaleW * 0.03);
+    const pos = (stream as any).messagePosition || "center";
+    let msgX = Math.round((scaleW - msgW) / 2);
+    let msgY = Math.round((scaleH - msgH) / 2);
+    switch (pos) {
+      case "top-left": msgX = margin; msgY = margin; break;
+      case "top-right": msgX = scaleW - msgW - margin; msgY = margin; break;
+      case "center": break;
+      case "bottom-left": msgX = margin; msgY = scaleH - msgH - margin - effectiveTickerH; break;
+      case "bottom-right": msgX = scaleW - msgW - margin; msgY = scaleH - msgH - margin - effectiveTickerH; break;
+      case "bottom-center": msgY = scaleH - msgH - margin - effectiveTickerH; break;
+    }
+    const bannerClr = hexToFFmpeg(stream.overlayBannerColor || "#c41e1e");
+    const accentOffset = ["news-classic", "broadcast-official"].includes(msgStyle) ? 5 : 0;
+    const textX = msgX + msgPad + accentOffset;
+    const textY = msgY + msgPad;
+
+    switch (msgStyle) {
+      case "news-classic":
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x0d1629@0.94:t=fill`);
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=5:h=${msgH}:color=${bannerClr}@1:t=fill`);
+        break;
+      case "breaking-alert":
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0xb71c1c@0.95:t=fill`);
+        break;
+      case "minimal-clean":
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x080808@0.72:t=fill`);
+        break;
+      case "cinema":
+        parts.push(`drawbox=x=0:y=${msgY - 3}:w=${scaleW}:h=3:color=0xFFFFFF@0.75:t=fill`);
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x000000@0.93:t=fill`);
+        parts.push(`drawbox=x=0:y=${msgY + msgH}:w=${scaleW}:h=3:color=0xFFFFFF@0.75:t=fill`);
+        break;
+      case "social-card":
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x1a1a2e@0.90:t=fill`);
+        break;
+      case "broadcast-official":
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x0a1628@0.96:t=fill`);
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=3:color=0xDAA520@1:t=fill`);
+        break;
+    }
+    const textColor = msgStyle === "minimal-clean" ? "0xEEEEEE" : "white";
+    const xExpr = msgStyle === "cinema" ? "(w-text_w)/2" : String(textX);
+    const yExpr = textY + (msgStyle === "broadcast-official" ? 4 : 0);
+    if (useTextfile) {
+      const msgPath = escapeTextfilePath(getMessageTextFilePath(stream.id));
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${msgPath}':reload=1:fontcolor=${textColor}:fontsize=${msgFontSize}:x=${xExpr}:y=${yExpr}`);
+    } else {
+      const msgTextEsc = escapeDrawtext((stream as any).messageText || "");
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${msgTextEsc}':fontcolor=${textColor}:fontsize=${msgFontSize}:x=${xExpr}:y=${yExpr}`);
+    }
+  }
+
+  if ((stream as any).subBoxEnabled && stream.youtubeChannelId) {
+    const subStyle = (stream as any).subBoxStyle || "card";
+    const subFontSize = Math.max(10, Math.round(scaleH * 0.038));
+    const labelSize = Math.max(7, Math.round(subFontSize * 0.58));
+    const subPad = Math.round(subFontSize * 0.45);
+    const subW = Math.round(scaleW * 0.30);
+    const subH = labelSize + subFontSize + subPad * 2 + 8;
+    const margin = Math.round(scaleW * 0.025);
+    const sPos = (stream as any).subBoxPosition || "top-right";
+    let subX = scaleW - subW - margin;
+    let subY = margin;
+    switch (sPos) {
+      case "top-left": subX = margin; break;
+      case "top-right": break;
+      case "center-left": subX = margin; subY = Math.round((scaleH - subH) / 2); break;
+      case "center-right": subY = Math.round((scaleH - subH) / 2); break;
+      case "bottom-left": subX = margin; subY = scaleH - subH - margin; break;
+      case "bottom-right": subY = scaleH - subH - margin; break;
+    }
+    switch (subStyle) {
+      case "minimal":
+        parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x000000@0.62:t=fill`);
+        break;
+      case "card":
+        parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0d1629@0.92:t=fill`);
+        parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=3:color=0xff0000@1:t=fill`);
+        break;
+      case "broadcast":
+        parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0a0a1a@0.94:t=fill`);
+        parts.push(`drawbox=x=${subX}:y=${subY + subH - 3}:w=${subW}:h=3:color=0xDAA520@1:t=fill`);
+        break;
+    }
+    const labelColor = subStyle === "minimal" ? "0x999999" : "0x8899AA";
+    const showViewers = !!(stream as any).subBoxShowViewers;
+    const countLabel = showViewers ? "SUBS / VIEWERS" : "SUBSCRIBERS";
+    parts.push(`drawtext=fontfile='${fontEsc}':text='${countLabel}':fontcolor=${labelColor}:fontsize=${labelSize}:x=${subX + subPad}:y=${subY + subPad}`);
+    if (useTextfile) {
+      const subPath = escapeTextfilePath(getSubBoxTextFilePath(stream.id));
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${subPath}':reload=1:fontcolor=white:fontsize=${subFontSize}:x=${subX + subPad}:y=${subY + subPad + labelSize + 4}`);
+    } else {
+      parts.push(`drawtext=fontfile='${fontEsc}':text='—':fontcolor=white:fontsize=${subFontSize}:x=${subX + subPad}:y=${subY + subPad + labelSize + 4}`);
+    }
+  }
+
   if ((stream as any).overlayQrEnabled && (stream as any).overlayQrLabel) {
-    const qrW = Math.round(scaleW * 0.14);
+    const qrSizeMap: Record<string, number> = { small: 0.10, medium: 0.14, large: 0.18 };
+    const qrFrac = qrSizeMap[(stream as any).overlayQrSize || "medium"] ?? 0.14;
+    const qrW = Math.round(scaleW * qrFrac);
     const margin = Math.round(scaleW * 0.025);
     const labelText = escapeDrawtext(((stream as any).overlayQrLabel as string).toUpperCase());
     const labelFontSize = Math.max(9, Math.round(qrW * 0.18));
-    parts.push(
-      `drawtext=fontfile='${fontEsc}':text='${labelText}':fontcolor=white:fontsize=${labelFontSize}:box=1:boxcolor=0xF97316@0.96:boxborderw=${Math.round(labelFontSize * 0.35)}:x=w-text_w-${margin}:y=${margin + qrW + 4}`
-    );
+    const qrPos = (stream as any).overlayQrPosition || "top-right";
+    let lx: string, ly: string;
+    switch (qrPos) {
+      case "top-left": lx = String(margin); ly = String(margin + qrW + 4); break;
+      case "bottom-left": lx = String(margin); ly = `h-${margin + labelFontSize + Math.round(labelFontSize * 0.7) + 4}`; break;
+      case "bottom-right": lx = `w-text_w-${margin}`; ly = `h-${margin + labelFontSize + Math.round(labelFontSize * 0.7) + 4}`; break;
+      default: lx = `w-text_w-${margin}`; ly = String(margin + qrW + 4); break;
+    }
+    parts.push(`drawtext=fontfile='${fontEsc}':text='${labelText}':fontcolor=white:fontsize=${labelFontSize}:box=1:boxcolor=0xF97316@0.96:boxborderw=${Math.round(labelFontSize * 0.35)}:x=${lx}:y=${ly}`);
   }
 
-  // Social handle bar (bottom centre)
   if ((stream as any).overlaySocialEnabled && (stream as any).overlaySocialHandle) {
-    const tickerH2 = stream.overlayTickerText ? Math.round(scaleH * 0.06) : 0;
     const socialH = Math.round(scaleH * 0.055);
-    const socialY = scaleH - socialH - tickerH2;
+    const socialY = scaleH - socialH - effectiveTickerH;
     const socialFontSize = Math.max(10, Math.round(socialH * 0.52));
     const socialText = escapeDrawtext(`FB  IG  TikTok  ${(stream as any).overlaySocialHandle}`);
-    parts.push(
-      `drawbox=x=${Math.round(scaleW * 0.12)}:y=${socialY}:w=${Math.round(scaleW * 0.76)}:h=${socialH}:color=0x080a14@0.82:t=fill`
-    );
-    parts.push(
-      `drawtext=fontfile='${fontEsc}':text='${socialText}':fontcolor=0xDDDDDD:fontsize=${socialFontSize}:x=(w-text_w)/2:y=${socialY + Math.round(socialH * 0.18)}`
-    );
+    parts.push(`drawbox=x=${Math.round(scaleW * 0.12)}:y=${socialY}:w=${Math.round(scaleW * 0.76)}:h=${socialH}:color=0x080a14@0.82:t=fill`);
+    parts.push(`drawtext=fontfile='${fontEsc}':text='${socialText}':fontcolor=0xDDDDDD:fontsize=${socialFontSize}:x=(w-text_w)/2:y=${socialY + Math.round(socialH * 0.18)}`);
   }
 
   return parts.join(",");
@@ -315,7 +464,10 @@ function buildFFmpegArgs(
     stream.overlayChannelName || stream.overlayHeadline || stream.overlayTickerText ||
     (stream.overlayLiveCount && stream.youtubeChannelId) ||
     ((stream as any).overlayQrEnabled && (stream as any).overlayQrLabel) ||
-    ((stream as any).overlaySocialEnabled && (stream as any).overlaySocialHandle)
+    ((stream as any).overlaySocialEnabled && (stream as any).overlaySocialHandle) ||
+    ((stream as any).lowerThirdStyle && (stream as any).lowerThirdStyle !== "none") ||
+    ((stream as any).messageEnabled && (stream as any).messageText) ||
+    ((stream as any).subBoxEnabled && stream.youtubeChannelId)
   );
   const useTextfile = stream.overlayEnabled && true;
 
@@ -355,10 +507,20 @@ function buildFFmpegArgs(
 
     if (hasQr) {
       const qrInputIdx = hasLogo ? 2 : 1;
-      const qrW = Math.round(scaleW * 0.14);
+      const qrSizeMap: Record<string, number> = { small: 0.10, medium: 0.14, large: 0.18 };
+      const qrFrac = qrSizeMap[(stream as any).overlayQrSize || "medium"] ?? 0.14;
+      const qrW = Math.round(scaleW * qrFrac);
       const qrMargin = Math.round(scaleW * 0.025);
       filterParts.push(`[${qrInputIdx}:v]scale=${qrW}:${qrW},format=rgba[qr]`);
-      filterParts.push(`[${currentLabel}][qr]overlay=main_w-overlay_w-${qrMargin}:${qrMargin}[withqr]`);
+      const qrPos = (stream as any).overlayQrPosition || "top-right";
+      let qrOx: string, qrOy: string;
+      switch (qrPos) {
+        case "top-left": qrOx = String(qrMargin); qrOy = String(qrMargin); break;
+        case "bottom-left": qrOx = String(qrMargin); qrOy = `main_h-overlay_h-${qrMargin}`; break;
+        case "bottom-right": qrOx = `main_w-overlay_w-${qrMargin}`; qrOy = `main_h-overlay_h-${qrMargin}`; break;
+        default: qrOx = `main_w-overlay_w-${qrMargin}`; qrOy = String(qrMargin); break;
+      }
+      filterParts.push(`[${currentLabel}][qr]overlay=${qrOx}:${qrOy}[withqr]`);
       currentLabel = "withqr";
     }
 
@@ -472,7 +634,7 @@ export async function startStream(streamId: string) {
   }
   sendStatus(streamId, "reconnecting");
 
-  if (stream.overlayLiveCount && stream.youtubeChannelId) {
+  if (((stream.overlayLiveCount || (stream as any).subBoxEnabled)) && stream.youtubeChannelId) {
     startLiveCountPolling();
   }
 

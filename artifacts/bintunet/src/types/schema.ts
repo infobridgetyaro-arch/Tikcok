@@ -15,8 +15,24 @@ export type OverlayConfig = {
   overlayQrEnabled: boolean;
   overlayQrUrl: string;
   overlayQrLabel: string;
+  overlayQrPosition: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  overlayQrSize: "small" | "medium" | "large";
   overlaySocialEnabled: boolean;
   overlaySocialHandle: string;
+  lowerThirdStyle: "none" | "l-cut" | "breaking-news";
+  lowerThirdName: string;
+  lowerThirdTitle: string;
+  lowerThirdAccentColor: string;
+  lowerThirdAnimation: "none" | "slide-wipe" | "scale-up";
+  tickerStyle: "crawl" | "flipper";
+  messageEnabled: boolean;
+  messageText: string;
+  messageStyle: "news-classic" | "breaking-alert" | "minimal-clean" | "cinema" | "social-card" | "broadcast-official";
+  messagePosition: "top-left" | "top-right" | "center" | "bottom-left" | "bottom-right" | "bottom-center";
+  subBoxEnabled: boolean;
+  subBoxStyle: "minimal" | "card" | "broadcast";
+  subBoxPosition: "top-left" | "top-right" | "center-left" | "center-right" | "bottom-left" | "bottom-right";
+  subBoxShowViewers: boolean;
 };
 
 export type StreamConfig = OverlayConfig & {

@@ -1,1 +1,2 @@
 - [BintuNet port](bintunet-port.md) — no OpenAPI/DB; direct fetch + in-memory; WebSocket needs `/ws` in artifact.toml paths.
+- [Overlay system](overlay-system.md) — schema, storage defaults, FFmpeg filters, and control room UI all need sync when adding new overlay fields.
