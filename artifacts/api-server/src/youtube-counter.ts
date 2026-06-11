@@ -186,6 +186,7 @@ export function cleanupOverlayFiles(streamId: string) {
 
 export function cleanupTextFiles(streamId: string) {
   cleanupOverlayFiles(streamId);
+  liveCountCache.delete(streamId);
   liveChatIdCache.delete(streamId);
 }
 

@@ -157,12 +157,21 @@ export async function registerBintunetRoutes(
     }
   });
 
-  const textOnlyFields = ["overlayChannelName", "overlayHeadline", "overlayTickerText", "youtubeChannelId"];
+  const textOnlyFields = [
+    "overlayChannelName", "overlayHeadline", "overlayTickerText", "youtubeChannelId",
+    "lowerThirdName", "lowerThirdTitle", "messageText",
+  ];
   const structuralOverlayFields = [
     "overlayEnabled", "overlayLogoPath", "overlayLogoPosition", "overlayLogoScale",
     "overlayLogoAnimation", "overlayBannerColor", "overlayTickerColor", "overlayTickerSpeed",
     "overlayLiveCount", "overlayQrEnabled", "overlayQrUrl", "overlayQrLabel",
     "overlaySocialEnabled", "overlaySocialHandle",
+    "overlayQrPosition", "overlayQrSize",
+    "lowerThirdStyle", "lowerThirdAccentColor", "lowerThirdAnimation",
+    "tickerStyle",
+    "messageEnabled", "messageStyle", "messagePosition",
+    "subBoxEnabled", "subBoxStyle", "subBoxPosition", "subBoxShowViewers",
+    "chatEnabled", "chatPosition", "chatStyle", "chatMaxMessages",
   ];
 
   app.patch("/api/streams/:id", requireAuth, (req, res) => {

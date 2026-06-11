@@ -562,7 +562,14 @@ function AdminStreamOverlay({ stream, index, onUpdate }: {
 
   const apply = () => {
     setApplying(true);
-    onUpdate(stream.id, draft as any);
+    // Only send fields that actually changed — avoids triggering unnecessary FFmpeg restarts
+    const diff: Record<string, any> = {};
+    (Object.keys(draft) as (keyof OverlayDraft)[]).forEach((k) => {
+      const draftVal = (draft as any)[k];
+      const streamVal = (stream as any)[k] ?? (buildDraft(stream) as any)[k];
+      if (draftVal !== streamVal) diff[k] = draftVal;
+    });
+    if (Object.keys(diff).length > 0) onUpdate(stream.id, diff as any);
     setTimeout(() => { setApplying(false); setJustApplied(true); setTimeout(() => setJustApplied(false), 2500); }, 1800);
   };
 
