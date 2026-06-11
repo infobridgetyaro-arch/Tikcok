@@ -1,0 +1,1 @@
+- [BintuNet port](bintunet-port.md) — no OpenAPI/DB; direct fetch + in-memory; WebSocket needs `/ws` in artifact.toml paths.
