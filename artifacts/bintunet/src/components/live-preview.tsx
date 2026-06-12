@@ -15,11 +15,14 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLive, setIsLive] = useState<boolean | null>(null);
+  // null = not yet known, true = portrait, false = landscape
+  const [isPortrait, setIsPortrait] = useState<boolean | null>(null);
 
   const loadPreview = useCallback(async () => {
     if (!tiktokUsername) return;
     setLoading(true);
     setError(null);
+    setIsPortrait(null);
 
     try {
       const res = await fetch(`/api/streams/${streamId}/preview`, {
@@ -67,6 +70,12 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
           video.play().catch(() => {});
           setLoading(false);
         });
+        // Detect orientation once dimensions are known — single video element stays mounted
+        video.addEventListener("loadedmetadata", () => {
+          if (video.videoWidth > 0 && video.videoHeight > 0) {
+            setIsPortrait(video.videoHeight > video.videoWidth);
+          }
+        }, { once: true });
         hls.on(Hls.Events.ERROR, (_event, errData) => {
           if (errData.fatal) {
             setError("Stream ended or unavailable");
@@ -78,6 +87,9 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
         video.src = data.hlsUrl;
         video.addEventListener("loadedmetadata", () => {
+          if (video.videoWidth > 0 && video.videoHeight > 0) {
+            setIsPortrait(video.videoHeight > video.videoWidth);
+          }
           video.play().catch(() => {});
           setLoading(false);
         });
@@ -131,12 +143,25 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
             background: "linear-gradient(180deg, #1a3a5c 0%, #122840 50%, #0d1f30 100%)",
             border: "1px solid rgba(255,255,255,0.06)",
             position: "relative",
+            display: "flex",
+            justifyContent: "center",
           }}
         >
-          {/* width:100% + height:auto on a block video = intrinsic aspect ratio always preserved */}
+          {/*
+            Single video element — never unmounted, so HLS stays attached.
+            Portrait: capped at 55% of card width so full video height fits on screen.
+              width:auto + height:auto at constrained maxWidth = correct aspect ratio always.
+            Landscape: full card width, height auto follows 16:9 naturally.
+          */}
           <video
             ref={videoRef}
-            style={{ display: "block", width: "100%", height: "auto" }}
+            style={{
+              display: "block",
+              width: isPortrait ? "auto" : "100%",
+              height: isPortrait ? "auto" : "auto",
+              maxWidth: isPortrait ? "55%" : "100%",
+              maxHeight: isPortrait ? 420 : undefined,
+            }}
             muted
             playsInline
             autoPlay
@@ -144,7 +169,7 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
           />
 
           {loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10" style={{ minHeight: 120 }}>
+            <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10" style={{ minHeight: 100 }}>
               <div className="flex flex-col items-center gap-2 text-white/70">
                 <Loader2 className="w-6 h-6 animate-spin" />
                 <span className="text-xs">Loading preview...</span>
@@ -153,7 +178,7 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
           )}
 
           {error && !loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-10" style={{ minHeight: 120 }}>
+            <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-10" style={{ minHeight: 100 }}>
               <div className="flex flex-col items-center gap-2 text-white/50 text-center px-4">
                 <WifiOff className="w-8 h-8" />
                 <span className="text-xs">{error}</span>
