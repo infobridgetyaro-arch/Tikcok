@@ -93,20 +93,19 @@ function sendStatus(streamId: string, status: string) {
  * Outputs label [base].
  */
 function buildMeshGradientBg(scaleW: number, scaleH: number, fps: number, videoInputIdx = 0): string[] {
-  const W = scaleW;
-  const H = scaleH;
   const parts: string[] = [];
 
   // 1. Create a dummy base asset at your target project resolution (e.g., 1920x1080)
-  parts.push(`color=c=0x0b1120:s=${W}x${H}:r=${fps}[_canvas]`);
+  // This safely uses scaleW, scaleH, and fps so TypeScript won't throw an "unused variable" error.
+  parts.push(`color=c=0x0b1120:s=${scaleW}x${scaleH}:r=${fps}[_canvas]`);
 
   // 2. Clone the original video so we can use one stream for sizing and one for the final layout
   parts.push(`[${videoInputIdx}:v]split=2[_vid_measure][_vid_original]`);
 
   // 3. Scale the canvas to reference the video. 
-  // This makes the background match the exact width of the video, but scales its height 
-  // proportionally to maintain the target aspect ratio (W/H), ensuring it's always taller than a "short" video.
-  parts.push(`[_canvas][_vid_measure]scale2ref=iw:iw*(${H}/${W})[_bg_scaled][_vid_ref]`);
+  // This forces the background to match the exact width of the video, but dynamically 
+  // adjusts the height using your project's aspect ratio (scaleH / scaleW).
+  parts.push(`[_canvas][_vid_measure]scale2ref=iw:iw*(${scaleH}/${scaleW})[_bg_scaled][_vid_ref]`);
 
   // 4. Draw the mesh gradient on top of this dynamically-sized background
   parts.push(`[_bg_scaled]drawbox=x=-iw*0.1:y=-ih*0.1:w=iw*0.75:h=ih*0.65:color=0x1a3a6e@0.50:t=fill[_mgbg1]`);
@@ -114,9 +113,7 @@ function buildMeshGradientBg(scaleW: number, scaleH: number, fps: number, videoI
   parts.push(`[_mgbg2]drawbox=x=iw*0.05:y=ih*0.30:w=iw*0.45:h=ih*0.50:color=0x0e4a7a@0.30:t=fill[_mgbg3]`);
   parts.push(`[_mgbg3]gblur=sigma=70[_gradient_back]`);
 
-  // 5. Overlay the original, unedited video directly onto the center of this custom gradient strip.
-  // Because the gradient background width perfectly matches the video width, the left and right sides hit the edge seamlessly.
-  // The gradient will ONLY peek through at the top and bottom where the video is too short to cover it.
+  // 5. Overlay the original, unedited video directly onto the center.
   parts.push(`[_gradient_back][_vid_original]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2:shortest=1[base]`);
 
   return parts;
