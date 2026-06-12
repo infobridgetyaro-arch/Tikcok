@@ -28,6 +28,12 @@ jobs:
           streamlink --version
           yt-dlp --version
 
+      - name: Install ngrok
+        run: |
+          curl -fsSL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz \
+            | sudo tar -xz -C /usr/local/bin
+          ngrok --version
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -73,22 +79,18 @@ jobs:
             sleep 1
           done
 
-      - name: Generate SSH key for tunnel
-        run: ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
-
-      - name: Start tunnel (localhost.run)
+      - name: Start ngrok tunnel
         run: |
-          ssh -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -i ~/.ssh/id_ed25519 \
-              -R 80:localhost:8080 \
-              localhost.run \
-            2>&1 | tee /tmp/tunnel.log &
-          echo $! > /tmp/cf.pid
+          ngrok config add-authtoken "${{ secrets.NGROK_TOKEN }}"
+          ngrok http 8080 --log=stdout > /tmp/ngrok.log 2>&1 &
+          echo $! > /tmp/ngrok.pid
 
-          echo "Waiting for tunnel URL..."
+          echo "Waiting for ngrok URL..."
           for i in $(seq 1 30); do
-            URL=$(grep -oP 'https://\S+\.lhr\.life' /tmp/tunnel.log | head -1)
+            URL=$(curl -sf http://localhost:4040/api/tunnels \
+              | grep -oP '"public_url":"https://[^"]+' \
+              | head -1 \
+              | cut -d'"' -f3)
             if [ -n "$URL" ]; then
               echo ""
               echo "╔══════════════════════════════════════════════════════╗"
@@ -105,8 +107,8 @@ jobs:
           done
 
           if [ -z "$URL" ]; then
-            echo "ERROR: Tunnel URL not found. Dumping log:"
-            cat /tmp/tunnel.log
+            echo "ERROR: ngrok URL not found. Dumping log:"
+            cat /tmp/ngrok.log
             exit 1
           fi
 
@@ -118,7 +120,7 @@ jobs:
           echo ""
 
           while kill -0 $(cat /tmp/server.pid) 2>/dev/null && \
-                kill -0 $(cat /tmp/cf.pid) 2>/dev/null; do
+                kill -0 $(cat /tmp/ngrok.pid) 2>/dev/null; do
             sleep 30
 
             if [ $(( $(date +%s) % 300 )) -lt 30 ]; then
@@ -127,4 +129,4 @@ jobs:
           done
 
           echo "A process exited — shutting down."
-          tail -20 /tmp/tunnel.log
+          tail -20 /tmp/ngrok.log
