@@ -124,20 +124,22 @@ function buildMeshGradientBg(scaleW: number, scaleH: number, fps: number, videoI
   // Blur into smooth gradient
   parts.push(`[_mgbg3]gblur=sigma=70[_mgbgfinal]`);
 
-  // CHANGES MADE HERE:
-  // 1. Force the video width to match the full canvas width (W)
-  // 2. Scale the height down to 75% (or any percentage you prefer) to leave room at top/bottom
-  const vidW = Math.floor(W / 2) * 2; 
-  const vidH = Math.floor((H * 0.75) / 2) * 2; // Adjust 0.75 to change gradient thickness
+  // Define the EXACT box size we want the video to occupy.
+  // We want it to span 100% of the width, but only 75% of the height.
+  const targetW = Math.floor(W / 2) * 2;
+  const targetH = Math.floor((H * 0.75) / 2) * 2; // Change 0.75 to adjust how much top/bottom gradient shows
 
-  // Scale video to exact dimensions (ignoring original aspect ratio to ensure full bleed left-to-right)
-  parts.push(`[${videoInputIdx}:v]scale=${vidW}:${vidH},setsar=1[_mgvid]`);
+  // FIX STRETCHING: 
+  // 1. Scale the video so it completely fills our target box dimensions (using increase)
+  // 2. Crop the video from the center so it matches targetW and targetH perfectly without distortion.
+  parts.push(`[${videoInputIdx}:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH},setsar=1[_mgvid]`);
   
   // Centering the video vertically leaves equal gradient bars at the top and bottom
   parts.push(`[_mgbgfinal][_mgvid]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2[base]`);
 
   return parts;
 }
+
 
 
 function findFont(): string {
