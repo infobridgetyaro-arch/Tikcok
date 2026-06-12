@@ -92,43 +92,90 @@ function sendStatus(streamId: string, status: string) {
  * and overlay the source video centred on it — replacing the old pad:color=black approach.
  * Outputs label [base].
  */
-function buildMeshGradientBg(scaleW: number, scaleH: number, fps: number, videoInputIdx = 0): string[] {
+function buildAnimatedMeshGradientBg(
+  scaleW: number,
+  scaleH: number,
+  fps: number,
+  videoInputIdx = 0
+): string[] {
   const W = scaleW;
   const H = scaleH;
   const parts: string[] = [];
 
-  // Dark violet base canvas
-  parts.push(`color=c=0x040010:s=${W}x${H}:r=${fps}[_mgbg0]`);
+  // Base canvas
+  parts.push(
+    `color=c=0x040010:s=${W}x${H}:r=${fps}[_mgbg0]`
+  );
 
-  // Purple glow — top-left
-  const p1x = -Math.round(W * 0.12);
-  const p1y = -Math.round(H * 0.12);
-  const p1w = Math.round(W * 0.68);
-  const p1h = Math.round(H * 0.68);
-  parts.push(`[_mgbg0]drawbox=x=${p1x}:y=${p1y}:w=${p1w}:h=${p1h}:color=0x6d28d9@0.55:t=fill[_mgbg1]`);
+  // Purple blob
+  parts.push(
+    `[_mgbg0]drawbox=` +
+    `x=${Math.round(W*0.05)}+120*sin(t/18):` +
+    `y=${Math.round(H*0.02)}+90*cos(t/15):` +
+    `w=${Math.round(W*0.60)}:` +
+    `h=${Math.round(H*0.60)}:` +
+    `color=0x7c3aed@0.45:` +
+    `t=fill[_mgbg1]`
+  );
 
-  // Cyan glow — bottom-right
-  const p2x = Math.round(W * 0.42);
-  const p2y = Math.round(H * 0.42);
-  const p2w = Math.round(W * 0.72);
-  const p2h = Math.round(H * 0.72);
-  parts.push(`[_mgbg1]drawbox=x=${p2x}:y=${p2y}:w=${p2w}:h=${p2h}:color=0x0891b2@0.45:t=fill[_mgbg2]`);
+  // Cyan blob
+  parts.push(
+    `[_mgbg1]drawbox=` +
+    `x=${Math.round(W*0.45)}+100*cos(t/20):` +
+    `y=${Math.round(H*0.40)}+70*sin(t/17):` +
+    `w=${Math.round(W*0.65)}:` +
+    `h=${Math.round(H*0.65)}:` +
+    `color=0x06b6d4@0.35:` +
+    `t=fill[_mgbg2]`
+  );
 
-  // Magenta accent — centre
-  const p3x = Math.round(W * 0.26);
-  const p3y = Math.round(H * 0.22);
-  const p3w = Math.round(W * 0.48);
-  const p3h = Math.round(H * 0.56);
-  parts.push(`[_mgbg2]drawbox=x=${p3x}:y=${p3y}:w=${p3w}:h=${p3h}:color=0xc026d3@0.28:t=fill[_mgbg3]`);
+  // Magenta blob
+  parts.push(
+    `[_mgbg2]drawbox=` +
+    `x=${Math.round(W*0.25)}+80*cos(t/14):` +
+    `y=${Math.round(H*0.20)}+80*sin(t/13):` +
+    `w=${Math.round(W*0.45)}:` +
+    `h=${Math.round(H*0.55)}:` +
+    `color=0xec4899@0.25:` +
+    `t=fill[_mgbg3]`
+  );
 
-  // Heavy gaussian blur turns the boxes into smooth gradient blobs
-  parts.push(`[_mgbg3]gblur=sigma=60[_mgbgfinal]`);
+  // Blue blob
+  parts.push(
+    `[_mgbg3]drawbox=` +
+    `x=${Math.round(W*0.02)}+140*sin(t/25):` +
+    `y=${Math.round(H*0.55)}+100*cos(t/19):` +
+    `w=${Math.round(W*0.50)}:` +
+    `h=${Math.round(H*0.50)}:` +
+    `color=0x2563eb@0.20:` +
+    `t=fill[_mgbg4]`
+  );
 
-  // Scale source video to fit frame without letterbox padding
-  parts.push(`[${videoInputIdx}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease[_mgvid]`);
+  // Pink blob
+  parts.push(
+    `[_mgbg4]drawbox=` +
+    `x=${Math.round(W*0.70)}+90*cos(t/16):` +
+    `y=${Math.round(H*0.05)}+120*sin(t/21):` +
+    `w=${Math.round(W*0.35)}:` +
+    `h=${Math.round(H*0.35)}:` +
+    `color=0xff4fd8@0.18:` +
+    `t=fill[_mgbg5]`
+  );
 
-  // Overlay video centred on gradient canvas → [base]
-  parts.push(`[_mgbgfinal][_mgvid]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2[base]`);
+  // Strong blur
+  parts.push(
+    `[_mgbg5]gblur=sigma=120:steps=3[_mgbgfinal]`
+  );
+
+  // Scale source video
+  parts.push(
+    `[${videoInputIdx}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease[_mgvid]`
+  );
+
+  // Overlay video
+  parts.push(
+    `[_mgbgfinal][_mgvid]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2[base]`
+  );
 
   return parts;
 }
