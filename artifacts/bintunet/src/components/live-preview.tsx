@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Hls from "hls.js";
-import { Tv, Loader2, WifiOff, Eye, EyeOff, Signal } from "lucide-react";
+import { Tv, Loader2, WifiOff, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface LivePreviewProps {
@@ -138,14 +138,13 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
           className="relative rounded-xl overflow-hidden"
           data-testid={`preview-container-${streamId}`}
           style={isPortrait ? {
-            background: "linear-gradient(160deg, #04050f 0%, #080d1c 30%, #060a18 60%, #0a0520 100%)",
-            border: "1px solid rgba(56,189,248,0.18)",
-            boxShadow: "0 0 40px rgba(56,189,248,0.06), 0 8px 32px rgba(0,0,0,0.7)",
-            padding: "20px 0",
+            background: "linear-gradient(135deg, #020b18 0%, #0a1628 20%, #0d0a2e 40%, #060d1f 55%, #0a1a2e 70%, #12082a 85%, #030c1a 100%)",
+            border: "1px solid rgba(56,189,248,0.14)",
+            boxShadow: "0 0 60px rgba(56,189,248,0.08), 0 0 30px rgba(139,92,246,0.06)",
+            padding: "16px",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            minHeight: 380,
           } : {
             aspectRatio: "16/9",
             background: "linear-gradient(135deg, #020b18 0%, #0a1628 20%, #0d0a2e 40%, #060d1f 55%, #0a1a2e 70%, #12082a 85%, #030c1a 100%)",
@@ -175,43 +174,24 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
             </>
           )}
 
-          {/* Portrait: studio broadcast background */}
+          {/* Portrait: aurora glow blobs */}
           {isPortrait && !loading && !error && (
             <>
-              {/* Horizontal scan lines */}
-              <div className="absolute inset-0 pointer-events-none opacity-[0.035]" style={{
-                backgroundImage: "repeating-linear-gradient(0deg, rgba(255,255,255,0.6) 0px, rgba(255,255,255,0.6) 1px, transparent 1px, transparent 5px)",
+              <div className="absolute pointer-events-none" style={{
+                top: "-20%", left: "-10%", width: "60%", height: "70%",
+                background: "radial-gradient(ellipse, rgba(56,189,248,0.22) 0%, transparent 65%)",
+                filter: "blur(40px)",
               }} />
-              {/* Top edge glow */}
-              <div className="absolute top-0 left-0 right-0 h-px" style={{
-                background: "linear-gradient(90deg, transparent 0%, rgba(56,189,248,0.5) 50%, transparent 100%)",
+              <div className="absolute pointer-events-none" style={{
+                bottom: "-20%", right: "-10%", width: "60%", height: "70%",
+                background: "radial-gradient(ellipse, rgba(139,92,246,0.18) 0%, transparent 65%)",
+                filter: "blur(40px)",
               }} />
-              {/* Bottom edge glow */}
-              <div className="absolute bottom-0 left-0 right-0 h-px" style={{
-                background: "linear-gradient(90deg, transparent 0%, rgba(56,189,248,0.5) 50%, transparent 100%)",
+              <div className="absolute pointer-events-none" style={{
+                top: "30%", right: "-5%", width: "40%", height: "40%",
+                background: "radial-gradient(ellipse, rgba(16,185,129,0.1) 0%, transparent 65%)",
+                filter: "blur(30px)",
               }} />
-              {/* Left pillar */}
-              <div className="absolute top-0 bottom-0 left-0 flex flex-col items-center justify-center gap-3 px-2" style={{ width: 40 }}>
-                <div className="w-px flex-1" style={{ background: "linear-gradient(180deg, transparent 0%, rgba(56,189,248,0.25) 50%, transparent 100%)" }} />
-                <Signal className="w-3.5 h-3.5 text-sky-400/50 rotate-90" />
-                <div className="w-px flex-1" style={{ background: "linear-gradient(180deg, transparent 0%, rgba(56,189,248,0.25) 50%, transparent 100%)" }} />
-              </div>
-              {/* Right pillar */}
-              <div className="absolute top-0 bottom-0 right-0 flex flex-col items-center justify-center gap-3 px-2" style={{ width: 40 }}>
-                <div className="w-px flex-1" style={{ background: "linear-gradient(180deg, transparent 0%, rgba(56,189,248,0.25) 50%, transparent 100%)" }} />
-                <Signal className="w-3.5 h-3.5 text-sky-400/50 rotate-90" />
-                <div className="w-px flex-1" style={{ background: "linear-gradient(180deg, transparent 0%, rgba(56,189,248,0.25) 50%, transparent 100%)" }} />
-              </div>
-              {/* Corner accents TL */}
-              <div className="absolute top-4 left-4 w-6 h-6 border-t border-l border-sky-400/40" />
-              <div className="absolute top-4 right-4 w-6 h-6 border-t border-r border-sky-400/40" />
-              <div className="absolute bottom-4 left-4 w-6 h-6 border-b border-l border-sky-400/40" />
-              <div className="absolute bottom-4 right-4 w-6 h-6 border-b border-r border-sky-400/40" />
-              {/* Bottom center info strip */}
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
-                <span className="text-[9px] font-mono text-sky-400/60 tracking-widest uppercase">@{tiktokUsername}</span>
-              </div>
             </>
           )}
 
@@ -249,11 +229,11 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
               : "absolute inset-0 w-full h-full object-contain"
             }
             style={isPortrait ? {
-              height: "100%",
-              maxHeight: 460,
               width: "auto",
-              borderRadius: 8,
-              boxShadow: "0 0 60px rgba(0,0,0,0.9), 0 0 20px rgba(56,189,248,0.12)",
+              maxWidth: "70%",
+              height: "auto",
+              borderRadius: 10,
+              boxShadow: "0 0 40px rgba(56,189,248,0.15), 0 0 20px rgba(139,92,246,0.1), 0 8px 32px rgba(0,0,0,0.6)",
             } : undefined}
             muted
             playsInline
