@@ -9,14 +9,12 @@ jobs:
   serve:
     name: Start server & expose public URL
     runs-on: ubuntu-latest
-    timeout-minutes: 360          # GitHub max — keeps it alive up to 6 hours
+    timeout-minutes: 240
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ── 2. Install system tools (ffmpeg, yt-dlp, streamlink) ─────────────
       - name: Install system dependencies
         run: |
           sudo apt-get update -y -q
@@ -30,7 +28,6 @@ jobs:
           streamlink --version
           yt-dlp --version
 
-      # ── 3. Install cloudflared ────────────────────────────────────────────
       - name: Install cloudflared
         run: |
           curl -fsSL \
@@ -39,40 +36,33 @@ jobs:
           sudo dpkg -i cloudflared.deb
           cloudflared --version
 
-      # ── 4. Setup pnpm ─────────────────────────────────────────────────────
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10
 
-      # ── 5. Setup Node.js with pnpm cache ──────────────────────────────────
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
 
-      # ── 6. Install dependencies ────────────────────────────────────────────
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # ── 7. Build frontend (Vite static) ───────────────────────────────────
       - name: Build frontend
         run: PORT=3000 BASE_PATH=/ pnpm --filter @workspace/bintunet run build
         env:
           NODE_ENV: production
 
-      # ── 8. Build API server (esbuild) ─────────────────────────────────────
       - name: Build API server
         run: pnpm --filter @workspace/api-server run build
 
-      # ── 9. Create uploads directory ───────────────────────────────────────
       - name: Prepare runtime directories
         run: |
           mkdir -p artifacts/api-server/uploads
           mkdir -p artifacts/api-server/tmp_overlay
 
-      # ── 10. Start API server in background ────────────────────────────────
       - name: Start API server
         run: |
           NODE_ENV=production \
@@ -82,7 +72,6 @@ jobs:
           node --enable-source-maps artifacts/api-server/dist/index.mjs &
           echo $! > /tmp/server.pid
 
-          # Wait until the server is accepting connections
           echo "Waiting for server on port 8080..."
           for i in $(seq 1 30); do
             if curl -sf http://localhost:8080/api/auth/check > /dev/null 2>&1; then
@@ -92,16 +81,13 @@ jobs:
             sleep 1
           done
 
-      # ── 11. Open Cloudflare Quick Tunnel & print the public URL ──────────
       - name: Start Cloudflare Tunnel
         run: |
-          # cloudflared logs the URL to stderr — capture it
           cloudflared tunnel --url http://localhost:8080 \
             --no-autoupdate \
             2>&1 | tee /tmp/cf_tunnel.log &
           echo $! > /tmp/cf.pid
 
-          # Wait for the tunnel URL to appear in the log (up to 30s)
           echo "Waiting for tunnel URL..."
           for i in $(seq 1 30); do
             URL=$(grep -oP 'https://[a-z0-9\-]+\.trycloudflare\.com' /tmp/cf_tunnel.log | head -1)
@@ -126,22 +112,21 @@ jobs:
             exit 1
           fi
 
-      # ── 12. Keep alive (loop until server or tunnel dies) ─────────────────
       - name: Keep alive
         run: |
           echo "Server running at $PUBLIC_URL"
-          echo "This job will keep running for up to 6 hours."
+          echo "This job will keep running for up to 4 hours."
           echo "Cancel the workflow in GitHub Actions to shut it down."
           echo ""
 
           while kill -0 $(cat /tmp/server.pid) 2>/dev/null && \
                 kill -0 $(cat /tmp/cf.pid) 2>/dev/null; do
             sleep 30
-            # Heartbeat every 5 minutes
+
             if [ $(( $(date +%s) % 300 )) -lt 30 ]; then
               echo "$(date -u '+%H:%M:%S') ♥  $PUBLIC_URL — still alive"
             fi
           done
 
           echo "A process exited — shutting down."
-          cat /tmp/cf_tunnel.log | tail -20
+          tail -20 /tmp/cf_tunnel.log
