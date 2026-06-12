@@ -466,7 +466,7 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
         }
       }
     } else {
-            // Subscriber count styles
+                  // Subscriber count styles
       const subW = Math.round(scaleW * 0.32);
       const subFontSizeIdeal = Math.max(12, Math.round(scaleH * 0.044));
       const subPad = Math.round(subFontSizeIdeal * 0.5);
@@ -561,7 +561,6 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       }
     }
   }
-
   // ── Live Chat Overlay ──────────────────────────────────────────────────────
   if ((stream as any).chatEnabled && stream.youtubeChannelId) {
     const chatStyle = (stream as any).chatStyle || "list";
