@@ -97,45 +97,27 @@ function buildMeshGradientBg(scaleW: number, scaleH: number, fps: number, videoI
   const H = scaleH;
   const parts: string[] = [];
 
-  // Deep navy base
-  parts.push(`color=c=0x0b1120:s=${W}x${H}:r=${fps}[_mgbg0]`);
+  // 1. Create a dummy base asset at your target project resolution (e.g., 1920x1080)
+  parts.push(`color=c=0x0b1120:s=${W}x${H}:r=${fps}[_canvas]`);
 
-  // Blue glow top-left
-  const p1x = -Math.round(W * 0.1);
-  const p1y = -Math.round(H * 0.1);
-  const p1w = Math.round(W * 0.75);
-  const p1h = Math.round(H * 0.65);
-  parts.push(`[_mgbg0]drawbox=x=${p1x}:y=${p1y}:w=${p1w}:h=${p1h}:color=0x1a3a6e@0.50:t=fill[_mgbg1]`);
+  // 2. Clone the original video so we can use one stream for sizing and one for the final layout
+  parts.push(`[${videoInputIdx}:v]split=2[_vid_measure][_vid_original]`);
 
-  // Darker blue bottom-right
-  const p2x = Math.round(W * 0.30);
-  const p2y = Math.round(H * 0.35);
-  const p2w = Math.round(W * 0.80);
-  const p2h = Math.round(H * 0.75);
-  parts.push(`[_mgbg1]drawbox=x=${p2x}:y=${p2y}:w=${p2w}:h=${p2h}:color=0x0d2657@0.55:t=fill[_mgbg2]`);
+  // 3. Scale the canvas to reference the video. 
+  // This makes the background match the exact width of the video, but scales its height 
+  // proportionally to maintain the target aspect ratio (W/H), ensuring it's always taller than a "short" video.
+  parts.push(`[_canvas][_vid_measure]scale2ref=iw:iw*(${H}/${W})[_bg_scaled][_vid_ref]`);
 
-  // Steel blue accent
-  const p3x = Math.round(W * 0.05);
-  const p3y = Math.round(H * 0.30);
-  const p3w = Math.round(W * 0.45);
-  const p3h = Math.round(H * 0.50);
-  parts.push(`[_mgbg2]drawbox=x=${p3x}:y=${p3y}:w=${p3w}:h=${p3h}:color=0x0e4a7a@0.30:t=fill[_mgbg3]`);
+  // 4. Draw the mesh gradient on top of this dynamically-sized background
+  parts.push(`[_bg_scaled]drawbox=x=-iw*0.1:y=-ih*0.1:w=iw*0.75:h=ih*0.65:color=0x1a3a6e@0.50:t=fill[_mgbg1]`);
+  parts.push(`[_mgbg1]drawbox=x=iw*0.30:y=ih*0.35:w=iw*0.80:h=ih*0.75:color=0x0d2657@0.55:t=fill[_mgbg2]`);
+  parts.push(`[_mgbg2]drawbox=x=iw*0.05:y=ih*0.30:w=iw*0.45:h=ih*0.50:color=0x0e4a7a@0.30:t=fill[_mgbg3]`);
+  parts.push(`[_mgbg3]gblur=sigma=70[_gradient_back]`);
 
-  // Blur into smooth gradient
-  parts.push(`[_mgbg3]gblur=sigma=70[_mgbgfinal]`);
-
-  // Define the EXACT box size we want the video to occupy.
-  // We want it to span 100% of the width, but only 75% of the height.
-  const targetW = Math.floor(W / 2) * 2;
-  const targetH = Math.floor((H * 0.75) / 2) * 2; // Change 0.75 to adjust how much top/bottom gradient shows
-
-  // FIX STRETCHING: 
-  // 1. Scale the video so it completely fills our target box dimensions (using increase)
-  // 2. Crop the video from the center so it matches targetW and targetH perfectly without distortion.
-  parts.push(`[${videoInputIdx}:v]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH},setsar=1[_mgvid]`);
-  
-  // Centering the video vertically leaves equal gradient bars at the top and bottom
-  parts.push(`[_mgbgfinal][_mgvid]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2[base]`);
+  // 5. Overlay the original, unedited video directly onto the center of this custom gradient strip.
+  // Because the gradient background width perfectly matches the video width, the left and right sides hit the edge seamlessly.
+  // The gradient will ONLY peek through at the top and bottom where the video is too short to cover it.
+  parts.push(`[_gradient_back][_vid_original]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2:shortest=1[base]`);
 
   return parts;
 }
