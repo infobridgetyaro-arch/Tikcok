@@ -466,18 +466,20 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
         }
       }
     } else {
-                  // Subscriber count styles
+                        // Subscriber count styles
       const subW = Math.round(scaleW * 0.32);
       const subFontSizeIdeal = Math.max(12, Math.round(scaleH * 0.044));
       const subPad = Math.round(subFontSizeIdeal * 0.5);
-      const labelSize = Math.max(8, Math.round(subFontSizeIdeal * 0.60));
       const showViewers = !!(stream as any).subBoxShowViewers;
-      // Cap font size so the count text never overflows the box.
-      // DejaVu Bold glyphs average ~0.62× fontsize in width.
-      // Budget for up to 13 chars ("1,234,567,890") or 22 with viewers.
-      const maxCountChars = showViewers ? 22 : 13;
       const availableW = subW - subPad * 2;
-      const subFontSize = Math.max(12, Math.min(subFontSizeIdeal, Math.floor(availableW / (maxCountChars * 0.62))));
+
+      // Use 0.80 ratio (conservative for DejaVu Bold uppercase)
+      const labelChars = showViewers ? 14 : 11;
+      const maxCountChars = showViewers ? 22 : 15;
+      const labelSizeIdeal = Math.max(8, Math.round(subFontSizeIdeal * 0.60));
+      const labelSize = Math.max(8, Math.min(labelSizeIdeal, Math.floor(availableW / (labelChars * 0.80))));
+      const subFontSize = Math.max(12, Math.min(subFontSizeIdeal, Math.floor(availableW / (maxCountChars * 0.80))));
+
       const subH = labelSize + subFontSize + subPad * 2 + 10;
       let subX = scaleW - subW - margin;
       let subY = margin;
@@ -489,8 +491,15 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
         case "bottom-left": subX = margin; subY = scaleH - subH - effectiveTickerH - margin; break;
         case "bottom-right": subY = scaleH - subH - effectiveTickerH - margin; break;
       }
-      // Clamp so box never clips outside the frame
       ({ x: subX, y: subY } = clampBox(subX, subY, subW, subH, scaleW, scaleH));
+
+      // x expressions: text starts at subX+subPad but shifts left if text_w
+      // would push past the right wall (subX+subW-subPad). max(subX) prevents
+      // the text from sliding off the left edge of the box.
+      const boxRight = subX + subW - subPad;
+      const textStartX = subX + subPad;
+      // FFmpeg drawtext runtime expression — text_w is the actual rendered width
+      const clampedX = `max(${subX}\\,min(${textStartX}\\,${boxRight} - text_w))`;
 
       switch (subStyle) {
         case "minimal":
@@ -505,7 +514,6 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
           parts.push(`drawbox=x=${subX}:y=${subY + subH - 3}:w=${subW}:h=3:color=0xDAA520@1:t=fill`);
           break;
         case "flip-counter": {
-          // Split-flap / departure board aesthetic
           const counterH = subFontSize + Math.round(subFontSize * 0.55);
           parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x1c1c1c@0.97:t=fill`);
           parts.push(`drawbox=x=${subX + 2}:y=${subY + subPad}:w=${subW - 4}:h=${counterH}:color=0x141414@1:t=fill`);
@@ -529,7 +537,7 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
           const sbHdrH = Math.round(subH * 0.36);
           parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0a0e22@0.97:t=fill`);
           parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${sbHdrH}:color=0x1a56db@1:t=fill`);
-          parts.push(`drawtext=fontfile='${fontEsc}':text='SUBSCRIBERS':fontcolor=white:fontsize=${Math.max(7, Math.round(sbHdrH * 0.52))}:x=${subX + subPad}:y=${subY + Math.round((sbHdrH - Math.max(7, Math.round(sbHdrH * 0.52))) / 2)}`);
+          parts.push(`drawtext=fontfile='${fontEsc}':text='SUBSCRIBERS':fontcolor=white:fontsize=${Math.max(7, Math.round(sbHdrH * 0.52))}:x=${clampedX}:y=${subY + Math.round((sbHdrH - Math.max(7, Math.round(sbHdrH * 0.52))) / 2)}`);
           break;
         }
         case "pill-badge":
@@ -551,13 +559,13 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
         : "white";
       const countLabel = showViewers ? "SUBS / VIEWERS" : "SUBSCRIBERS";
       if (subStyle !== "scoreboard") {
-        parts.push(`drawtext=fontfile='${fontEsc}':text='${countLabel}':fontcolor=${labelColor}:fontsize=${labelSize}:x=${subX + subPad}:y=${subY + subPad}`);
+        parts.push(`drawtext=fontfile='${fontEsc}':text='${countLabel}':fontcolor=${labelColor}:fontsize=${labelSize}:x=${clampedX}:y=${subY + subPad}`);
       }
       if (useTextfile) {
         const subPath = escapeTextfilePath(getSubBoxTextFilePath(stream.id));
-        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${subPath}':reload=1:fontcolor=${countColor}:fontsize=${subFontSize}:x=${subX + subPad}:y=${subY + subPad + labelSize + 4}`);
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${subPath}':reload=1:fontcolor=${countColor}:fontsize=${subFontSize}:x=${clampedX}:y=${subY + subPad + labelSize + 4}`);
       } else {
-        parts.push(`drawtext=fontfile='${fontEsc}':text='—':fontcolor=${countColor}:fontsize=${subFontSize}:x=${subX + subPad}:y=${subY + subPad + labelSize + 4}`);
+        parts.push(`drawtext=fontfile='${fontEsc}':text='—':fontcolor=${countColor}:fontsize=${subFontSize}:x=${clampedX}:y=${subY + subPad + labelSize + 4}`);
       }
     }
   }
