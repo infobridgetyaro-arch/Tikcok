@@ -960,7 +960,7 @@ export function StreamCard({ stream, logs, onStart, onStop, onRestart, onDelete,
         </div>
 
         {sourceType === "tiktok" && (
-          <LivePreview streamId={stream.id} tiktokUsername={stream.tiktokUsername} />
+          <LivePreview streamId={stream.id} tiktokUsername={stream.tiktokUsername} ratio={stream.ratio} />
         )}
 
         <Collapsible open={logsOpen} onOpenChange={setLogsOpen}>
