@@ -466,11 +466,18 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
         }
       }
     } else {
-      // Subscriber count styles
-      const subFontSize = Math.max(12, Math.round(scaleH * 0.044));
-      const labelSize = Math.max(8, Math.round(subFontSize * 0.60));
-      const subPad = Math.round(subFontSize * 0.5);
+            // Subscriber count styles
       const subW = Math.round(scaleW * 0.32);
+      const subFontSizeIdeal = Math.max(12, Math.round(scaleH * 0.044));
+      const subPad = Math.round(subFontSizeIdeal * 0.5);
+      const labelSize = Math.max(8, Math.round(subFontSizeIdeal * 0.60));
+      const showViewers = !!(stream as any).subBoxShowViewers;
+      // Cap font size so the count text never overflows the box.
+      // DejaVu Bold glyphs average ~0.62× fontsize in width.
+      // Budget for up to 13 chars ("1,234,567,890") or 22 with viewers.
+      const maxCountChars = showViewers ? 22 : 13;
+      const availableW = subW - subPad * 2;
+      const subFontSize = Math.max(12, Math.min(subFontSizeIdeal, Math.floor(availableW / (maxCountChars * 0.62))));
       const subH = labelSize + subFontSize + subPad * 2 + 10;
       let subX = scaleW - subW - margin;
       let subY = margin;
@@ -542,7 +549,6 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       const countColor = subStyle === "flip-counter" ? "0xFFE000"
         : subStyle === "whatsapp" ? "white"
         : "white";
-      const showViewers = !!(stream as any).subBoxShowViewers;
       const countLabel = showViewers ? "SUBS / VIEWERS" : "SUBSCRIBERS";
       if (subStyle !== "scoreboard") {
         parts.push(`drawtext=fontfile='${fontEsc}':text='${countLabel}':fontcolor=${labelColor}:fontsize=${labelSize}:x=${subX + subPad}:y=${subY + subPad}`);
