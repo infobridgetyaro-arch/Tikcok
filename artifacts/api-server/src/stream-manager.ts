@@ -114,7 +114,7 @@ function buildMeshGradientBg(scaleW: number, scaleH: number, fps: number, videoI
   const p2h = Math.round(H * 0.75);
   parts.push(`[_mgbg1]drawbox=x=${p2x}:y=${p2y}:w=${p2w}:h=${p2h}:color=0x0d2657@0.55:t=fill[_mgbg2]`);
 
-  // Steel blue accent centre
+  // Steel blue accent
   const p3x = Math.round(W * 0.05);
   const p3y = Math.round(H * 0.30);
   const p3w = Math.round(W * 0.45);
@@ -122,28 +122,23 @@ function buildMeshGradientBg(scaleW: number, scaleH: number, fps: number, videoI
   parts.push(`[_mgbg2]drawbox=x=${p3x}:y=${p3y}:w=${p3w}:h=${p3h}:color=0x0e4a7a@0.30:t=fill[_mgbg3]`);
 
   // Blur into smooth gradient
-  parts.push(`[_mgbg3]gblur=sigma=70,format=rgba[_mgbgfinal]`);
+  parts.push(`[_mgbg3]gblur=sigma=70[_mgbgfinal]`);
 
-  // Scale video to 72% of frame — gradient shows on ALL 4 sides like your screenshot
-  const vidW = Math.floor(W * 0.72 / 2) * 2;
-  const vidH = Math.floor(H * 0.72 / 2) * 2;
+  // CHANGES MADE HERE:
+  // 1. Force the video width to match the full canvas width (W)
+  // 2. Scale the height down to 75% (or any percentage you prefer) to leave room at top/bottom
+  const vidW = Math.floor(W / 2) * 2; 
+  const vidH = Math.floor((H * 0.75) / 2) * 2; // Adjust 0.75 to change gradient thickness
 
-  // Rounded-corner mask on the video tile
-  const rounding = Math.round(Math.min(vidW, vidH) * 0.04);
-
-  parts.push(
-    `[${videoInputIdx}:v]` +
-    `scale=${vidW}:${vidH}:force_original_aspect_ratio=decrease,` +
-    `format=rgba,` +
-    `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=0x00000000` +
-    `[_mgvid]`
-  );
-
-  // Composite: gradient behind, inset video on top
-  parts.push(`[_mgbgfinal][_mgvid]overlay=0:0:format=auto[base]`);
+  // Scale video to exact dimensions (ignoring original aspect ratio to ensure full bleed left-to-right)
+  parts.push(`[${videoInputIdx}:v]scale=${vidW}:${vidH},setsar=1[_mgvid]`);
+  
+  // Centering the video vertically leaves equal gradient bars at the top and bottom
+  parts.push(`[_mgbgfinal][_mgvid]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2[base]`);
 
   return parts;
 }
+
 
 function findFont(): string {
   const candidates = [
