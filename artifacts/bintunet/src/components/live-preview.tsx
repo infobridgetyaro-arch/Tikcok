@@ -125,23 +125,32 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
 
       {showPreview && (
         <div
-          className="relative rounded-xl overflow-hidden"
+          className="rounded-xl overflow-hidden"
           data-testid={`preview-container-${streamId}`}
           style={{
-            aspectRatio: "16 / 9",
             background: "linear-gradient(180deg, #1a3a5c 0%, #122840 50%, #0d1f30 100%)",
             border: "1px solid rgba(255,255,255,0.06)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            position: "relative",
+            minHeight: loading || error ? 120 : undefined,
           }}
         >
-          {/* Single video — object-fit:contain keeps correct ratio, blue bg fills bars */}
+          {/*
+            width:auto + height:auto + max-width:100% + max-height:480px
+            The browser keeps the intrinsic aspect ratio when both w/h are auto.
+            max-width prevents overflow; max-height caps portrait videos.
+            Result: zero stretching for portrait OR landscape content.
+          */}
           <video
             ref={videoRef}
             style={{
-              position: "absolute",
-              inset: 0,
-              width: "100%",
-              height: "100%",
-              objectFit: "contain",
+              display: "block",
+              width: "auto",
+              height: "auto",
+              maxWidth: "100%",
+              maxHeight: 480,
             }}
             muted
             playsInline
