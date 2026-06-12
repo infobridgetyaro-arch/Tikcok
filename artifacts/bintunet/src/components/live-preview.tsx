@@ -105,8 +105,7 @@ export function LivePreview({ streamId, tiktokUsername, ratio }: LivePreviewProp
 
   if (!tiktokUsername) return null;
 
-  // Use the stream's own ratio setting — same field used by the overlay preview in stream-card
-  const aspectRatio = ratio === "mobile" ? "9/16" : "16/9";
+  const isMobile = ratio === "mobile";
 
   return (
     <div className="space-y-2">
@@ -132,20 +131,44 @@ export function LivePreview({ streamId, tiktokUsername, ratio }: LivePreviewProp
           className="relative rounded-xl overflow-hidden"
           data-testid={`preview-container-${streamId}`}
           style={{
-            aspectRatio,
             background: "linear-gradient(180deg, #1a3a5c 0%, #122840 50%, #0d1f30 100%)",
             border: "1px solid rgba(255,255,255,0.06)",
+            // Portrait (mobile 9:16): fixed 300px height, video width = 300×9/16 = 169px, centred
+            // Landscape (desktop 16:9): auto height from 16/9 aspect ratio
+            ...(isMobile
+              ? { height: 300, display: "flex", alignItems: "center", justifyContent: "center" }
+              : { aspectRatio: "16/9" }
+            ),
           }}
         >
-          <video
-            ref={videoRef}
-            className="absolute inset-0 w-full h-full"
-            style={{ objectFit: "contain" }}
-            muted
-            playsInline
-            autoPlay
-            data-testid={`video-preview-${streamId}`}
-          />
+          {/*
+           * Portrait: height:100% + width:auto → browser sizes video to fill the
+           *   300px container height while width scales from intrinsic 9:16 ratio.
+           *   Result: ~169px wide × 300px tall — perfectly proportioned, no stretch.
+           *
+           * Landscape: absolute fill + object-fit:contain → fits 16:9 video in
+           *   the 16:9 container with no distortion.
+           */}
+          {isMobile ? (
+            <video
+              ref={videoRef}
+              style={{ height: "100%", width: "auto", display: "block" }}
+              muted
+              playsInline
+              autoPlay
+              data-testid={`video-preview-${streamId}`}
+            />
+          ) : (
+            <video
+              ref={videoRef}
+              className="absolute inset-0 w-full h-full"
+              style={{ objectFit: "contain" }}
+              muted
+              playsInline
+              autoPlay
+              data-testid={`video-preview-${streamId}`}
+            />
+          )}
 
           {loading && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
