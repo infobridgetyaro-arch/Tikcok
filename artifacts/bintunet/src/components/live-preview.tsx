@@ -15,11 +15,13 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLive, setIsLive] = useState<boolean | null>(null);
+  const [isPortrait, setIsPortrait] = useState(false);
 
   const loadPreview = useCallback(async () => {
     if (!tiktokUsername) return;
     setLoading(true);
     setError(null);
+    setIsPortrait(false);
 
     try {
       const res = await fetch(`/api/streams/${streamId}/preview`, {
@@ -49,6 +51,14 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
+
+      const detectOrientation = () => {
+        if (video.videoWidth > 0 && video.videoHeight > 0) {
+          setIsPortrait(video.videoHeight > video.videoWidth);
+        }
+      };
+
+      video.addEventListener("loadedmetadata", detectOrientation, { once: true });
 
       if (Hls.isSupported()) {
         const hls = new Hls({
@@ -104,6 +114,11 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
 
   if (!tiktokUsername) return null;
 
+  const bgStyle = {
+    background: "linear-gradient(180deg, #1a3a5c 0%, #122840 50%, #0d1f30 100%)",
+    border: "1px solid rgba(255,255,255,0.06)",
+  };
+
   return (
     <div className="space-y-2">
       <Button
@@ -127,10 +142,15 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
         <div
           className="relative rounded-xl overflow-hidden"
           data-testid={`preview-container-${streamId}`}
-          style={{
-            background: "linear-gradient(180deg, #1a3a5c 0%, #122840 50%, #0d1f30 100%)",
-            border: "1px solid rgba(255,255,255,0.06)",
-            minHeight: 80,
+          style={isPortrait ? {
+            ...bgStyle,
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            padding: "12px 8px",
+          } : {
+            ...bgStyle,
+            aspectRatio: "16/9",
           }}
         >
           {loading && (
@@ -160,19 +180,34 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
             </div>
           )}
 
-          <video
-            ref={videoRef}
-            className="relative z-10 block w-full h-auto"
-            style={{
-              objectFit: "contain",
-              maxHeight: 520,
-              display: "block",
-            }}
-            muted
-            playsInline
-            autoPlay
-            data-testid={`video-preview-${streamId}`}
-          />
+          {/* Portrait: constrain by height so width follows aspect ratio naturally */}
+          {isPortrait ? (
+            <video
+              ref={videoRef}
+              style={{
+                height: "auto",
+                maxHeight: 460,
+                width: "auto",
+                display: "block",
+                borderRadius: 8,
+              }}
+              muted
+              playsInline
+              autoPlay
+              data-testid={`video-preview-${streamId}`}
+            />
+          ) : (
+            /* Landscape: fill the 16/9 container, object-contain prevents distortion */
+            <video
+              ref={videoRef}
+              className="absolute inset-0 w-full h-full"
+              style={{ objectFit: "contain", display: "block" }}
+              muted
+              playsInline
+              autoPlay
+              data-testid={`video-preview-${streamId}`}
+            />
+          )}
 
           {isLive && !loading && !error && (
             <div className="absolute top-2 left-2 z-20 bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1">
