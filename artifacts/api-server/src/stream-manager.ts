@@ -93,46 +93,45 @@ function sendStatus(streamId: string, status: string) {
  * Outputs label [base].
  */
 function buildMeshGradientBg(scaleW: number, scaleH: number, fps: number, videoInputIdx = 0): string[] {
-const W = scaleW;
-const H = scaleH;
-const parts: string[] = [];
+  const W = scaleW;
+  const H = scaleH;
+  const parts: string[] = [];
 
-// Dark violet base canvas
-parts.push(color=c=0x040010:s=${W}x${H}:r=${fps}[_mgbg0]);
+  // Dark violet base canvas
+  parts.push(`color=c=0x040010:s=${W}x${H}:r=${fps}[_mgbg0]`);
 
-// Purple glow — top-left
-const p1x = -Math.round(W * 0.12);
-const p1y = -Math.round(H * 0.12);
-const p1w = Math.round(W * 0.68);
-const p1h = Math.round(H * 0.68);
-parts.push([_mgbg0]drawbox=x=${p1x}:y=${p1y}:w=${p1w}:h=${p1h}:color=0x6d28d9@0.55:t=fill[_mgbg1]);
+  // Purple glow — top-left
+  const p1x = -Math.round(W * 0.12);
+  const p1y = -Math.round(H * 0.12);
+  const p1w = Math.round(W * 0.68);
+  const p1h = Math.round(H * 0.68);
+  parts.push(`[_mgbg0]drawbox=x=${p1x}:y=${p1y}:w=${p1w}:h=${p1h}:color=0x6d28d9@0.55:t=fill[_mgbg1]`);
 
-// Cyan glow — bottom-right
-const p2x = Math.round(W * 0.42);
-const p2y = Math.round(H * 0.42);
-const p2w = Math.round(W * 0.72);
-const p2h = Math.round(H * 0.72);
-parts.push([_mgbg1]drawbox=x=${p2x}:y=${p2y}:w=${p2w}:h=${p2h}:color=0x0891b2@0.45:t=fill[_mgbg2]);
+  // Cyan glow — bottom-right
+  const p2x = Math.round(W * 0.42);
+  const p2y = Math.round(H * 0.42);
+  const p2w = Math.round(W * 0.72);
+  const p2h = Math.round(H * 0.72);
+  parts.push(`[_mgbg1]drawbox=x=${p2x}:y=${p2y}:w=${p2w}:h=${p2h}:color=0x0891b2@0.45:t=fill[_mgbg2]`);
 
-// Magenta accent — centre
-const p3x = Math.round(W * 0.26);
-const p3y = Math.round(H * 0.22);
-const p3w = Math.round(W * 0.48);
-const p3h = Math.round(H * 0.56);
-parts.push([_mgbg2]drawbox=x=${p3x}:y=${p3y}:w=${p3w}:h=${p3h}:color=0xc026d3@0.28:t=fill[_mgbg3]);
+  // Magenta accent — centre
+  const p3x = Math.round(W * 0.26);
+  const p3y = Math.round(H * 0.22);
+  const p3w = Math.round(W * 0.48);
+  const p3h = Math.round(H * 0.56);
+  parts.push(`[_mgbg2]drawbox=x=${p3x}:y=${p3y}:w=${p3w}:h=${p3h}:color=0xc026d3@0.28:t=fill[_mgbg3]`);
 
-// Heavy gaussian blur turns the boxes into smooth gradient blobs
-parts.push([_mgbg3]gblur=sigma=60[_mgbgfinal]);
+  // Heavy gaussian blur turns the boxes into smooth gradient blobs
+  parts.push(`[_mgbg3]gblur=sigma=60[_mgbgfinal]`);
 
-// Scale source video to fit frame without letterbox padding
-parts.push([${videoInputIdx}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease[_mgvid]);
+  // Scale source video to fit frame without letterbox padding
+  parts.push(`[${videoInputIdx}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease[_mgvid]`);
 
-// Overlay video centred on gradient canvas → [base]
-parts.push([_mgbgfinal][_mgvid]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2[base]);
+  // Overlay video centred on gradient canvas → [base]
+  parts.push(`[_mgbgfinal][_mgvid]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2[base]`);
 
-return parts;
+  return parts;
 }
-
 
 
 function findFont(): string {
