@@ -23,9 +23,7 @@ export function LivePreview({ streamId, tiktokUsername, ratio }: LivePreviewProp
     setError(null);
 
     try {
-      const res = await fetch(`/api/streams/${streamId}/preview`, {
-        credentials: "include",
-      });
+      const res = await fetch(`/api/streams/${streamId}/preview`, { credentials: "include" });
       const data = await res.json();
 
       if (!res.ok) {
@@ -46,10 +44,7 @@ export function LivePreview({ streamId, tiktokUsername, ratio }: LivePreviewProp
       const video = videoRef.current;
       if (!video) { setLoading(false); return; }
 
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
 
       if (Hls.isSupported()) {
         const hls = new Hls({
@@ -64,28 +59,14 @@ export function LivePreview({ streamId, tiktokUsername, ratio }: LivePreviewProp
         hlsRef.current = hls;
         hls.loadSource(data.hlsUrl);
         hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          video.play().catch(() => {});
-          setLoading(false);
-        });
-        hls.on(Hls.Events.ERROR, (_event, errData) => {
-          if (errData.fatal) {
-            setError("Stream ended or unavailable");
-            setLoading(false);
-            hls.destroy();
-            hlsRef.current = null;
-          }
+        hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(() => {}); setLoading(false); });
+        hls.on(Hls.Events.ERROR, (_e, d) => {
+          if (d.fatal) { setError("Stream ended or unavailable"); setLoading(false); hls.destroy(); hlsRef.current = null; }
         });
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
         video.src = data.hlsUrl;
-        video.addEventListener("loadedmetadata", () => {
-          video.play().catch(() => {});
-          setLoading(false);
-        });
-        video.addEventListener("error", () => {
-          setError("Stream ended or unavailable");
-          setLoading(false);
-        });
+        video.onloadedmetadata = () => { video.play().catch(() => {}); setLoading(false); };
+        video.onerror = () => { setError("Stream ended or unavailable"); setLoading(false); };
       } else {
         setError("Browser does not support HLS playback");
         setLoading(false);
@@ -98,14 +79,10 @@ export function LivePreview({ streamId, tiktokUsername, ratio }: LivePreviewProp
 
   useEffect(() => {
     if (showPreview && tiktokUsername) loadPreview();
-    return () => {
-      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-    };
+    return () => { if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } };
   }, [showPreview, tiktokUsername, loadPreview]);
 
   if (!tiktokUsername) return null;
-
-  const isMobile = ratio === "mobile";
 
   return (
     <div className="space-y-2">
@@ -127,82 +104,69 @@ export function LivePreview({ streamId, tiktokUsername, ratio }: LivePreviewProp
       </Button>
 
       {showPreview && (
+        /*
+         * Outer: blue gradient stage, full card width.
+         * Inner: aspect-ratio-locked box, centred horizontally.
+         *   mobile → 9/16 portrait box, capped at 300px tall
+         *   desktop → 16/9 landscape box, full width
+         * Video: absolutely fills inner box, object-fit:contain ensures
+         *   no stretch and no crop regardless of stream resolution.
+         * Single <video> element — never conditionally swapped — so HLS stays attached.
+         */
         <div
-          className="relative rounded-xl overflow-hidden"
-          data-testid={`preview-container-${streamId}`}
           style={{
-            background: "linear-gradient(180deg, #1a3a5c 0%, #122840 50%, #0d1f30 100%)",
+            background: "linear-gradient(180deg,#1a3a5c 0%,#122840 50%,#0d1f30 100%)",
             border: "1px solid rgba(255,255,255,0.06)",
-            // Portrait (mobile 9:16): fixed 300px height, video width = 300×9/16 = 169px, centred
-            // Landscape (desktop 16:9): auto height from 16/9 aspect ratio
-            ...(isMobile
-              ? { height: 300, display: "flex", alignItems: "center", justifyContent: "center" }
-              : { aspectRatio: "16/9" }
-            ),
+            borderRadius: 12,
+            overflow: "hidden",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            ...(ratio === "mobile" ? { height: 300 } : {}),
           }}
+          data-testid={`preview-container-${streamId}`}
         >
-          {/*
-           * Portrait: height:100% + width:auto → browser sizes video to fill the
-           *   300px container height while width scales from intrinsic 9:16 ratio.
-           *   Result: ~169px wide × 300px tall — perfectly proportioned, no stretch.
-           *
-           * Landscape: absolute fill + object-fit:contain → fits 16:9 video in
-           *   the 16:9 container with no distortion.
-           */}
-          {isMobile ? (
+          <div
+            style={{
+              position: "relative",
+              ...(ratio === "mobile"
+                ? { height: "100%", aspectRatio: "9/16" }
+                : { width: "100%", aspectRatio: "16/9" }
+              ),
+            }}
+          >
+            {/* Single video element — never unmounted while preview is open */}
             <video
               ref={videoRef}
-              style={{ height: "100%", width: "auto", display: "block" }}
               muted
               playsInline
               autoPlay
+              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", display: "block" }}
               data-testid={`video-preview-${streamId}`}
             />
-          ) : (
-            <video
-              ref={videoRef}
-              className="absolute inset-0 w-full h-full"
-              style={{ objectFit: "contain" }}
-              muted
-              playsInline
-              autoPlay
-              data-testid={`video-preview-${streamId}`}
-            />
-          )}
 
-          {loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
-              <div className="flex flex-col items-center gap-2 text-white/70">
-                <Loader2 className="w-6 h-6 animate-spin" />
-                <span className="text-xs">Loading preview...</span>
+            {loading && (
+              <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.8)", gap: 8, zIndex: 10 }}>
+                <Loader2 className="w-6 h-6 animate-spin text-white/70" />
+                <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>Loading preview...</span>
               </div>
-            </div>
-          )}
+            )}
 
-          {error && !loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-10">
-              <div className="flex flex-col items-center gap-2 text-white/50 text-center px-4">
-                <WifiOff className="w-8 h-8" />
-                <span className="text-xs">{error}</span>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={loadPreview}
-                  className="mt-1 text-xs h-7"
-                  data-testid={`button-retry-preview-${streamId}`}
-                >
-                  Retry
-                </Button>
+            {error && !loading && (
+              <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.9)", gap: 8, zIndex: 10, padding: "0 16px", textAlign: "center" }}>
+                <WifiOff className="w-8 h-8" style={{ color: "rgba(255,255,255,0.5)" }} />
+                <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{error}</span>
+                <Button variant="secondary" size="sm" onClick={loadPreview} style={{ fontSize: 12, height: 28, marginTop: 4 }} data-testid={`button-retry-preview-${streamId}`}>Retry</Button>
               </div>
-            </div>
-          )}
+            )}
 
-          {isLive && !loading && !error && (
-            <div className="absolute top-2 left-2 z-20 bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-              LIVE
-            </div>
-          )}
+            {isLive && !loading && !error && (
+              <div style={{ position: "absolute", top: 8, left: 8, zIndex: 20, background: "#dc2626", color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#fff" }} />
+                LIVE
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
