@@ -643,9 +643,8 @@ function SectionChip({ icon: Icon, label, color = "#38bdf8" }: { icon: any; labe
 }
 
 // ── Tab definition ────────────────────────────────────────────────────────────
-type Tab = "layout" | "overlay" | "subs" | "ads" | "brand";
+type Tab = "overlay" | "subs" | "ads" | "brand";
 const TABS: { id: Tab; label: string; icon: any; color: string }[] = [
-  { id: "layout",  label: "Layout",  icon: LayoutGrid,     color: "#38bdf8" },
   { id: "overlay", label: "Overlay", icon: Layers,         color: "#a78bfa" },
   { id: "subs",    label: "Subs",    icon: Users,          color: "#34d399" },
   { id: "ads",     label: "Ads",     icon: Megaphone,      color: "#f97316" },
@@ -656,7 +655,7 @@ const TABS: { id: Tab; label: string; icon: any; color: string }[] = [
 function AdminStreamOverlay({ stream, index, onUpdate }: {
   stream: StreamConfig; index: number; onUpdate: (id: string, data: Partial<StreamConfig>) => void;
 }) {
-  const [tab, setTab] = useState<Tab>("layout");
+  const [tab, setTab] = useState<Tab>("overlay");
   const [draft, setDraft] = useState<OverlayDraft>(() => buildDraft(stream));
   const [applying, setApplying] = useState(false);
   const [justApplied, setJustApplied] = useState(false);
@@ -739,79 +738,6 @@ function AdminStreamOverlay({ stream, index, onUpdate }: {
 
       {/* Tab content */}
       <div className="px-4 py-3 space-y-4 min-h-[320px]">
-
-        {/* ═══════════ LAYOUT TAB ═══════════ */}
-        {tab === "layout" && (
-          <>
-            <SectionChip icon={LayoutGrid} label="Stream Layout" color="#38bdf8" />
-            <GridPicker value={draft.viewerLayout} onChange={(v) => set("viewerLayout", v as any)} options={LAYOUT_OPTIONS} cols={3} />
-
-            <SectionChip icon={Move} label="Screen Position & Size" color="#38bdf8" />
-            <div className="grid grid-cols-2 gap-4">
-              <FieldRow label={`Size  ${Math.round(draft.viewerScreenScale * 100)}%`}>
-                <Slider value={[draft.viewerScreenScale]} min={0.5} max={1.5} step={0.05}
-                  onValueChange={([v]) => set("viewerScreenScale", v)} />
-                <div className="flex justify-between text-[9px] text-slate-700">
-                  <span>50%</span><span>100%</span><span>150%</span>
-                </div>
-              </FieldRow>
-              <div className="space-y-3">
-                <FieldRow label={`X Position  ${draft.viewerScreenX}%`}>
-                  <Slider value={[draft.viewerScreenX]} min={0} max={100} step={1}
-                    onValueChange={([v]) => set("viewerScreenX", v)} />
-                </FieldRow>
-                <FieldRow label={`Y Position  ${draft.viewerScreenY}%`}>
-                  <Slider value={[draft.viewerScreenY]} min={0} max={100} step={1}
-                    onValueChange={([v]) => set("viewerScreenY", v)} />
-                </FieldRow>
-              </div>
-            </div>
-
-            {/* Screen position visual picker */}
-            <div className="flex gap-4 items-start">
-              <div>
-                <Label className="text-[10px] text-slate-500 uppercase tracking-widest font-bold block mb-1.5">Snap Position</Label>
-                <PositionGrid value={
-                  draft.viewerScreenX < 20 && draft.viewerScreenY < 20 ? "top-left" :
-                  draft.viewerScreenX > 80 && draft.viewerScreenY < 20 ? "top-right" :
-                  draft.viewerScreenX < 20 && draft.viewerScreenY > 80 ? "bottom-left" :
-                  draft.viewerScreenX > 80 && draft.viewerScreenY > 80 ? "bottom-right" :
-                  draft.viewerScreenX < 20 ? "center-left" :
-                  draft.viewerScreenX > 80 ? "center-right" :
-                  draft.viewerScreenY < 20 ? "top-center" :
-                  draft.viewerScreenY > 80 ? "bottom-center" : "center"
-                } onChange={(pos) => {
-                  const map: Record<string, [number, number]> = {
-                    "top-left": [10, 10], "top-center": [50, 10], "top-right": [90, 10],
-                    "center-left": [10, 50], "center": [50, 50], "center-right": [90, 50],
-                    "bottom-left": [10, 90], "bottom-center": [50, 90], "bottom-right": [90, 90],
-                  };
-                  const [x, y] = map[pos] || [50, 50];
-                  set("viewerScreenX", x); set("viewerScreenY", y);
-                }} />
-              </div>
-              <div className="flex-1">
-                <Label className="text-[10px] text-slate-500 uppercase tracking-widest font-bold block mb-1.5">Preview</Label>
-                <div className="relative rounded-lg overflow-hidden"
-                  style={{ aspectRatio: "16/9", background: "#0a0f1e", border: "1px solid rgba(30,41,59,0.8)" }}>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="text-slate-800 text-[6px] font-mono tracking-widest">CANVAS</span>
-                  </div>
-                  <div className="absolute" style={{
-                    left: `${Math.max(5, Math.min(85, draft.viewerScreenX))}%`,
-                    top: `${Math.max(5, Math.min(85, draft.viewerScreenY))}%`,
-                    transform: `translate(-50%, -50%) scale(${draft.viewerScreenScale})`,
-                    width: draft.viewerLayout.startsWith("split") ? "80%" : draft.viewerLayout === "fullscreen" ? "90%" : "50%",
-                    aspectRatio: stream.ratio === "mobile" ? "9/16" : "16/9",
-                    background: "#1e293b",
-                    border: "1px solid rgba(56,189,248,0.4)",
-                    borderRadius: 2,
-                  }} />
-                </div>
-              </div>
-            </div>
-          </>
-        )}
 
         {/* ═══════════ OVERLAY TAB ═══════════ */}
         {tab === "overlay" && (

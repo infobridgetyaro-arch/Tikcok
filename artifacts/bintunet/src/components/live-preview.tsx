@@ -130,28 +130,13 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
           style={{
             background: "linear-gradient(180deg, #1a3a5c 0%, #122840 50%, #0d1f30 100%)",
             border: "1px solid rgba(255,255,255,0.06)",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
             position: "relative",
-            minHeight: loading || error ? 120 : undefined,
           }}
         >
-          {/*
-            width:auto + height:auto + max-width:100% + max-height:480px
-            The browser keeps the intrinsic aspect ratio when both w/h are auto.
-            max-width prevents overflow; max-height caps portrait videos.
-            Result: zero stretching for portrait OR landscape content.
-          */}
+          {/* width:100% + height:auto on a block video = intrinsic aspect ratio always preserved */}
           <video
             ref={videoRef}
-            style={{
-              display: "block",
-              width: "auto",
-              height: "auto",
-              maxWidth: "100%",
-              maxHeight: 480,
-            }}
+            style={{ display: "block", width: "100%", height: "auto" }}
             muted
             playsInline
             autoPlay
@@ -159,7 +144,7 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
           />
 
           {loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
+            <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10" style={{ minHeight: 120 }}>
               <div className="flex flex-col items-center gap-2 text-white/70">
                 <Loader2 className="w-6 h-6 animate-spin" />
                 <span className="text-xs">Loading preview...</span>
@@ -168,7 +153,7 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
           )}
 
           {error && !loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-10">
+            <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-10" style={{ minHeight: 120 }}>
               <div className="flex flex-col items-center gap-2 text-white/50 text-center px-4">
                 <WifiOff className="w-8 h-8" />
                 <span className="text-xs">{error}</span>
