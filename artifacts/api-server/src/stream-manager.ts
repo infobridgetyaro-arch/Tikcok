@@ -799,7 +799,7 @@ function buildFFmpegArgs(
 
   if (hasLogo || hasQr || hasOverlayText) {
     const filterParts: string[] = [];
-    filterParts.push(`[0:v]scale=${scale}:force_original_aspect_ratio=increase,crop=${scale}[base]`);
+    filterParts.push(`[0:v]scale=${scale}:force_original_aspect_ratio=decrease,pad=${scale}:(ow-iw)/2:(oh-ih)/2:color=black[base]`);
 
     let currentLabel = "base";
 
@@ -859,7 +859,7 @@ function buildFFmpegArgs(
     args.push("-map", "0:a?");
   } else {
     args.push(
-      "-vf", `scale=${scale}:force_original_aspect_ratio=increase,crop=${scale}`
+      "-vf", `scale=${scale}:force_original_aspect_ratio=decrease,pad=${scale}:(ow-iw)/2:(oh-ih)/2:color=black`
     );
   }
 
