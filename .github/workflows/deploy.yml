@@ -73,10 +73,14 @@ jobs:
             sleep 1
           done
 
+      - name: Generate SSH key for tunnel
+        run: ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+
       - name: Start tunnel (localhost.run)
         run: |
           ssh -o StrictHostKeyChecking=no \
-              -o ServerAliveInterval=30 \
+              -o UserKnownHostsFile=/dev/null \
+              -i ~/.ssh/id_ed25519 \
               -R 80:localhost:8080 \
               localhost.run \
             2>&1 | tee /tmp/tunnel.log &
@@ -84,7 +88,7 @@ jobs:
 
           echo "Waiting for tunnel URL..."
           for i in $(seq 1 30); do
-            URL=$(grep -oP 'https://[a-zA-Z0-9\-]+\.lhr\.life' /tmp/tunnel.log | head -1)
+            URL=$(grep -oP 'https://\S+\.lhr\.life' /tmp/tunnel.log | head -1)
             if [ -n "$URL" ]; then
               echo ""
               echo "╔══════════════════════════════════════════════════════╗"
