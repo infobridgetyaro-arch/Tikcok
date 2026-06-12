@@ -89,10 +89,7 @@ function sendStatus(streamId: string, status: string) {
 
 /**
  * Builds filter_complex parts that create an animated mesh-gradient background
- * and overlay the source video centred on it.
- * FIX: uses RGBA + transparent pad so gradient shows through letterbox/pillarbox
- * areas even when source and output share the same aspect ratio (e.g. 9:16 TikTok
- * into a 9:16 mobile output). Video scaling logic is unchanged.
+ * and overlay the source video centred on it — replacing the old pad:color=black approach.
  * Outputs label [base].
  */
 function buildMeshGradientBg(scaleW: number, scaleH: number, fps: number, videoInputIdx = 0): string[] {
@@ -125,16 +122,13 @@ function buildMeshGradientBg(scaleW: number, scaleH: number, fps: number, videoI
   parts.push(`[_mgbg2]drawbox=x=${p3x}:y=${p3y}:w=${p3w}:h=${p3h}:color=0xc026d3@0.28:t=fill[_mgbg3]`);
 
   // Heavy gaussian blur turns the boxes into smooth gradient blobs
-  // format=rgba so the gradient canvas supports alpha compositing
-  parts.push(`[_mgbg3]gblur=sigma=60,format=rgba[_mgbgfinal]`);
+  parts.push(`[_mgbg3]gblur=sigma=60[_mgbgfinal]`);
 
-  // Scale source video to fit frame (same logic as before — unchanged)
-  // Then convert to RGBA and pad to exact frame size with transparent pixels.
-  // This means letterbox/pillarbox areas are transparent → gradient shows through.
-  parts.push(`[${videoInputIdx}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,format=rgba,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=0x00000000[_mgvid]`);
+  // Scale source video to fit frame without letterbox padding
+  parts.push(`[${videoInputIdx}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease[_mgvid]`);
 
-  // Composite: gradient behind, video (with transparent padding) on top
-  parts.push(`[_mgbgfinal][_mgvid]overlay=0:0:format=auto[base]`);
+  // Overlay video centred on gradient canvas → [base]
+  parts.push(`[_mgbgfinal][_mgvid]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2[base]`);
 
   return parts;
 }
@@ -175,6 +169,7 @@ function escapeTextfilePath(p: string): string {
   return p.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
 }
 
+/** Clamps a box so it always stays fully inside the frame. */
 function clampBox(x: number, y: number, w: number, h: number, frameW: number, frameH: number) {
   const cw = Math.min(w, frameW);
   const ch = Math.min(h, frameH);
@@ -193,11 +188,16 @@ function hexToFFmpeg(hex: string): string {
 
 function getLogoAlphaExpr(animation: string): string {
   switch (animation) {
-    case "pulse":   return "0.3+0.7*abs(sin(t*1.2))";
-    case "breathe": return "0.15+0.85*abs(sin(t*0.4))";
-    case "fade-in": return "min(t/3\\,1)";
-    case "flash":   return "if(gt(mod(t\\,6)\\,5)\\,0.3\\,1)";
-    default:        return "";
+    case "pulse":
+      return "0.3+0.7*abs(sin(t*1.2))";
+    case "breathe":
+      return "0.15+0.85*abs(sin(t*0.4))";
+    case "fade-in":
+      return "min(t/3\\,1)";
+    case "flash":
+      return "if(gt(mod(t\\,6)\\,5)\\,0.3\\,1)";
+    default:
+      return "";
   }
 }
 
@@ -215,7 +215,6 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
 
   const ltStyle = (stream as any).lowerThirdStyle || "none";
 
-  // ── Lower Third styles ─────────────────────────────────────────────────────
   if (ltStyle === "l-cut") {
     const ltNameSize = Math.max(14, Math.round(scaleH * 0.048));
     const ltTitleSize = Math.max(10, Math.round(scaleH * 0.032));
@@ -225,21 +224,19 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
     const ltY = scaleH - ltH - effectiveTickerH - 4;
     const accentColor = hexToFFmpeg((stream as any).lowerThirdAccentColor || "#e53935");
 
-    parts.push(`drawbox=x=0:y=${ltY}:w=${ltW}:h=${ltH}:color=0x0c1524@0.96:t=fill`);
+    parts.push(`drawbox=x=0:y=${ltY}:w=${ltW}:h=${ltH}:color=0x0c1524@0.95:t=fill`);
     parts.push(`drawbox=x=0:y=${ltY}:w=6:h=${ltH}:color=${accentColor}@1:t=fill`);
-    parts.push(`drawbox=x=6:y=${ltY}:w=${ltW - 6}:h=1:color=0xFFFFFF@0.08:t=fill`);
-    parts.push(`drawbox=x=0:y=${ltY + ltH - 2}:w=${ltW}:h=2:color=${accentColor}@0.4:t=fill`);
 
     if (useTextfile) {
       const ltNamePath = escapeTextfilePath(getLtNameTextFilePath(stream.id));
       const ltTitlePath = escapeTextfilePath(getLtTitleTextFilePath(stream.id));
-      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltNamePath}':reload=1:fontcolor=white:fontsize=${ltNameSize}:x=18:y=${ltY + ltPadV}`);
-      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltTitlePath}':reload=1:fontcolor=0xCCCCDD:fontsize=${ltTitleSize}:x=18:y=${ltY + ltPadV + ltNameSize + 6}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltNamePath}':reload=1:fontcolor=white:fontsize=${ltNameSize}:x=14:y=${ltY + ltPadV}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltTitlePath}':reload=1:fontcolor=0xBBBBCC:fontsize=${ltTitleSize}:x=14:y=${ltY + ltPadV + ltNameSize + 6}`);
     } else {
       const nameText = escapeDrawtext((stream as any).lowerThirdName || "");
       const titleText = escapeDrawtext((stream as any).lowerThirdTitle || "");
-      parts.push(`drawtext=fontfile='${fontEsc}':text='${nameText}':fontcolor=white:fontsize=${ltNameSize}:x=18:y=${ltY + ltPadV}`);
-      parts.push(`drawtext=fontfile='${fontEsc}':text='${titleText}':fontcolor=0xCCCCDD:fontsize=${ltTitleSize}:x=18:y=${ltY + ltPadV + ltNameSize + 6}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${nameText}':fontcolor=white:fontsize=${ltNameSize}:x=14:y=${ltY + ltPadV}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${titleText}':fontcolor=0xBBBBCC:fontsize=${ltTitleSize}:x=14:y=${ltY + ltPadV + ltNameSize + 6}`);
     }
   } else if (ltStyle === "breaking-news") {
     const bnH = Math.round(scaleH * 0.1);
@@ -252,10 +249,8 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
     const bnLabelSize = Math.max(9, Math.round(bnH * 0.24));
     const mainY = bnY + Math.round((bnH - bnMainSize - bnSubSize - 6) / 2);
 
-    parts.push(`drawbox=x=0:y=${bnY}:w=${scaleW}:h=${bnH}:color=0x080808@0.97:t=fill`);
-    parts.push(`drawbox=x=0:y=${bnY}:w=${scaleW}:h=2:color=${bnAccent}@0.85:t=fill`);
+    parts.push(`drawbox=x=0:y=${bnY}:w=${scaleW}:h=${bnH}:color=0x080808@0.96:t=fill`);
     parts.push(`drawbox=x=0:y=${bnY}:w=${badgeW}:h=${bnH}:color=${bnAccent}@1:t=fill`);
-    parts.push(`drawbox=x=0:y=${bnY}:w=${badgeW}:h=${Math.round(bnH * 0.4)}:color=0xFFFFFF@0.07:t=fill`);
     parts.push(`drawtext=fontfile='${fontEsc}':text='BREAKING':fontcolor=white:fontsize=${bnLabelSize}:x=${bnTextPad}:y=${bnY + Math.round((bnH - bnMainSize - bnLabelSize - 4) / 2)}`);
     parts.push(`drawtext=fontfile='${fontEsc}':text='NEWS':fontcolor=white:fontsize=${bnMainSize}:x=${bnTextPad}:y=${bnY + Math.round((bnH - bnMainSize - bnLabelSize - 4) / 2) + bnLabelSize + 4}`);
 
@@ -281,22 +276,20 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
     const tnPad = Math.round(tnH * 0.12);
     const tnTextX = tnBadgeW + 16;
 
-    parts.push(`drawbox=x=0:y=${tnY}:w=${scaleW}:h=${tnH}:color=0x0c1524@0.93:t=fill`);
-    parts.push(`drawbox=x=0:y=${tnY}:w=${scaleW}:h=1:color=0xFFFFFF@0.06:t=fill`);
-    parts.push(`drawbox=x=0:y=${tnY}:w=${tnBadgeW}:h=${tnH}:color=${tnAccent}@0.97:t=fill`);
-    parts.push(`drawbox=x=0:y=${tnY}:w=${tnBadgeW}:h=${Math.round(tnH * 0.45)}:color=0xFFFFFF@0.08:t=fill`);
-    parts.push(`drawbox=x=${tnBadgeW}:y=${tnY}:w=3:h=${tnH}:color=0xFFFFFF@0.20:t=fill`);
+    parts.push(`drawbox=x=0:y=${tnY}:w=${scaleW}:h=${tnH}:color=0x0c1524@0.92:t=fill`);
+    parts.push(`drawbox=x=0:y=${tnY}:w=${tnBadgeW}:h=${tnH}:color=${tnAccent}@0.96:t=fill`);
+    parts.push(`drawbox=x=${tnBadgeW}:y=${tnY}:w=3:h=${tnH}:color=0xFFFFFF@0.18:t=fill`);
 
     if (useTextfile) {
       const ltNamePath = escapeTextfilePath(getLtNameTextFilePath(stream.id));
       const ltTitlePath = escapeTextfilePath(getLtTitleTextFilePath(stream.id));
       parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltNamePath}':reload=1:fontcolor=white:fontsize=${tnNameSize}:x=${Math.round(tnBadgeW * 0.07)}:y=${tnY + tnPad}`);
-      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltTitlePath}':reload=1:fontcolor=0xF0F0F0:fontsize=${tnTitleSize}:x=${tnTextX}:y=${tnY + Math.round((tnH - tnTitleSize) / 2)}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltTitlePath}':reload=1:fontcolor=0xEEEEEE:fontsize=${tnTitleSize}:x=${tnTextX}:y=${tnY + Math.round((tnH - tnTitleSize) / 2)}`);
     } else {
       const nameText = escapeDrawtext((stream as any).lowerThirdName || "");
       const titleText = escapeDrawtext((stream as any).lowerThirdTitle || "");
       parts.push(`drawtext=fontfile='${fontEsc}':text='${nameText}':fontcolor=white:fontsize=${tnNameSize}:x=${Math.round(tnBadgeW * 0.07)}:y=${tnY + tnPad}`);
-      parts.push(`drawtext=fontfile='${fontEsc}':text='${titleText}':fontcolor=0xF0F0F0:fontsize=${tnTitleSize}:x=${tnTextX}:y=${tnY + Math.round((tnH - tnTitleSize) / 2)}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${titleText}':fontcolor=0xEEEEEE:fontsize=${tnTitleSize}:x=${tnTextX}:y=${tnY + Math.round((tnH - tnTitleSize) / 2)}`);
     }
   } else if (ltStyle === "side-strip") {
     const ssStripW = Math.round(scaleW * 0.006);
@@ -309,8 +302,7 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
     const ssAccent = hexToFFmpeg((stream as any).lowerThirdAccentColor || "#e53935");
 
     parts.push(`drawbox=x=0:y=${ssY - 2}:w=${ssStripW}:h=${ssH + 4}:color=${ssAccent}@1:t=fill`);
-    parts.push(`drawbox=x=${ssStripW + 2}:y=${ssY}:w=${ssW}:h=${ssH}:color=0x0a0f1e@0.90:t=fill`);
-    parts.push(`drawbox=x=${ssStripW + 2}:y=${ssY}:w=${ssW}:h=1:color=0xFFFFFF@0.07:t=fill`);
+    parts.push(`drawbox=x=${ssStripW + 2}:y=${ssY}:w=${ssW}:h=${ssH}:color=0x0a0f1e@0.88:t=fill`);
 
     const textX = ssStripW + Math.round(ssW * 0.06) + 4;
     if (useTextfile) {
@@ -325,12 +317,11 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       parts.push(`drawtext=fontfile='${fontEsc}':text='${titleText}':fontcolor=0xAABBCC:fontsize=${ssTitleSize}:x=${textX}:y=${ssY + ssPad + ssNameSize + 6}`);
     }
   } else {
-    // ── Default banner ────────────────────────────────────────────────────────
     if (stream.overlayChannelName) {
       const bannerColor = hexToFFmpeg(stream.overlayBannerColor || "#c41e1e");
       const nameText = escapeDrawtext(stream.overlayChannelName);
       const bannerY = scaleH - bannerH - effectiveTickerH - 4;
-      parts.push(`drawtext=fontfile='${fontEsc}':text='${nameText}':fontcolor=white:fontsize=${fontSize}:box=1:boxcolor=${bannerColor}@0.90:boxborderw=${Math.round(bannerH * 0.25)}:x=${Math.round(scaleW * 0.02)}:y=${bannerY}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${nameText}':fontcolor=white:fontsize=${fontSize}:box=1:boxcolor=${bannerColor}@0.85:boxborderw=${Math.round(bannerH * 0.25)}:x=${Math.round(scaleW * 0.02)}:y=${bannerY}`);
     }
     if (stream.overlayHeadline || (stream.overlayLiveCount && stream.youtubeChannelId)) {
       const headlineFontSize = Math.max(10, Math.round(fontSize * 0.75));
@@ -340,40 +331,28 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
         : scaleW * 0.02;
       if (useTextfile) {
         const textfilePath = escapeTextfilePath(getHeadlineTextFilePath(stream.id));
-        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${textfilePath}':reload=1:fontcolor=white:fontsize=${headlineFontSize}:box=1:boxcolor=0x1a1a2e@0.90:boxborderw=${Math.round(bannerH * 0.2)}:x=${Math.round(nameWidth)}:y=${headlineY}`);
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${textfilePath}':reload=1:fontcolor=white:fontsize=${headlineFontSize}:box=1:boxcolor=0x222222@0.85:boxborderw=${Math.round(bannerH * 0.2)}:x=${Math.round(nameWidth)}:y=${headlineY}`);
       } else {
         const headlineText = escapeDrawtext(stream.overlayHeadline || "");
-        parts.push(`drawtext=fontfile='${fontEsc}':text='  ${headlineText}  ':fontcolor=white:fontsize=${headlineFontSize}:box=1:boxcolor=0x1a1a2e@0.90:boxborderw=${Math.round(bannerH * 0.2)}:x=${Math.round(nameWidth)}:y=${headlineY}`);
+        parts.push(`drawtext=fontfile='${fontEsc}':text='  ${headlineText}  ':fontcolor=white:fontsize=${headlineFontSize}:box=1:boxcolor=0x222222@0.85:boxborderw=${Math.round(bannerH * 0.2)}:x=${Math.round(nameWidth)}:y=${headlineY}`);
       }
     }
   }
 
-  // ── Ticker ─────────────────────────────────────────────────────────────────
   if (stream.overlayTickerText) {
     const speed = stream.overlayTickerSpeed || 80;
-    const tickerBg = hexToFFmpeg(stream.overlayTickerColor || "#0f1523");
+    const tickerBg = hexToFFmpeg(stream.overlayTickerColor || "#1a1a2e");
     const tickerY = scaleH - tickerH;
-    const liveBadgeW = Math.round(tickerH * 2.6);
-
-    parts.push(`drawbox=x=0:y=${tickerY}:w=${scaleW}:h=${tickerH}:color=${tickerBg}@0.95:t=fill`);
-    parts.push(`drawbox=x=0:y=${tickerY}:w=${scaleW}:h=2:color=0xFF2222@0.80:t=fill`);
-
+    parts.push(`drawbox=x=0:y=${tickerY}:w=${scaleW}:h=${tickerH}:color=${tickerBg}@0.9:t=fill`);
     if (useTextfile) {
       const tickerFilePath = escapeTextfilePath(getTickerTextFilePath(stream.id));
-      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${tickerFilePath}':reload=1:fontcolor=0xF2F2F2:fontsize=${tickerFontSize}:x=w-mod(t*${speed}\\,w+tw):y=${tickerY + Math.round(tickerH * 0.2)}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${tickerFilePath}':reload=1:fontcolor=white:fontsize=${tickerFontSize}:x=w-mod(t*${speed}\\,w+tw):y=${tickerY + Math.round(tickerH * 0.2)}`);
     } else {
       const tickerText = escapeDrawtext(stream.overlayTickerText);
-      parts.push(`drawtext=fontfile='${fontEsc}':text='${tickerText}':fontcolor=0xF2F2F2:fontsize=${tickerFontSize}:x=w-mod(t*${speed}\\,w+tw):y=${tickerY + Math.round(tickerH * 0.2)}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${tickerText}':fontcolor=white:fontsize=${tickerFontSize}:x=w-mod(t*${speed}\\,w+tw):y=${tickerY + Math.round(tickerH * 0.2)}`);
     }
-
-    // ● LIVE red badge drawn on top of scrolling text
-    parts.push(`drawbox=x=0:y=${tickerY}:w=${liveBadgeW}:h=${tickerH}:color=0xCC0000@1:t=fill`);
-    parts.push(`drawbox=x=0:y=${tickerY}:w=${liveBadgeW}:h=${Math.round(tickerH * 0.42)}:color=0xFFFFFF@0.08:t=fill`);
-    parts.push(`drawbox=x=${liveBadgeW}:y=${tickerY + 4}:w=2:h=${tickerH - 8}:color=0xFFFFFF@0.22:t=fill`);
-    parts.push(`drawtext=fontfile='${fontEsc}':text='● LIVE':fontcolor=white:fontsize=${tickerFontSize}:x=${Math.round((liveBadgeW - 6 * tickerFontSize * 0.58) / 2)}:y=${tickerY + Math.round(tickerH * 0.2)}`);
   }
 
-  // ── Message Overlay ────────────────────────────────────────────────────────
   if ((stream as any).messageEnabled && (stream as any).messageText) {
     const msgStyle = (stream as any).messageStyle || "news-classic";
     const msgFontSize = Math.max(12, Math.round(scaleH * 0.042));
@@ -385,11 +364,11 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
     let msgX = Math.round((scaleW - msgW) / 2);
     let msgY = Math.round((scaleH - msgH) / 2);
     switch (pos) {
-      case "top-left":      msgX = margin; msgY = margin; break;
-      case "top-right":     msgX = scaleW - msgW - margin; msgY = margin; break;
-      case "center":        break;
-      case "bottom-left":   msgX = margin; msgY = scaleH - msgH - margin - effectiveTickerH; break;
-      case "bottom-right":  msgX = scaleW - msgW - margin; msgY = scaleH - msgH - margin - effectiveTickerH; break;
+      case "top-left": msgX = margin; msgY = margin; break;
+      case "top-right": msgX = scaleW - msgW - margin; msgY = margin; break;
+      case "center": break;
+      case "bottom-left": msgX = margin; msgY = scaleH - msgH - margin - effectiveTickerH; break;
+      case "bottom-right": msgX = scaleW - msgW - margin; msgY = scaleH - msgH - margin - effectiveTickerH; break;
       case "bottom-center": msgY = scaleH - msgH - margin - effectiveTickerH; break;
     }
     const bannerClr = hexToFFmpeg(stream.overlayBannerColor || "#c41e1e");
@@ -399,17 +378,14 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
 
     switch (msgStyle) {
       case "news-classic":
-        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x0d1629@0.95:t=fill`);
-        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=1:color=0xFFFFFF@0.07:t=fill`);
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x0d1629@0.94:t=fill`);
         parts.push(`drawbox=x=${msgX}:y=${msgY}:w=5:h=${msgH}:color=${bannerClr}@1:t=fill`);
         break;
       case "breaking-alert":
-        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0xb71c1c@0.96:t=fill`);
-        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=1:color=0xFFFFFF@0.10:t=fill`);
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0xb71c1c@0.95:t=fill`);
         break;
       case "minimal-clean":
-        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x080808@0.74:t=fill`);
-        parts.push(`drawbox=x=${msgX}:y=${msgY + msgH - 1}:w=${msgW}:h=1:color=0xFFFFFF@0.12:t=fill`);
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x080808@0.72:t=fill`);
         break;
       case "cinema":
         parts.push(`drawbox=x=0:y=${msgY - 3}:w=${scaleW}:h=3:color=0xFFFFFF@0.75:t=fill`);
@@ -417,20 +393,19 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
         parts.push(`drawbox=x=0:y=${msgY + msgH}:w=${scaleW}:h=3:color=0xFFFFFF@0.75:t=fill`);
         break;
       case "social-card":
-        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x1a1a2e@0.92:t=fill`);
-        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=2:color=${bannerClr}@0.7:t=fill`);
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x1a1a2e@0.90:t=fill`);
         break;
       case "broadcast-official":
-        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x0a1628@0.97:t=fill`);
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x0a1628@0.96:t=fill`);
         parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=3:color=0xDAA520@1:t=fill`);
-        parts.push(`drawbox=x=${msgX}:y=${msgY + msgH - 1}:w=${msgW}:h=1:color=0xDAA520@0.3:t=fill`);
         break;
       case "pill":
-        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x1a1a2e@0.90:t=fill`);
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x1a1a2e@0.88:t=fill`);
         parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=2:color=${hexToFFmpeg(stream.overlayBannerColor || "#c41e1e")}@0.9:t=fill`);
         parts.push(`drawbox=x=${msgX}:y=${msgY + msgH - 2}:w=${msgW}:h=2:color=${hexToFFmpeg(stream.overlayBannerColor || "#c41e1e")}@0.9:t=fill`);
         break;
       case "watermark":
+        // no background — translucent text only
         break;
     }
     const textColor = msgStyle === "minimal-clean" ? "0xEEEEEE"
@@ -447,13 +422,13 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
     }
   }
 
-  // ── Subscriber / Viewer Count Box ──────────────────────────────────────────
   if ((stream as any).subBoxEnabled) {
     const subStyle = (stream as any).subBoxStyle || "card";
     const margin = Math.round(scaleW * 0.025);
     const sPos = (stream as any).subBoxPosition || "top-right";
 
     if (subStyle === "recent-activity") {
+      // Live chat messages list — 2-line per slot: name (bright) + message (grey)
       const chatMaxMsgs = Math.min((stream as any).chatMaxMessages || 5, 4);
       const msgFont = Math.max(8, Math.round(scaleH * 0.025));
       const nameFont = Math.max(7, Math.round(msgFont * 0.80));
@@ -465,16 +440,15 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       let chatX = scaleW - chatW - margin;
       let chatY = margin;
       switch (sPos) {
-        case "top-left":     chatX = margin; break;
-        case "top-right":    break;
-        case "center-left":  chatX = margin; chatY = Math.round((scaleH - chatH) / 2); break;
+        case "top-left": chatX = margin; break;
+        case "top-right": break;
+        case "center-left": chatX = margin; chatY = Math.round((scaleH - chatH) / 2); break;
         case "center-right": chatY = Math.round((scaleH - chatH) / 2); break;
-        case "bottom-left":  chatX = margin; chatY = scaleH - chatH - margin; break;
+        case "bottom-left": chatX = margin; chatY = scaleH - chatH - margin; break;
         case "bottom-right": chatY = scaleH - chatH - margin; break;
       }
-      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${chatH}:color=0x0d1629@0.94:t=fill`);
-      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${headerH}:color=0x38bdf820@1:t=fill`);
-      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=2:color=0x38bdf8@0.6:t=fill`);
+      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${chatH}:color=0x0d1629@0.93:t=fill`);
+      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${headerH}:color=0x38bdf81A@1:t=fill`);
       parts.push(`drawbox=x=${chatX}:y=${chatY + headerH - 1}:w=${chatW}:h=1:color=0x38bdf840@1:t=fill`);
       const hFont = Math.max(7, Math.round(msgFont * 0.82));
       parts.push(`drawtext=fontfile='${fontEsc}':text='⚡ LIVE CHAT':fontcolor=0x38bdf8:fontsize=${hFont}:x=${chatX + 8}:y=${chatY + Math.round((headerH - hFont) / 2)}`);
@@ -483,21 +457,27 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
           const namePath = escapeTextfilePath(getChatNameTextFilePath(stream.id, i));
           const chatPath = escapeTextfilePath(getChatTextFilePath(stream.id, i));
           const slotY = chatY + headerH + i * slotH + 5;
-          parts.push(`drawbox=x=${chatX + 6}:y=${slotY + 1}:w=${dotSize}:h=${dotSize}:color=0x38bdf8@0.90:t=fill`);
+          // Avatar dot
+          parts.push(`drawbox=x=${chatX + 6}:y=${slotY + 1}:w=${dotSize}:h=${dotSize}:color=0x38bdf8@0.85:t=fill`);
+          // Author name in bright color
           parts.push(`drawtext=fontfile='${fontEsc}':textfile='${namePath}':reload=1:fontcolor=0x7dd3fc:fontsize=${nameFont}:x=${chatX + dotSize + 13}:y=${slotY}`);
-          parts.push(`drawtext=fontfile='${fontEsc}':textfile='${chatPath}':reload=1:fontcolor=0xD0D0D0:fontsize=${msgFont}:x=${chatX + 8}:y=${slotY + nameFont + 4}`);
+          // Message text in grey below
+          parts.push(`drawtext=fontfile='${fontEsc}':textfile='${chatPath}':reload=1:fontcolor=0xCCCCCC:fontsize=${msgFont}:x=${chatX + 8}:y=${slotY + nameFont + 4}`);
         }
       }
     } else {
-      // ── Subscriber count card styles ───────────────────────────────────────
+                              // Subscriber count styles
       const subW = Math.round(scaleW * 0.32);
+      // Use frame-width-relative padding so portrait video (large scaleH) doesn't
+      // inflate subPad and eat into availableW
       const subPad = Math.max(6, Math.round(scaleW * 0.012));
       const subFontSizeIdeal = Math.max(12, Math.round(scaleH * 0.044));
       const showViewers = !!(stream as any).subBoxShowViewers;
       const availableW = subW - subPad * 2;
 
-      const labelChars = showViewers ? 14 : 11;
-      const maxCountChars = showViewers ? 22 : 15;
+      // 0.9 ratio: conservative upper bound for DejaVu Bold uppercase glyphs
+      const labelChars = showViewers ? 14 : 11;   // "SUBS / VIEWERS" | "SUBSCRIBERS"
+      const maxCountChars = showViewers ? 22 : 15; // "119 SUBS | 1 WATCHING" | "1,234,567,890"
       const labelSizeIdeal = Math.max(8, Math.round(subFontSizeIdeal * 0.60));
       const labelSize = Math.max(8, Math.min(labelSizeIdeal, Math.floor(availableW / (labelChars * 0.9))));
       const subFontSize = Math.max(12, Math.min(subFontSizeIdeal, Math.floor(availableW / (maxCountChars * 0.9))));
@@ -506,11 +486,11 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       let subX = scaleW - subW - margin;
       let subY = margin;
       switch (sPos) {
-        case "top-left":     subX = margin; break;
-        case "top-right":    break;
-        case "center-left":  subX = margin; subY = Math.round((scaleH - subH) / 2); break;
+        case "top-left": subX = margin; break;
+        case "top-right": break;
+        case "center-left": subX = margin; subY = Math.round((scaleH - subH) / 2); break;
         case "center-right": subY = Math.round((scaleH - subH) / 2); break;
-        case "bottom-left":  subX = margin; subY = scaleH - subH - effectiveTickerH - margin; break;
+        case "bottom-left": subX = margin; subY = scaleH - subH - effectiveTickerH - margin; break;
         case "bottom-right": subY = scaleH - subH - effectiveTickerH - margin; break;
       }
       ({ x: subX, y: subY } = clampBox(subX, subY, subW, subH, scaleW, scaleH));
@@ -521,76 +501,59 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
 
       switch (subStyle) {
         case "minimal":
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x000000@0.65:t=fill`);
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=3:h=${subH}:color=0x888888@0.6:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x000000@0.62:t=fill`);
           break;
         case "card":
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0d1629@0.93:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0d1629@0.92:t=fill`);
           parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=3:color=0xff0000@1:t=fill`);
-          parts.push(`drawbox=x=${subX}:y=${subY + 3}:w=3:h=${subH - 3}:color=0xff0000@0.5:t=fill`);
-          parts.push(`drawbox=x=${subX + 3}:y=${subY + 3}:w=${subW - 3}:h=1:color=0xFFFFFF@0.06:t=fill`);
           break;
         case "broadcast":
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0a0a1a@0.95:t=fill`);
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=1:color=0xFFFFFF@0.07:t=fill`);
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=4:h=${subH}:color=0xDAA520@0.85:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0a0a1a@0.94:t=fill`);
           parts.push(`drawbox=x=${subX}:y=${subY + subH - 3}:w=${subW}:h=3:color=0xDAA520@1:t=fill`);
           break;
         case "flip-counter": {
           const counterH = subFontSize + Math.round(subFontSize * 0.55);
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x1a1a1a@0.98:t=fill`);
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=2:color=0x333333@1:t=fill`);
-          parts.push(`drawbox=x=${subX}:y=${subY + subH - 2}:w=${subW}:h=2:color=0x333333@1:t=fill`);
-          parts.push(`drawbox=x=${subX + 4}:y=${subY + subPad}:w=${subW - 8}:h=${counterH}:color=0x111111@1:t=fill`);
-          parts.push(`drawbox=x=${subX + 4}:y=${subY + subPad + Math.round(counterH / 2) - 1}:w=${subW - 8}:h=2:color=0x2a2a2a@1:t=fill`);
-          parts.push(`drawbox=x=${subX + 4}:y=${subY + subPad}:w=${subW - 8}:h=${Math.round(counterH / 2) - 1}:color=0xFFFFFF@0.03:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x1c1c1c@0.97:t=fill`);
+          parts.push(`drawbox=x=${subX + 2}:y=${subY + subPad}:w=${subW - 4}:h=${counterH}:color=0x141414@1:t=fill`);
+          parts.push(`drawbox=x=${subX + 2}:y=${subY + subPad + Math.round(counterH / 2) - 1}:w=${subW - 4}:h=2:color=0x2e2e2e@1:t=fill`);
           break;
         }
         case "whatsapp":
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x25D366@0.97:t=fill`);
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${Math.round(subH * 0.45)}:color=0xFFFFFF@0.10:t=fill`);
-          parts.push(`drawbox=x=${subX + Math.round(subW * 0.72)}:y=${subY + subH}:w=${Math.round(subW * 0.1)}:h=${Math.round(subFontSize * 0.4)}:color=0x25D366@0.97:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x25D366@0.96:t=fill`);
+          parts.push(`drawbox=x=${subX + Math.round(subW * 0.72)}:y=${subY + subH}:w=${Math.round(subW * 0.1)}:h=${Math.round(subFontSize * 0.4)}:color=0x25D366@0.96:t=fill`);
           break;
         case "neon-glow":
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0d0520@0.96:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0d0520@0.95:t=fill`);
           parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=3:color=0xD400FF@1:t=fill`);
           parts.push(`drawbox=x=${subX}:y=${subY + subH - 3}:w=${subW}:h=3:color=0xD400FF@1:t=fill`);
-          parts.push(`drawbox=x=${subX}:y=${subY + 3}:w=3:h=${subH - 6}:color=0xD400FF@0.7:t=fill`);
-          parts.push(`drawbox=x=${subX + subW - 3}:y=${subY + 3}:w=3:h=${subH - 6}:color=0xD400FF@0.7:t=fill`);
           break;
         case "glass-card":
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0xFFFFFF@0.15:t=fill`);
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=1:color=0xFFFFFF@0.50:t=fill`);
-          parts.push(`drawbox=x=${subX}:y=${subY + subH - 1}:w=${subW}:h=1:color=0xFFFFFF@0.20:t=fill`);
-          parts.push(`drawbox=x=${subX}:y=${subY + 1}:w=1:h=${subH - 2}:color=0xFFFFFF@0.30:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0xFFFFFF@0.14:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=1:color=0xFFFFFF@0.40:t=fill`);
           break;
         case "scoreboard": {
           const sbHdrH = Math.round(subH * 0.36);
-          const sbLabelSize = Math.max(7, Math.round(sbHdrH * 0.52));
           parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0a0e22@0.97:t=fill`);
           parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${sbHdrH}:color=0x1a56db@1:t=fill`);
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${Math.round(sbHdrH * 0.45)}:color=0xFFFFFF@0.08:t=fill`);
-          parts.push(`drawbox=x=${subX}:y=${subY + subH - 2}:w=${subW}:h=2:color=0x1a56db@0.5:t=fill`);
-          parts.push(`drawtext=fontfile='${fontEsc}':text='SUBSCRIBERS':fontcolor=white:fontsize=${sbLabelSize}:x=${clampedX}:y=${subY + Math.round((sbHdrH - sbLabelSize) / 2)}`);
+          parts.push(`drawtext=fontfile='${fontEsc}':text='SUBSCRIBERS':fontcolor=white:fontsize=${Math.max(7, Math.round(sbHdrH * 0.52))}:x=${clampedX}:y=${subY + Math.round((sbHdrH - Math.max(7, Math.round(sbHdrH * 0.52))) / 2)}`);
           break;
         }
         case "pill-badge":
-          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0xF97316@0.93:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0xF97316@0.92:t=fill`);
           parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=2:color=0xFFFFFF@0.30:t=fill`);
-          parts.push(`drawbox=x=${subX}:y=${subY + subH - 2}:w=${subW}:h=2:color=0x000000@0.25:t=fill`);
           break;
       }
 
-      const labelColor = subStyle === "minimal"     ? "0x999999"
-        : subStyle === "whatsapp"     ? "0xDCF8C6"
-        : subStyle === "flip-counter" ? "0x555555"
-        : subStyle === "neon-glow"    ? "0xCC55FF"
-        : subStyle === "glass-card"   ? "0xDDEEFF"
-        : subStyle === "scoreboard"   ? "0x93C5FD"
-        : subStyle === "pill-badge"   ? "0xFFE0C0"
+      const labelColor = subStyle === "minimal" ? "0x888888"
+        : subStyle === "whatsapp" ? "0xDCF8C6"
+        : subStyle === "flip-counter" ? "0x505050"
+        : subStyle === "neon-glow" ? "0xCC55FF"
+        : subStyle === "glass-card" ? "0xDDEEFF"
+        : subStyle === "scoreboard" ? "0x93C5FD"
+        : subStyle === "pill-badge" ? "0xFFE0C0"
         : "0x8899AA";
       const countColor = subStyle === "flip-counter" ? "0xFFE000"
-        : subStyle === "neon-glow"    ? "0xEE88FF"
+        : subStyle === "whatsapp" ? "white"
         : "white";
       const countLabel = showViewers ? "SUBS / VIEWERS" : "SUBSCRIBERS";
       if (subStyle !== "scoreboard") {
@@ -604,7 +567,6 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       }
     }
   }
-
   // ── Live Chat Overlay ──────────────────────────────────────────────────────
   if ((stream as any).chatEnabled && stream.youtubeChannelId) {
     const chatStyle = (stream as any).chatStyle || "list";
@@ -621,75 +583,76 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
     let chatX = scaleW - chatW - margin2;
     let chatY = scaleH - chatH - effectiveTickerH - margin2;
     switch (cPos) {
-      case "top-left":    chatX = margin2; chatY = margin2; break;
-      case "top-right":   chatX = scaleW - chatW - margin2; chatY = margin2; break;
+      case "top-left": chatX = margin2; chatY = margin2; break;
+      case "top-right": chatX = scaleW - chatW - margin2; chatY = margin2; break;
       case "bottom-left": chatX = margin2; break;
       case "bottom-right": break;
     }
 
     if (chatStyle === "bubble") {
-      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${chatH}:color=0x0a2018@0.95:t=fill`);
+      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${chatH}:color=0x0a2018@0.94:t=fill`);
       parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=3:color=0x25D366@1:t=fill`);
-      parts.push(`drawbox=x=${chatX}:y=${chatY + 3}:w=${chatW}:h=1:color=0xFFFFFF@0.05:t=fill`);
       const hFont = Math.max(7, Math.round(msgFont * 0.82));
       parts.push(`drawtext=fontfile='${fontEsc}':text='LIVE CHAT':fontcolor=0x25D366:fontsize=${hFont}:x=${chatX + 8}:y=${chatY + Math.round((headerH - hFont) / 2)}`);
     } else {
-      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${chatH}:color=0x0d1629@0.92:t=fill`);
-      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${headerH}:color=0x38bdf820@1:t=fill`);
-      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=2:color=0x38bdf8@0.55:t=fill`);
+      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${chatH}:color=0x0d1629@0.90:t=fill`);
+      parts.push(`drawbox=x=${chatX}:y=${chatY}:w=${chatW}:h=${headerH}:color=0x38bdf81A@1:t=fill`);
       parts.push(`drawbox=x=${chatX}:y=${chatY + headerH - 1}:w=${chatW}:h=1:color=0x38bdf840@1:t=fill`);
       const hFont = Math.max(7, Math.round(msgFont * 0.82));
       parts.push(`drawtext=fontfile='${fontEsc}':text='⚡ LIVE CHAT':fontcolor=0x38bdf8:fontsize=${hFont}:x=${chatX + 8}:y=${chatY + Math.round((headerH - hFont) / 2)}`);
     }
 
     if (useTextfile) {
+      // Chat: 2-line per slot — author name (bright) + message (styled)
       const dotSize = nameFont2 + 1;
       const nameColor = chatStyle === "bubble" ? "0xA0E9B5" : "0x7dd3fc";
-      const msgColor  = chatStyle === "bubble" ? "0xDCF8C6" : "0xD0D0D0";
+      const msgColor = chatStyle === "bubble" ? "0xDCF8C6" : "0xCCCCCC";
       for (let i = 0; i < chatMaxMsgs; i++) {
         const namePath = escapeTextfilePath(getChatNameTextFilePath(stream.id, i));
         const chatPath = escapeTextfilePath(getChatTextFilePath(stream.id, i));
         const slotY = chatY + headerH + i * slotH + 4;
-        const dotColor = chatStyle === "bubble" ? "0x25D366@0.90" : "0x38bdf8@0.90";
+        // Avatar dot
+        const dotColor = chatStyle === "bubble" ? "0x25D366@0.85" : "0x38bdf8@0.85";
         parts.push(`drawbox=x=${chatX + 6}:y=${slotY + 1}:w=${dotSize}:h=${dotSize}:color=${dotColor}:t=fill`);
+        // Author name
         parts.push(`drawtext=fontfile='${fontEsc}':textfile='${namePath}':reload=1:fontcolor=${nameColor}:fontsize=${nameFont2}:x=${chatX + dotSize + 13}:y=${slotY}`);
+        // Message text
         parts.push(`drawtext=fontfile='${fontEsc}':textfile='${chatPath}':reload=1:fontcolor=${msgColor}:fontsize=${msgFont}:x=${chatX + 8}:y=${slotY + nameFont2 + 3}`);
       }
     }
   }
 
-  // ── Ad Overlay ─────────────────────────────────────────────────────────────
+  // ── Ad Overlay ────────────────────────────────────────────────────────────
   if ((stream as any).adEnabled && (stream as any).adText) {
-    const adStyle  = (stream as any).adStyle    || "sponsor-banner";
-    const adPos    = (stream as any).adPosition || "bottom-center";
-    const adBg     = hexToFFmpeg((stream as any).adBgColor    || "#0d1629");
+    const adStyle = (stream as any).adStyle || "sponsor-banner";
+    const adPos = (stream as any).adPosition || "bottom-center";
+    const adBg = hexToFFmpeg((stream as any).adBgColor || "#0d1629");
     const adAccent = hexToFFmpeg((stream as any).adAccentColor || "#F97316");
-    const margin   = Math.round(scaleW * 0.025);
+    const margin = Math.round(scaleW * 0.025);
 
     const adHeadSize = Math.max(11, Math.round(scaleH * 0.038));
-    const adSubSize  = Math.max(9,  Math.round(scaleH * 0.026));
-    const adCtaSize  = Math.max(9,  Math.round(scaleH * 0.028));
-    const adPad      = Math.round(adHeadSize * 0.5);
+    const adSubSize = Math.max(9, Math.round(scaleH * 0.026));
+    const adCtaSize = Math.max(9, Math.round(scaleH * 0.028));
+    const adPad = Math.round(adHeadSize * 0.5);
 
     const adTextPath = escapeTextfilePath(getAdTextFilePath(stream.id));
-    const adSubPath  = escapeTextfilePath(getAdSubTextFilePath(stream.id));
-    const adCtaPath  = escapeTextfilePath(getAdCtaFilePath(stream.id));
+    const adSubPath = escapeTextfilePath(getAdSubTextFilePath(stream.id));
+    const adCtaPath = escapeTextfilePath(getAdCtaFilePath(stream.id));
 
     if (adStyle === "sponsor-banner") {
       const adW = Math.round(scaleW * 0.72);
       const adH = adHeadSize + adSubSize + adPad * 2 + 8;
       let adX = Math.round((scaleW - adW) / 2);
       let adY = scaleH - adH - effectiveTickerH - margin;
-      if (adPos === "top-center")                          adY = margin;
-      else if (adPos === "top-right")   { adX = scaleW - adW - margin; adY = margin; }
-      else if (adPos === "bottom-right")  adX = scaleW - adW - margin;
-      else if (adPos === "top-left")    { adX = margin; adY = margin; }
-      else if (adPos === "bottom-left")   adX = margin;
+      if (adPos === "top-center") adY = margin;
+      else if (adPos === "top-right") { adX = scaleW - adW - margin; adY = margin; }
+      else if (adPos === "bottom-right") adX = scaleW - adW - margin;
+      else if (adPos === "top-left") { adX = margin; adY = margin; }
+      else if (adPos === "bottom-left") adX = margin;
 
-      parts.push(`drawbox=x=${adX}:y=${adY}:w=${adW}:h=${adH}:color=${adBg}@0.95:t=fill`);
+      parts.push(`drawbox=x=${adX}:y=${adY}:w=${adW}:h=${adH}:color=${adBg}@0.94:t=fill`);
       parts.push(`drawbox=x=${adX}:y=${adY}:w=${adW}:h=3:color=${adAccent}@1:t=fill`);
       parts.push(`drawbox=x=${adX}:y=${adY}:w=3:h=${adH}:color=${adAccent}@1:t=fill`);
-      parts.push(`drawbox=x=${adX + 3}:y=${adY + 3}:w=${adW - 3}:h=1:color=0xFFFFFF@0.06:t=fill`);
       const adLabelW = Math.round(adCtaSize * 2.0);
       parts.push(`drawbox=x=${adX + adW - adLabelW - 4}:y=${adY + 3}:w=${adLabelW}:h=${Math.round(adCtaSize * 1.4)}:color=${adAccent}@1:t=fill`);
       parts.push(`drawtext=fontfile='${fontEsc}':text='AD':fontcolor=white:fontsize=${Math.max(8, Math.round(adCtaSize * 0.85))}:x=${adX + adW - adLabelW + 2}:y=${adY + 5}`);
@@ -702,10 +665,8 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       const badgeW = Math.round(scaleW * 0.09);
       let adY = scaleH - adH - effectiveTickerH - 2;
       if (adPos === "top-center" || adPos === "top-left" || adPos === "top-right") adY = 0;
-      parts.push(`drawbox=x=0:y=${adY}:w=${scaleW}:h=${adH}:color=${adBg}@0.96:t=fill`);
-      parts.push(`drawbox=x=0:y=${adY}:w=${scaleW}:h=2:color=${adAccent}@0.6:t=fill`);
+      parts.push(`drawbox=x=0:y=${adY}:w=${scaleW}:h=${adH}:color=${adBg}@0.95:t=fill`);
       parts.push(`drawbox=x=0:y=${adY}:w=${badgeW}:h=${adH}:color=${adAccent}@1:t=fill`);
-      parts.push(`drawbox=x=0:y=${adY}:w=${badgeW}:h=${Math.round(adH * 0.45)}:color=0xFFFFFF@0.10:t=fill`);
       parts.push(`drawtext=fontfile='${fontEsc}':text='AD':fontcolor=white:fontsize=${Math.max(9, Math.round(adHeadSize * 0.75))}:x=${Math.round((badgeW - adHeadSize) / 2)}:y=${adY + Math.round((adH - adHeadSize) / 2)}`);
       if (useTextfile) {
         parts.push(`drawtext=fontfile='${fontEsc}':textfile='${adTextPath}':reload=1:fontcolor=white:fontsize=${adHeadSize}:x=${badgeW + adPad}:y=${adY + adPad}`);
@@ -718,12 +679,10 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       let cbY = margin;
       if (adPos === "top-left" || adPos === "bottom-left") cbX = margin;
       if (adPos === "bottom-left" || adPos === "bottom-right" || adPos === "bottom-center") cbY = scaleH - cbH - effectiveTickerH - margin;
-      parts.push(`drawbox=x=${cbX}:y=${cbY}:w=${cbW}:h=${cbH}:color=${adBg}@0.94:t=fill`);
+      parts.push(`drawbox=x=${cbX}:y=${cbY}:w=${cbW}:h=${cbH}:color=${adBg}@0.93:t=fill`);
       parts.push(`drawbox=x=${cbX}:y=${cbY}:w=${cbW}:h=2:color=${adAccent}@1:t=fill`);
-      parts.push(`drawbox=x=${cbX}:y=${cbY}:w=2:h=${cbH}:color=${adAccent}@1:t=fill`);
-      parts.push(`drawbox=x=${cbX + 2}:y=${cbY + 2}:w=${cbW - 2}:h=1:color=0xFFFFFF@0.06:t=fill`);
       const badgeSize = Math.max(8, Math.round(adSubSize * 0.9));
-      parts.push(`drawbox=x=${cbX + 2}:y=${cbY + 2}:w=${Math.round(badgeSize * 1.8)}:h=${Math.round(badgeSize * 1.4)}:color=${adAccent}@1:t=fill`);
+      parts.push(`drawbox=x=${cbX}:y=${cbY + 2}:w=${Math.round(badgeSize * 1.8)}:h=${Math.round(badgeSize * 1.4)}:color=${adAccent}@1:t=fill`);
       parts.push(`drawtext=fontfile='${fontEsc}':text='AD':fontcolor=white:fontsize=${badgeSize}:x=${cbX + 2}:y=${cbY + 3}`);
       if (useTextfile) {
         parts.push(`drawtext=fontfile='${fontEsc}':textfile='${adTextPath}':reload=1:fontcolor=white:fontsize=${adHeadSize}:x=${cbX + adPad}:y=${cbY + adPad}`);
@@ -737,9 +696,8 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       let cdY = margin;
       if (adPos === "top-left" || adPos === "bottom-left") cdX = margin;
       if (adPos === "bottom-left" || adPos === "bottom-right" || adPos === "bottom-center") cdY = scaleH - cdH - effectiveTickerH - margin;
-      parts.push(`drawbox=x=${cdX}:y=${cdY}:w=${cdW}:h=${cdH}:color=${adBg}@0.97:t=fill`);
+      parts.push(`drawbox=x=${cdX}:y=${cdY}:w=${cdW}:h=${cdH}:color=${adBg}@0.96:t=fill`);
       parts.push(`drawbox=x=${cdX}:y=${cdY}:w=4:h=${cdH}:color=${adAccent}@1:t=fill`);
-      parts.push(`drawbox=x=${cdX}:y=${cdY}:w=${cdW}:h=1:color=0xFFFFFF@0.06:t=fill`);
       const countdown = Math.max(0, (stream as any).adCountdown || 0);
       const cdLabel = countdown > 0 ? String(countdown) : "0";
       parts.push(`drawtext=fontfile='${fontEsc}':text='${cdLabel}s':fontcolor=${adAccent}:fontsize=${cdCountSize}:x=${cdX + Math.round((cdW - cdLabel.length * cdCountSize * 0.6) / 2)}:y=${cdY + adPad}`);
@@ -754,9 +712,8 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       if (adPos === "top-left" || adPos === "bottom-left") pcX = margin;
       if (adPos === "bottom-left" || adPos === "bottom-right" || adPos === "bottom-center") pcY = scaleH - pcH - effectiveTickerH - margin;
       const hdrH = Math.round(adCtaSize * 1.5);
-      parts.push(`drawbox=x=${pcX}:y=${pcY}:w=${pcW}:h=${pcH}:color=${adBg}@0.96:t=fill`);
-      parts.push(`drawbox=x=${pcX}:y=${pcY}:w=${pcW}:h=${hdrH}:color=${adAccent}@0.96:t=fill`);
-      parts.push(`drawbox=x=${pcX}:y=${pcY}:w=${pcW}:h=${Math.round(hdrH * 0.45)}:color=0xFFFFFF@0.09:t=fill`);
+      parts.push(`drawbox=x=${pcX}:y=${pcY}:w=${pcW}:h=${pcH}:color=${adBg}@0.95:t=fill`);
+      parts.push(`drawbox=x=${pcX}:y=${pcY}:w=${pcW}:h=${hdrH}:color=${adAccent}@0.95:t=fill`);
       parts.push(`drawtext=fontfile='${fontEsc}':text='NEW PRODUCT':fontcolor=white:fontsize=${Math.max(7, Math.round(adCtaSize * 0.75))}:x=${pcX + adPad}:y=${pcY + Math.round((hdrH - adCtaSize) / 2)}`);
       if (useTextfile) {
         parts.push(`drawtext=fontfile='${fontEsc}':textfile='${adTextPath}':reload=1:fontcolor=white:fontsize=${adHeadSize}:x=${pcX + adPad}:y=${pcY + hdrH + adPad}`);
@@ -769,8 +726,7 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       let rbY = 0;
       if (adPos === "top-left" || adPos === "bottom-left") rbX = 0;
       if (adPos === "bottom-left" || adPos === "bottom-right" || adPos === "bottom-center") rbY = scaleH - rbSize - effectiveTickerH;
-      parts.push(`drawbox=x=${rbX}:y=${rbY}:w=${rbSize}:h=${rbSize}:color=${adAccent}@0.93:t=fill`);
-      parts.push(`drawbox=x=${rbX}:y=${rbY}:w=${rbSize}:h=${Math.round(rbSize * 0.4)}:color=0xFFFFFF@0.08:t=fill`);
+      parts.push(`drawbox=x=${rbX}:y=${rbY}:w=${rbSize}:h=${rbSize}:color=${adAccent}@0.92:t=fill`);
       const rbFontSize = Math.max(9, Math.round(rbSize * 0.24));
       const rbLabel = useTextfile ? undefined : escapeDrawtext((stream as any).adText || "AD");
       parts.push(`drawtext=fontfile='${fontEsc}':text='${rbLabel || "AD"}':fontcolor=white:fontsize=${rbFontSize}:x=${rbX + Math.round(rbSize * 0.12)}:y=${rbY + Math.round(rbSize * 0.12)}`);
@@ -780,7 +736,6 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
     }
   }
 
-  // ── QR Code label ──────────────────────────────────────────────────────────
   if ((stream as any).overlayQrEnabled && (stream as any).overlayQrLabel) {
     const qrSizeMap: Record<string, number> = { small: 0.10, medium: 0.14, large: 0.18 };
     const qrFrac = qrSizeMap[(stream as any).overlayQrSize || "medium"] ?? 0.14;
@@ -791,55 +746,21 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
     const qrPos = (stream as any).overlayQrPosition || "top-right";
     let lx: string, ly: string;
     switch (qrPos) {
-      case "top-left":    lx = String(margin); ly = String(margin + qrW + 4); break;
-      case "bottom-left": lx = String(margin); ly = `h-${margin + qrW + labelFontSize + 8 + effectiveTickerH}`; break;
-      case "bottom-right": lx = `w-${qrW + margin}`; ly = `h-${margin + qrW + labelFontSize + 8 + effectiveTickerH}`; break;
-      default:            lx = `w-${qrW + margin}`; ly = String(margin + qrW + 4); break;
+      case "top-left": lx = String(margin); ly = String(margin + qrW + 4); break;
+      case "bottom-left": lx = String(margin); ly = `h-${margin + labelFontSize + Math.round(labelFontSize * 0.7) + 4}`; break;
+      case "bottom-right": lx = `w-text_w-${margin}`; ly = `h-${margin + labelFontSize + Math.round(labelFontSize * 0.7) + 4}`; break;
+      default: lx = `w-text_w-${margin}`; ly = String(margin + qrW + 4); break;
     }
-    parts.push(`drawtext=fontfile='${fontEsc}':text='${labelText}':fontcolor=white:fontsize=${labelFontSize}:x=${lx}:y=${ly}`);
+    parts.push(`drawtext=fontfile='${fontEsc}':text='${labelText}':fontcolor=white:fontsize=${labelFontSize}:box=1:boxcolor=0xF97316@0.96:boxborderw=${Math.round(labelFontSize * 0.35)}:x=${lx}:y=${ly}`);
   }
 
-  // ── Social Handle Bar ──────────────────────────────────────────────────────
   if ((stream as any).overlaySocialEnabled && (stream as any).overlaySocialHandle) {
-    const socialStyle = (stream as any).overlaySocialStyle || "minimal";
-    const handle = escapeDrawtext((stream as any).overlaySocialHandle as string);
-    const socialPos = (stream as any).overlaySocialPosition || "bottom-left";
-    const socialFontSize = Math.max(10, Math.round(scaleH * 0.032));
-    const socialPad = Math.round(socialFontSize * 0.5);
-    const estimatedW = Math.round(handle.length * socialFontSize * 0.62 + socialPad * 2 + socialFontSize * 1.6);
-    const socialH = socialFontSize + socialPad * 2 + 4;
-    const margin = Math.round(scaleW * 0.025);
-    let sx: number, sy: number;
-    switch (socialPos) {
-      case "top-left":     sx = margin; sy = margin; break;
-      case "top-right":    sx = scaleW - estimatedW - margin; sy = margin; break;
-      case "bottom-right": sx = scaleW - estimatedW - margin; sy = scaleH - socialH - effectiveTickerH - margin; break;
-      default:             sx = margin; sy = scaleH - socialH - effectiveTickerH - margin; break;
-    }
-    const socialAccent = hexToFFmpeg((stream as any).overlaySocialAccentColor || "#1d9bf0");
-
-    switch (socialStyle) {
-      case "pill":
-        parts.push(`drawbox=x=${sx}:y=${sy}:w=${estimatedW}:h=${socialH}:color=0x000000@0.80:t=fill`);
-        parts.push(`drawbox=x=${sx}:y=${sy}:w=${estimatedW}:h=2:color=${socialAccent}@0.85:t=fill`);
-        parts.push(`drawbox=x=${sx}:y=${sy + socialH - 2}:w=${estimatedW}:h=2:color=${socialAccent}@0.40:t=fill`);
-        parts.push(`drawtext=fontfile='${fontEsc}':text='@ ${handle}':fontcolor=white:fontsize=${socialFontSize}:x=${sx + socialPad}:y=${sy + socialPad}`);
-        break;
-      case "accent-left":
-        parts.push(`drawbox=x=${sx}:y=${sy}:w=${estimatedW}:h=${socialH}:color=0x0d1629@0.88:t=fill`);
-        parts.push(`drawbox=x=${sx}:y=${sy}:w=4:h=${socialH}:color=${socialAccent}@1:t=fill`);
-        parts.push(`drawbox=x=${sx}:y=${sy}:w=${estimatedW}:h=1:color=0xFFFFFF@0.06:t=fill`);
-        parts.push(`drawtext=fontfile='${fontEsc}':text='@ ${handle}':fontcolor=white:fontsize=${socialFontSize}:x=${sx + socialPad + 6}:y=${sy + socialPad}`);
-        break;
-      case "broadcast":
-        parts.push(`drawbox=x=${sx}:y=${sy}:w=${estimatedW}:h=${socialH}:color=0x080808@0.95:t=fill`);
-        parts.push(`drawbox=x=${sx}:y=${sy}:w=${estimatedW}:h=3:color=${socialAccent}@1:t=fill`);
-        parts.push(`drawtext=fontfile='${fontEsc}':text='@ ${handle}':fontcolor=${socialAccent}:fontsize=${socialFontSize}:x=${sx + socialPad}:y=${sy + socialPad + 4}`);
-        break;
-      default:
-        parts.push(`drawtext=fontfile='${fontEsc}':text='@ ${handle}':fontcolor=white:fontsize=${socialFontSize}:box=1:boxcolor=0x000000@0.60:boxborderw=${socialPad}:x=${sx}:y=${sy}`);
-        break;
-    }
+    const socialH = Math.round(scaleH * 0.055);
+    const socialY = scaleH - socialH - effectiveTickerH;
+    const socialFontSize = Math.max(10, Math.round(socialH * 0.52));
+    const socialText = escapeDrawtext(`FB  IG  TikTok  ${(stream as any).overlaySocialHandle}`);
+    parts.push(`drawbox=x=${Math.round(scaleW * 0.12)}:y=${socialY}:w=${Math.round(scaleW * 0.76)}:h=${socialH}:color=0x080a14@0.82:t=fill`);
+    parts.push(`drawtext=fontfile='${fontEsc}':text='${socialText}':fontcolor=0xDDDDDD:fontsize=${socialFontSize}:x=(w-text_w)/2:y=${socialY + Math.round(socialH * 0.18)}`);
   }
 
   return parts.join(",");
@@ -963,11 +884,10 @@ function buildFFmpegArgs(
       const pos = stream.overlayLogoPosition || "top-right";
       const margin = Math.round(scaleW * 0.02);
       let ox = "0", oy = "0";
-
-      if (pos === "top-right")    { ox = `main_w-overlay_w-${margin}`; oy = String(margin); }
-      else if (pos === "top-left")    { ox = String(margin); oy = String(margin); }
+      if (pos === "top-right") { ox = `main_w-overlay_w-${margin}`; oy = String(margin); }
+      else if (pos === "top-left") { ox = String(margin); oy = String(margin); }
       else if (pos === "bottom-right") { ox = `main_w-overlay_w-${margin}`; oy = `main_h-overlay_h-${margin}`; }
-      else if (pos === "bottom-left")  { ox = String(margin); oy = `main_h-overlay_h-${margin}`; }
+      else if (pos === "bottom-left") { ox = String(margin); oy = `main_h-overlay_h-${margin}`; }
 
       const animation = stream.overlayLogoAnimation || "none";
       const alphaExpr = getLogoAlphaExpr(animation);
@@ -992,10 +912,10 @@ function buildFFmpegArgs(
       const qrPos = (stream as any).overlayQrPosition || "top-right";
       let qrOx: string, qrOy: string;
       switch (qrPos) {
-        case "top-left":    qrOx = String(qrMargin); qrOy = String(qrMargin); break;
+        case "top-left": qrOx = String(qrMargin); qrOy = String(qrMargin); break;
         case "bottom-left": qrOx = String(qrMargin); qrOy = `main_h-overlay_h-${qrMargin}`; break;
         case "bottom-right": qrOx = `main_w-overlay_w-${qrMargin}`; qrOy = `main_h-overlay_h-${qrMargin}`; break;
-        default:            qrOx = `main_w-overlay_w-${qrMargin}`; qrOy = String(qrMargin); break;
+        default: qrOx = `main_w-overlay_w-${qrMargin}`; qrOy = String(qrMargin); break;
       }
       filterParts.push(`[${currentLabel}][qr]overlay=${qrOx}:${qrOy}[withqr]`);
       currentLabel = "withqr";
