@@ -15,13 +15,11 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLive, setIsLive] = useState<boolean | null>(null);
-  const [isPortrait, setIsPortrait] = useState(false);
 
   const loadPreview = useCallback(async () => {
     if (!tiktokUsername) return;
     setLoading(true);
     setError(null);
-    setIsPortrait(false);
 
     try {
       const res = await fetch(`/api/streams/${streamId}/preview`, {
@@ -51,14 +49,6 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
-
-      const detectOrientation = () => {
-        if (video.videoWidth > 0 && video.videoHeight > 0) {
-          setIsPortrait(video.videoHeight > video.videoWidth);
-        }
-      };
-
-      video.addEventListener("loadedmetadata", detectOrientation, { once: true });
 
       if (Hls.isSupported()) {
         const hls = new Hls({
@@ -137,17 +127,10 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
         <div
           className="relative rounded-xl overflow-hidden"
           data-testid={`preview-container-${streamId}`}
-          style={isPortrait ? {
+          style={{
             background: "linear-gradient(180deg, #1a3a5c 0%, #122840 50%, #0d1f30 100%)",
             border: "1px solid rgba(255,255,255,0.06)",
-            padding: "16px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          } : {
-            aspectRatio: "16/9",
-            background: "linear-gradient(180deg, #1a3a5c 0%, #122840 50%, #0d1f30 100%)",
-            border: "1px solid rgba(255,255,255,0.06)",
+            minHeight: 80,
           }}
         >
           {loading && (
@@ -179,17 +162,12 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
 
           <video
             ref={videoRef}
-            className={isPortrait
-              ? "relative z-10 block"
-              : "absolute inset-0 w-full h-full object-contain"
-            }
-            style={isPortrait ? {
-              width: "auto",
-              maxWidth: "70%",
-              height: "auto",
-              borderRadius: 10,
-              boxShadow: "0 0 40px rgba(56,189,248,0.15), 0 0 20px rgba(139,92,246,0.1), 0 8px 32px rgba(0,0,0,0.6)",
-            } : undefined}
+            className="relative z-10 block w-full h-auto"
+            style={{
+              objectFit: "contain",
+              maxHeight: 520,
+              display: "block",
+            }}
             muted
             playsInline
             autoPlay
