@@ -6,7 +6,7 @@ import { logger } from "./lib/logger";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
 import { getYouTubeStreamUrl } from "./youtube-source";
 import {
-  writeOverlayTextFiles, cleanupTextFiles,
+  writeOverlayTextFiles, writeChatTextFiles, cleanupTextFiles,
   getHeadlineTextFilePath, getTickerTextFilePath,
   getLtNameTextFilePath, getLtTitleTextFilePath,
   getMessageTextFilePath, getSubBoxTextFilePath,
@@ -592,6 +592,7 @@ function buildFFmpegArgs(
 
   if (useTextfile) {
     writeOverlayTextFiles(stream.id);
+    writeChatTextFiles(stream.id);
   }
 
   if (hasLogo || hasQr || hasOverlayText) {
@@ -955,6 +956,7 @@ export async function applyOverlayChanges(streamId: string) {
   }
 
   writeOverlayTextFiles(streamId);
+  writeChatTextFiles(streamId);
 
   if (proc.applyDebounce) clearTimeout(proc.applyDebounce);
   proc.applyDebounce = setTimeout(() => {
