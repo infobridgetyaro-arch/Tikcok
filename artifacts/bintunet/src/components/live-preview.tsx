@@ -148,10 +148,33 @@ export function LivePreview({ streamId, tiktokUsername }: LivePreviewProps) {
             minHeight: 380,
           } : {
             aspectRatio: "16/9",
-            background: "#000",
-            border: "1px solid rgba(255,255,255,0.08)",
+            background: "linear-gradient(135deg, #020b18 0%, #0a1628 20%, #0d0a2e 40%, #060d1f 55%, #0a1a2e 70%, #12082a 85%, #030c1a 100%)",
+            border: "1px solid rgba(56,189,248,0.12)",
+            boxShadow: "inset 0 0 80px rgba(56,189,248,0.06), inset 0 0 40px rgba(139,92,246,0.05)",
+            position: "relative",
           }}
         >
+          {/* Landscape: aurora gradient glow blobs */}
+          {!isPortrait && !loading && !error && (
+            <>
+              <div className="absolute pointer-events-none" style={{
+                top: "-10%", left: "10%", width: "40%", height: "60%",
+                background: "radial-gradient(ellipse, rgba(56,189,248,0.18) 0%, transparent 70%)",
+                filter: "blur(30px)",
+              }} />
+              <div className="absolute pointer-events-none" style={{
+                bottom: "-10%", right: "10%", width: "45%", height: "60%",
+                background: "radial-gradient(ellipse, rgba(139,92,246,0.15) 0%, transparent 70%)",
+                filter: "blur(30px)",
+              }} />
+              <div className="absolute pointer-events-none" style={{
+                top: "20%", right: "5%", width: "30%", height: "40%",
+                background: "radial-gradient(ellipse, rgba(16,185,129,0.08) 0%, transparent 70%)",
+                filter: "blur(24px)",
+              }} />
+            </>
+          )}
+
           {/* Portrait: studio broadcast background */}
           {isPortrait && !loading && !error && (
             <>
