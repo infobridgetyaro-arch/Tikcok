@@ -59,6 +59,10 @@ export function broadcastGlobal(type: string, data: any) {
   });
 }
 
+export function broadcastStream(streamId: string, type: string, data: any) {
+  broadcast({ type, streamId, data });
+}
+
 function broadcast(msg: { type: string; streamId: string; data: any }) {
   const json = JSON.stringify(msg);
   wsClients.forEach((ws) => {
@@ -163,6 +167,18 @@ function escapeDrawtext(text: string): string {
 
 function escapeTextfilePath(p: string): string {
   return p.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
+}
+
+/** Clamps a box so it always stays fully inside the frame. */
+function clampBox(x: number, y: number, w: number, h: number, frameW: number, frameH: number) {
+  const cw = Math.min(w, frameW);
+  const ch = Math.min(h, frameH);
+  return {
+    x: Math.max(0, Math.min(x, frameW - cw)),
+    y: Math.max(0, Math.min(y, frameH - ch)),
+    w: cw,
+    h: ch,
+  };
 }
 
 function hexToFFmpeg(hex: string): string {
@@ -451,11 +467,11 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       }
     } else {
       // Subscriber count styles
-      const subFontSize = Math.max(10, Math.round(scaleH * 0.038));
-      const labelSize = Math.max(7, Math.round(subFontSize * 0.58));
-      const subPad = Math.round(subFontSize * 0.45);
-      const subW = Math.round(scaleW * 0.30);
-      const subH = labelSize + subFontSize + subPad * 2 + 8;
+      const subFontSize = Math.max(12, Math.round(scaleH * 0.044));
+      const labelSize = Math.max(8, Math.round(subFontSize * 0.60));
+      const subPad = Math.round(subFontSize * 0.5);
+      const subW = Math.round(scaleW * 0.32);
+      const subH = labelSize + subFontSize + subPad * 2 + 10;
       let subX = scaleW - subW - margin;
       let subY = margin;
       switch (sPos) {
@@ -463,9 +479,11 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
         case "top-right": break;
         case "center-left": subX = margin; subY = Math.round((scaleH - subH) / 2); break;
         case "center-right": subY = Math.round((scaleH - subH) / 2); break;
-        case "bottom-left": subX = margin; subY = scaleH - subH - margin; break;
-        case "bottom-right": subY = scaleH - subH - margin; break;
+        case "bottom-left": subX = margin; subY = scaleH - subH - effectiveTickerH - margin; break;
+        case "bottom-right": subY = scaleH - subH - effectiveTickerH - margin; break;
       }
+      // Clamp so box never clips outside the frame
+      ({ x: subX, y: subY } = clampBox(subX, subY, subW, subH, scaleW, scaleH));
 
       switch (subStyle) {
         case "minimal":

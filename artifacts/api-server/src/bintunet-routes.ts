@@ -14,9 +14,9 @@ import {
   restartStream,
   toggleMute,
   addWSClient,
-  applyOverlayChanges,
   isStreamActive,
   broadcastGlobal,
+  broadcastStream,
 } from "./stream-manager";
 import { getLiveCount, writeOverlayTextFiles as updateOverlayTextFiles, cleanupOverlayFiles } from "./youtube-counter";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
@@ -186,10 +186,11 @@ export async function registerBintunetRoutes(
       const hasStructural = changedKeys.some((k) => structuralOverlayFields.includes(k));
       const hasTextOnly = changedKeys.some((k) => textOnlyFields.includes(k));
 
-      if (hasStructural) {
-        applyOverlayChanges(req.params.id);
-      } else if (hasTextOnly) {
+      if (hasStructural || hasTextOnly) {
         updateOverlayTextFiles(req.params.id);
+      }
+      if (hasStructural) {
+        broadcastStream(req.params.id, "overlay_pending", {});
       }
     }
 

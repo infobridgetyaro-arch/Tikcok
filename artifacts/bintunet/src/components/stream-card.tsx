@@ -13,7 +13,7 @@ import {
   Play, Square, RotateCcw, Trash2, ChevronDown, ChevronUp,
   Volume2, VolumeX, Monitor, Smartphone, Settings2, Terminal,
   Layers, Upload, Image, Type, X, Sparkles, Eye, Youtube,
-  Video, Camera, Radio, Info, Wifi, Usb, HelpCircle
+  Video, Camera, Radio, Info, Wifi, Usb, HelpCircle, AlertTriangle
 } from "lucide-react";
 import { SiTiktok } from "react-icons/si";
 import { QRCodeSVG } from "qrcode.react";
@@ -30,6 +30,7 @@ interface StreamCardProps {
   onUpdate: (id: string, data: Partial<StreamConfig>) => void;
   onToggleMute: (id: string) => void;
   index: number;
+  pendingOverlay?: boolean;
 }
 
 const statusConfig = {
@@ -187,7 +188,7 @@ function canStart(stream: StreamConfig): boolean {
   return !!(stream.tiktokUsername) && hasOutput;
 }
 
-export function StreamCard({ stream, logs, onStart, onStop, onRestart, onDelete, onUpdate, onToggleMute, index }: StreamCardProps) {
+export function StreamCard({ stream, logs, onStart, onStop, onRestart, onDelete, onUpdate, onToggleMute, index, pendingOverlay }: StreamCardProps) {
   const [settingsOpen, setSettingsOpen] = useState(true);
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
@@ -531,9 +532,15 @@ export function StreamCard({ stream, logs, onStart, onStop, onRestart, onDelete,
 
             {stream.overlayEnabled && (
               <>
-                {isActive && (
+                {isActive && pendingOverlay && (
+                  <div className="flex items-center gap-2 text-xs rounded-md px-3 py-2 border border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    <span>Layout changes saved — <button className="underline underline-offset-2 font-medium hover:no-underline" onClick={() => onRestart(stream.id)}>restart stream</button> to apply</span>
+                  </div>
+                )}
+                {isActive && !pendingOverlay && (
                   <p className="text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2">
-                    Changes apply automatically while streaming. A brief encoder restart (~2s) will occur for structural changes.
+                    Text changes apply live. Layout &amp; style changes will show a restart prompt.
                   </p>
                 )}
 

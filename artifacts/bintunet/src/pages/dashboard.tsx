@@ -124,6 +124,7 @@ export default function Dashboard() {
   const { isConnected, subscribe } = useWebSocket();
   const [streams, setStreams] = useState<StreamConfig[]>([]);
   const [streamLogs, setStreamLogs] = useState<Record<string, string[]>>({});
+  const [pendingOverlay, setPendingOverlay] = useState<Record<string, boolean>>({});
   const [showInvite, setShowInvite] = useState(false);
 
   const fetchStreams = useCallback(async () => {
@@ -154,7 +155,12 @@ export default function Dashboard() {
         );
       }
     });
-    return () => { unsubLog(); unsubStatus(); };
+    const unsubPending = subscribe("overlay_pending", (msg) => {
+      if (msg.streamId) {
+        setPendingOverlay((prev) => ({ ...prev, [msg.streamId!]: true }));
+      }
+    });
+    return () => { unsubLog(); unsubStatus(); unsubPending(); };
   }, [subscribe]);
 
   const addStream = async () => {
@@ -201,7 +207,12 @@ export default function Dashboard() {
     }
   };
 
+  const clearPending = (id: string) => {
+    setPendingOverlay((prev) => { const n = { ...prev }; delete n[id]; return n; });
+  };
+
   const startStream = async (id: string) => {
+    clearPending(id);
     try {
       await apiRequest("POST", `/api/streams/${id}/start`);
       setStreams((prev) => prev.map((s) => (s.id === id ? { ...s, status: "streaming" } : s)));
@@ -222,6 +233,7 @@ export default function Dashboard() {
   };
 
   const restartStream = async (id: string) => {
+    clearPending(id);
     try {
       await apiRequest("POST", `/api/streams/${id}/restart`);
       setStreams((prev) => prev.map((s) => (s.id === id ? { ...s, status: "reconnecting" } : s)));
@@ -379,6 +391,7 @@ export default function Dashboard() {
                 onUpdate={updateStream}
                 onToggleMute={toggleMute}
                 index={i}
+                pendingOverlay={!!pendingOverlay[stream.id]}
               />
             ))}
           </div>
