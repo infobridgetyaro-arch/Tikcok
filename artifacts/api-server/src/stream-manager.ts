@@ -93,30 +93,42 @@ function sendStatus(streamId: string, status: string) {
  * Outputs label [base].
  */
 function buildMeshGradientBg(scaleW: number, scaleH: number, fps: number, videoInputIdx = 0): string[] {
+  const W = scaleW;
+  const H = scaleH;
   const parts: string[] = [];
 
-  // Calculate project target aspect ratio safely as a floating string to bypass evaluation errors
-  const aspectRatio = (scaleH / scaleW).toFixed(4);
+  // Dark violet base canvas
+  parts.push(`color=c=0x040010:s=${W}x${H}:r=${fps}[_mgbg0]`);
 
-  // 1. Separate original video stream into analysis track and output track
-  parts.push(`[${videoInputIdx}:v]split=2[_vid_measure][_vid_original]`);
+  // Purple glow — top-left
+  const p1x = -Math.round(W * 0.12);
+  const p1y = -Math.round(H * 0.12);
+  const p1w = Math.round(W * 0.68);
+  const p1h = Math.round(H * 0.68);
+  parts.push(`[_mgbg0]drawbox=x=${p1x}:y=${p1y}:w=${p1w}:h=${p1h}:color=0x6d28d9@0.55:t=fill[_mgbg1]`);
 
-  // 2. Generate a baseline dummy asset matching encoder target frame rate
-  parts.push(`color=c=0x040010:s=16x16:r=${fps}[_dummy_canvas]`);
+  // Cyan glow — bottom-right
+  const p2x = Math.round(W * 0.42);
+  const p2y = Math.round(H * 0.42);
+  const p2w = Math.round(W * 0.72);
+  const p2h = Math.round(H * 0.72);
+  parts.push(`[_mgbg1]drawbox=x=${p2x}:y=${p2y}:w=${p2w}:h=${p2h}:color=0x0891b2@0.45:t=fill[_mgbg2]`);
 
-  // 3. Scale background asset up relative to incoming reference stream's width (rw) 
-  // This locks side limits tightly to the video edges while naturally bleeding out vertically if short
-  parts.push(`[_dummy_canvas][_vid_measure]scale=rw:rw*${aspectRatio}[_bg_scaled]`);
+  // Magenta accent — centre
+  const p3x = Math.round(W * 0.26);
+  const p3y = Math.round(H * 0.22);
+  const p3w = Math.round(W * 0.48);
+  const p3h = Math.round(H * 0.56);
+  parts.push(`[_mgbg2]drawbox=x=${p3x}:y=${p3y}:w=${p3w}:h=${p3h}:color=0xc026d3@0.28:t=fill[_mgbg3]`);
 
-  // 4. Paint mesh elements relatively onto this adaptive base
-  parts.push(`[_bg_scaled]drawbox=x=-iw*0.12:y=-ih*0.12:w=iw*0.68:h=ih*0.68:color=0x6d28d9@0.55:t=fill[_mgbg1]`);
-  parts.push(`[_mgbg1]drawbox=x=iw*0.42:y=ih*0.42:w=iw*0.72:h=ih*0.72:color=0x0891b2@0.45:t=fill[_mgbg2]`);
-  parts.push(`[_mgbg2]drawbox=x=iw*0.26:y=ih*0.22:w=iw*0.48:h=ih*0.56:color=0xc026d3@0.28:t=fill[_mgbg3]`);
-  parts.push(`[_mgbg3]gblur=sigma=60[_gradient_back]`);
+  // Heavy gaussian blur turns the boxes into smooth gradient blobs
+  parts.push(`[_mgbg3]gblur=sigma=60[_mgbgfinal]`);
 
-  // 5. Blit your pure original video directly into the dead center.
-  // Gradients seamlessly show up on the margins only when the content doesn't cover it.
-  parts.push(`[_gradient_back][_vid_original]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2:shortest=1[base]`);
+  // Scale source video to fit frame without letterbox padding
+  parts.push(`[${videoInputIdx}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease[_mgvid]`);
+
+  // Overlay video centred on gradient canvas → [base]
+  parts.push(`[_mgbgfinal][_mgvid]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2[base]`);
 
   return parts;
 }
