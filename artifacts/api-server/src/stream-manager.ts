@@ -466,19 +466,21 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
         }
       }
     } else {
-                        // Subscriber count styles
+                              // Subscriber count styles
       const subW = Math.round(scaleW * 0.32);
+      // Use frame-width-relative padding so portrait video (large scaleH) doesn't
+      // inflate subPad and eat into availableW
+      const subPad = Math.max(6, Math.round(scaleW * 0.012));
       const subFontSizeIdeal = Math.max(12, Math.round(scaleH * 0.044));
-      const subPad = Math.round(subFontSizeIdeal * 0.5);
       const showViewers = !!(stream as any).subBoxShowViewers;
       const availableW = subW - subPad * 2;
 
-      // Use 0.80 ratio (conservative for DejaVu Bold uppercase)
-      const labelChars = showViewers ? 14 : 11;
-      const maxCountChars = showViewers ? 22 : 15;
+      // 0.9 ratio: conservative upper bound for DejaVu Bold uppercase glyphs
+      const labelChars = showViewers ? 14 : 11;   // "SUBS / VIEWERS" | "SUBSCRIBERS"
+      const maxCountChars = showViewers ? 22 : 15; // "119 SUBS | 1 WATCHING" | "1,234,567,890"
       const labelSizeIdeal = Math.max(8, Math.round(subFontSizeIdeal * 0.60));
-      const labelSize = Math.max(8, Math.min(labelSizeIdeal, Math.floor(availableW / (labelChars * 0.80))));
-      const subFontSize = Math.max(12, Math.min(subFontSizeIdeal, Math.floor(availableW / (maxCountChars * 0.80))));
+      const labelSize = Math.max(8, Math.min(labelSizeIdeal, Math.floor(availableW / (labelChars * 0.9))));
+      const subFontSize = Math.max(12, Math.min(subFontSizeIdeal, Math.floor(availableW / (maxCountChars * 0.9))));
 
       const subH = labelSize + subFontSize + subPad * 2 + 10;
       let subX = scaleW - subW - margin;
@@ -493,12 +495,8 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       }
       ({ x: subX, y: subY } = clampBox(subX, subY, subW, subH, scaleW, scaleH));
 
-      // x expressions: text starts at subX+subPad but shifts left if text_w
-      // would push past the right wall (subX+subW-subPad). max(subX) prevents
-      // the text from sliding off the left edge of the box.
       const boxRight = subX + subW - subPad;
       const textStartX = subX + subPad;
-      // FFmpeg drawtext runtime expression — text_w is the actual rendered width
       const clampedX = `max(${subX}\\,min(${textStartX}\\,${boxRight} - text_w))`;
 
       switch (subStyle) {
