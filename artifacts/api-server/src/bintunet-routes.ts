@@ -160,6 +160,7 @@ export async function registerBintunetRoutes(
   const textOnlyFields = [
     "overlayChannelName", "overlayHeadline", "overlayTickerText", "youtubeChannelId",
     "lowerThirdName", "lowerThirdTitle", "messageText",
+    "adText", "adSubText", "adCtaLabel",
   ];
   const structuralOverlayFields = [
     "overlayEnabled", "overlayLogoPath", "overlayLogoPosition", "overlayLogoScale",
@@ -170,8 +171,10 @@ export async function registerBintunetRoutes(
     "lowerThirdStyle", "lowerThirdAccentColor", "lowerThirdAnimation",
     "tickerStyle",
     "messageEnabled", "messageStyle", "messagePosition",
-    "subBoxEnabled", "subBoxStyle", "subBoxPosition", "subBoxShowViewers",
+    "subBoxEnabled", "subBoxStyle", "subBoxPosition", "subBoxShowViewers", "subBoxAnimStyle",
     "chatEnabled", "chatPosition", "chatStyle", "chatMaxMessages",
+    "viewerLayout", "viewerScreenScale", "viewerScreenX", "viewerScreenY",
+    "adEnabled", "adStyle", "adBgColor", "adAccentColor", "adPosition", "adCountdown",
   ];
 
   app.patch("/api/streams/:id", requireAuth, (req, res) => {

@@ -11,6 +11,7 @@ import {
   getLtNameTextFilePath, getLtTitleTextFilePath,
   getMessageTextFilePath, getSubBoxTextFilePath,
   getChatTextFilePath, getChatNameTextFilePath,
+  getAdTextFilePath, getAdSubTextFilePath, getAdCtaFilePath,
   startLiveCountPolling,
 } from "./youtube-counter";
 import type { WebSocket } from "ws";
@@ -203,6 +204,56 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       parts.push(`drawtext=fontfile='${fontEsc}':text='${nameText}':fontcolor=white:fontsize=${bnMainSize}:x=${textX}:y=${mainY}`);
       parts.push(`drawtext=fontfile='${fontEsc}':text='${titleText}':fontcolor=0xFFDD44:fontsize=${bnSubSize}:x=${textX}:y=${mainY + bnMainSize + 6}`);
     }
+  } else if (ltStyle === "ticker-name") {
+    const tnH = Math.round(scaleH * 0.09);
+    const tnY = scaleH - tnH - effectiveTickerH - 4;
+    const tnBadgeW = Math.round(scaleW * 0.30);
+    const tnNameSize = Math.max(13, Math.round(tnH * 0.44));
+    const tnTitleSize = Math.max(9, Math.round(tnH * 0.30));
+    const tnAccent = hexToFFmpeg((stream as any).lowerThirdAccentColor || "#e53935");
+    const tnPad = Math.round(tnH * 0.12);
+    const tnTextX = tnBadgeW + 16;
+
+    parts.push(`drawbox=x=0:y=${tnY}:w=${scaleW}:h=${tnH}:color=0x0c1524@0.92:t=fill`);
+    parts.push(`drawbox=x=0:y=${tnY}:w=${tnBadgeW}:h=${tnH}:color=${tnAccent}@0.96:t=fill`);
+    parts.push(`drawbox=x=${tnBadgeW}:y=${tnY}:w=3:h=${tnH}:color=0xFFFFFF@0.18:t=fill`);
+
+    if (useTextfile) {
+      const ltNamePath = escapeTextfilePath(getLtNameTextFilePath(stream.id));
+      const ltTitlePath = escapeTextfilePath(getLtTitleTextFilePath(stream.id));
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltNamePath}':reload=1:fontcolor=white:fontsize=${tnNameSize}:x=${Math.round(tnBadgeW * 0.07)}:y=${tnY + tnPad}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltTitlePath}':reload=1:fontcolor=0xEEEEEE:fontsize=${tnTitleSize}:x=${tnTextX}:y=${tnY + Math.round((tnH - tnTitleSize) / 2)}`);
+    } else {
+      const nameText = escapeDrawtext((stream as any).lowerThirdName || "");
+      const titleText = escapeDrawtext((stream as any).lowerThirdTitle || "");
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${nameText}':fontcolor=white:fontsize=${tnNameSize}:x=${Math.round(tnBadgeW * 0.07)}:y=${tnY + tnPad}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${titleText}':fontcolor=0xEEEEEE:fontsize=${tnTitleSize}:x=${tnTextX}:y=${tnY + Math.round((tnH - tnTitleSize) / 2)}`);
+    }
+  } else if (ltStyle === "side-strip") {
+    const ssStripW = Math.round(scaleW * 0.006);
+    const ssW = Math.round(scaleW * 0.28);
+    const ssNameSize = Math.max(12, Math.round(scaleH * 0.040));
+    const ssTitleSize = Math.max(9, Math.round(scaleH * 0.026));
+    const ssPad = Math.round(scaleH * 0.018);
+    const ssH = ssNameSize + ssTitleSize + ssPad * 2 + 10;
+    const ssY = scaleH - ssH - effectiveTickerH - Math.round(scaleH * 0.04);
+    const ssAccent = hexToFFmpeg((stream as any).lowerThirdAccentColor || "#e53935");
+
+    parts.push(`drawbox=x=0:y=${ssY - 2}:w=${ssStripW}:h=${ssH + 4}:color=${ssAccent}@1:t=fill`);
+    parts.push(`drawbox=x=${ssStripW + 2}:y=${ssY}:w=${ssW}:h=${ssH}:color=0x0a0f1e@0.88:t=fill`);
+
+    const textX = ssStripW + Math.round(ssW * 0.06) + 4;
+    if (useTextfile) {
+      const ltNamePath = escapeTextfilePath(getLtNameTextFilePath(stream.id));
+      const ltTitlePath = escapeTextfilePath(getLtTitleTextFilePath(stream.id));
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltNamePath}':reload=1:fontcolor=white:fontsize=${ssNameSize}:x=${textX}:y=${ssY + ssPad}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':textfile='${ltTitlePath}':reload=1:fontcolor=0xAABBCC:fontsize=${ssTitleSize}:x=${textX}:y=${ssY + ssPad + ssNameSize + 6}`);
+    } else {
+      const nameText = escapeDrawtext((stream as any).lowerThirdName || "");
+      const titleText = escapeDrawtext((stream as any).lowerThirdTitle || "");
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${nameText}':fontcolor=white:fontsize=${ssNameSize}:x=${textX}:y=${ssY + ssPad}`);
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${titleText}':fontcolor=0xAABBCC:fontsize=${ssTitleSize}:x=${textX}:y=${ssY + ssPad + ssNameSize + 6}`);
+    }
   } else {
     if (stream.overlayChannelName) {
       const bannerColor = hexToFFmpeg(stream.overlayBannerColor || "#c41e1e");
@@ -286,8 +337,18 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
         parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x0a1628@0.96:t=fill`);
         parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=3:color=0xDAA520@1:t=fill`);
         break;
+      case "pill":
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=${msgH}:color=0x1a1a2e@0.88:t=fill`);
+        parts.push(`drawbox=x=${msgX}:y=${msgY}:w=${msgW}:h=2:color=${hexToFFmpeg(stream.overlayBannerColor || "#c41e1e")}@0.9:t=fill`);
+        parts.push(`drawbox=x=${msgX}:y=${msgY + msgH - 2}:w=${msgW}:h=2:color=${hexToFFmpeg(stream.overlayBannerColor || "#c41e1e")}@0.9:t=fill`);
+        break;
+      case "watermark":
+        // no background — translucent text only
+        break;
     }
-    const textColor = msgStyle === "minimal-clean" ? "0xEEEEEE" : "white";
+    const textColor = msgStyle === "minimal-clean" ? "0xEEEEEE"
+      : msgStyle === "watermark" ? "0xFFFFFF@0.55"
+      : "white";
     const xExpr = msgStyle === "cinema" ? "(w-text_w)/2" : String(textX);
     const yExpr = textY + (msgStyle === "broadcast-official" ? 4 : 0);
     if (useTextfile) {
@@ -384,18 +445,44 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
           parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x25D366@0.96:t=fill`);
           parts.push(`drawbox=x=${subX + Math.round(subW * 0.72)}:y=${subY + subH}:w=${Math.round(subW * 0.1)}:h=${Math.round(subFontSize * 0.4)}:color=0x25D366@0.96:t=fill`);
           break;
+        case "neon-glow":
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0d0520@0.95:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=3:color=0xD400FF@1:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY + subH - 3}:w=${subW}:h=3:color=0xD400FF@1:t=fill`);
+          break;
+        case "glass-card":
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0xFFFFFF@0.14:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=1:color=0xFFFFFF@0.40:t=fill`);
+          break;
+        case "scoreboard": {
+          const sbHdrH = Math.round(subH * 0.36);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0x0a0e22@0.97:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${sbHdrH}:color=0x1a56db@1:t=fill`);
+          parts.push(`drawtext=fontfile='${fontEsc}':text='SUBSCRIBERS':fontcolor=white:fontsize=${Math.max(7, Math.round(sbHdrH * 0.52))}:x=${subX + subPad}:y=${subY + Math.round((sbHdrH - Math.max(7, Math.round(sbHdrH * 0.52))) / 2)}`);
+          break;
+        }
+        case "pill-badge":
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=${subH}:color=0xF97316@0.92:t=fill`);
+          parts.push(`drawbox=x=${subX}:y=${subY}:w=${subW}:h=2:color=0xFFFFFF@0.30:t=fill`);
+          break;
       }
 
       const labelColor = subStyle === "minimal" ? "0x888888"
         : subStyle === "whatsapp" ? "0xDCF8C6"
         : subStyle === "flip-counter" ? "0x505050"
+        : subStyle === "neon-glow" ? "0xCC55FF"
+        : subStyle === "glass-card" ? "0xDDEEFF"
+        : subStyle === "scoreboard" ? "0x93C5FD"
+        : subStyle === "pill-badge" ? "0xFFE0C0"
         : "0x8899AA";
       const countColor = subStyle === "flip-counter" ? "0xFFE000"
         : subStyle === "whatsapp" ? "white"
         : "white";
       const showViewers = !!(stream as any).subBoxShowViewers;
       const countLabel = showViewers ? "SUBS / VIEWERS" : "SUBSCRIBERS";
-      parts.push(`drawtext=fontfile='${fontEsc}':text='${countLabel}':fontcolor=${labelColor}:fontsize=${labelSize}:x=${subX + subPad}:y=${subY + subPad}`);
+      if (subStyle !== "scoreboard") {
+        parts.push(`drawtext=fontfile='${fontEsc}':text='${countLabel}':fontcolor=${labelColor}:fontsize=${labelSize}:x=${subX + subPad}:y=${subY + subPad}`);
+      }
       if (useTextfile) {
         const subPath = escapeTextfilePath(getSubBoxTextFilePath(stream.id));
         parts.push(`drawtext=fontfile='${fontEsc}':textfile='${subPath}':reload=1:fontcolor=${countColor}:fontsize=${subFontSize}:x=${subX + subPad}:y=${subY + subPad + labelSize + 4}`);
@@ -456,6 +543,120 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
         parts.push(`drawtext=fontfile='${fontEsc}':textfile='${namePath}':reload=1:fontcolor=${nameColor}:fontsize=${nameFont2}:x=${chatX + dotSize + 13}:y=${slotY}`);
         // Message text
         parts.push(`drawtext=fontfile='${fontEsc}':textfile='${chatPath}':reload=1:fontcolor=${msgColor}:fontsize=${msgFont}:x=${chatX + 8}:y=${slotY + nameFont2 + 3}`);
+      }
+    }
+  }
+
+  // ── Ad Overlay ────────────────────────────────────────────────────────────
+  if ((stream as any).adEnabled && (stream as any).adText) {
+    const adStyle = (stream as any).adStyle || "sponsor-banner";
+    const adPos = (stream as any).adPosition || "bottom-center";
+    const adBg = hexToFFmpeg((stream as any).adBgColor || "#0d1629");
+    const adAccent = hexToFFmpeg((stream as any).adAccentColor || "#F97316");
+    const margin = Math.round(scaleW * 0.025);
+
+    const adHeadSize = Math.max(11, Math.round(scaleH * 0.038));
+    const adSubSize = Math.max(9, Math.round(scaleH * 0.026));
+    const adCtaSize = Math.max(9, Math.round(scaleH * 0.028));
+    const adPad = Math.round(adHeadSize * 0.5);
+
+    const adTextPath = escapeTextfilePath(getAdTextFilePath(stream.id));
+    const adSubPath = escapeTextfilePath(getAdSubTextFilePath(stream.id));
+    const adCtaPath = escapeTextfilePath(getAdCtaFilePath(stream.id));
+
+    if (adStyle === "sponsor-banner") {
+      const adW = Math.round(scaleW * 0.72);
+      const adH = adHeadSize + adSubSize + adPad * 2 + 8;
+      let adX = Math.round((scaleW - adW) / 2);
+      let adY = scaleH - adH - effectiveTickerH - margin;
+      if (adPos === "top-center") adY = margin;
+      else if (adPos === "top-right") { adX = scaleW - adW - margin; adY = margin; }
+      else if (adPos === "bottom-right") adX = scaleW - adW - margin;
+      else if (adPos === "top-left") { adX = margin; adY = margin; }
+      else if (adPos === "bottom-left") adX = margin;
+
+      parts.push(`drawbox=x=${adX}:y=${adY}:w=${adW}:h=${adH}:color=${adBg}@0.94:t=fill`);
+      parts.push(`drawbox=x=${adX}:y=${adY}:w=${adW}:h=3:color=${adAccent}@1:t=fill`);
+      parts.push(`drawbox=x=${adX}:y=${adY}:w=3:h=${adH}:color=${adAccent}@1:t=fill`);
+      const adLabelW = Math.round(adCtaSize * 2.0);
+      parts.push(`drawbox=x=${adX + adW - adLabelW - 4}:y=${adY + 3}:w=${adLabelW}:h=${Math.round(adCtaSize * 1.4)}:color=${adAccent}@1:t=fill`);
+      parts.push(`drawtext=fontfile='${fontEsc}':text='AD':fontcolor=white:fontsize=${Math.max(8, Math.round(adCtaSize * 0.85))}:x=${adX + adW - adLabelW + 2}:y=${adY + 5}`);
+      if (useTextfile) {
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${adTextPath}':reload=1:fontcolor=white:fontsize=${adHeadSize}:x=${adX + adPad + 6}:y=${adY + adPad}`);
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${adSubPath}':reload=1:fontcolor=0xCCCCCC:fontsize=${adSubSize}:x=${adX + adPad + 6}:y=${adY + adPad + adHeadSize + 4}`);
+      }
+    } else if (adStyle === "lower-ad") {
+      const adH = adHeadSize + adSubSize + adPad * 2 + 4;
+      const badgeW = Math.round(scaleW * 0.09);
+      let adY = scaleH - adH - effectiveTickerH - 2;
+      if (adPos === "top-center" || adPos === "top-left" || adPos === "top-right") adY = 0;
+      parts.push(`drawbox=x=0:y=${adY}:w=${scaleW}:h=${adH}:color=${adBg}@0.95:t=fill`);
+      parts.push(`drawbox=x=0:y=${adY}:w=${badgeW}:h=${adH}:color=${adAccent}@1:t=fill`);
+      parts.push(`drawtext=fontfile='${fontEsc}':text='AD':fontcolor=white:fontsize=${Math.max(9, Math.round(adHeadSize * 0.75))}:x=${Math.round((badgeW - adHeadSize) / 2)}:y=${adY + Math.round((adH - adHeadSize) / 2)}`);
+      if (useTextfile) {
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${adTextPath}':reload=1:fontcolor=white:fontsize=${adHeadSize}:x=${badgeW + adPad}:y=${adY + adPad}`);
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${adSubPath}':reload=1:fontcolor=0xCCCCCC:fontsize=${adSubSize}:x=${badgeW + adPad}:y=${adY + adPad + adHeadSize + 4}`);
+      }
+    } else if (adStyle === "corner-bug") {
+      const cbW = Math.round(scaleW * 0.22);
+      const cbH = adHeadSize + adSubSize + adPad * 2 + 6;
+      let cbX = scaleW - cbW - margin;
+      let cbY = margin;
+      if (adPos === "top-left" || adPos === "bottom-left") cbX = margin;
+      if (adPos === "bottom-left" || adPos === "bottom-right" || adPos === "bottom-center") cbY = scaleH - cbH - effectiveTickerH - margin;
+      parts.push(`drawbox=x=${cbX}:y=${cbY}:w=${cbW}:h=${cbH}:color=${adBg}@0.93:t=fill`);
+      parts.push(`drawbox=x=${cbX}:y=${cbY}:w=${cbW}:h=2:color=${adAccent}@1:t=fill`);
+      const badgeSize = Math.max(8, Math.round(adSubSize * 0.9));
+      parts.push(`drawbox=x=${cbX}:y=${cbY + 2}:w=${Math.round(badgeSize * 1.8)}:h=${Math.round(badgeSize * 1.4)}:color=${adAccent}@1:t=fill`);
+      parts.push(`drawtext=fontfile='${fontEsc}':text='AD':fontcolor=white:fontsize=${badgeSize}:x=${cbX + 2}:y=${cbY + 3}`);
+      if (useTextfile) {
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${adTextPath}':reload=1:fontcolor=white:fontsize=${adHeadSize}:x=${cbX + adPad}:y=${cbY + adPad}`);
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${adSubPath}':reload=1:fontcolor=0xCCCCCC:fontsize=${adSubSize}:x=${cbX + adPad}:y=${cbY + adPad + adHeadSize + 4}`);
+      }
+    } else if (adStyle === "countdown-card") {
+      const cdW = Math.round(scaleW * 0.22);
+      const cdCountSize = Math.max(22, Math.round(scaleH * 0.12));
+      const cdH = cdCountSize + adHeadSize + adPad * 2 + 12;
+      let cdX = scaleW - cdW - margin;
+      let cdY = margin;
+      if (adPos === "top-left" || adPos === "bottom-left") cdX = margin;
+      if (adPos === "bottom-left" || adPos === "bottom-right" || adPos === "bottom-center") cdY = scaleH - cdH - effectiveTickerH - margin;
+      parts.push(`drawbox=x=${cdX}:y=${cdY}:w=${cdW}:h=${cdH}:color=${adBg}@0.96:t=fill`);
+      parts.push(`drawbox=x=${cdX}:y=${cdY}:w=4:h=${cdH}:color=${adAccent}@1:t=fill`);
+      const countdown = Math.max(0, (stream as any).adCountdown || 0);
+      const cdLabel = countdown > 0 ? String(countdown) : "0";
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${cdLabel}s':fontcolor=${adAccent}:fontsize=${cdCountSize}:x=${cdX + Math.round((cdW - cdLabel.length * cdCountSize * 0.6) / 2)}:y=${cdY + adPad}`);
+      if (useTextfile) {
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${adTextPath}':reload=1:fontcolor=white:fontsize=${adHeadSize}:x=${cdX + adPad + 4}:y=${cdY + adPad + cdCountSize + 6}`);
+      }
+    } else if (adStyle === "product-card") {
+      const pcW = Math.round(scaleW * 0.26);
+      const pcH = adHeadSize + adSubSize + adCtaSize + adPad * 2 + 18;
+      let pcX = scaleW - pcW - margin;
+      let pcY = margin;
+      if (adPos === "top-left" || adPos === "bottom-left") pcX = margin;
+      if (adPos === "bottom-left" || adPos === "bottom-right" || adPos === "bottom-center") pcY = scaleH - pcH - effectiveTickerH - margin;
+      const hdrH = Math.round(adCtaSize * 1.5);
+      parts.push(`drawbox=x=${pcX}:y=${pcY}:w=${pcW}:h=${pcH}:color=${adBg}@0.95:t=fill`);
+      parts.push(`drawbox=x=${pcX}:y=${pcY}:w=${pcW}:h=${hdrH}:color=${adAccent}@0.95:t=fill`);
+      parts.push(`drawtext=fontfile='${fontEsc}':text='NEW PRODUCT':fontcolor=white:fontsize=${Math.max(7, Math.round(adCtaSize * 0.75))}:x=${pcX + adPad}:y=${pcY + Math.round((hdrH - adCtaSize) / 2)}`);
+      if (useTextfile) {
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${adTextPath}':reload=1:fontcolor=white:fontsize=${adHeadSize}:x=${pcX + adPad}:y=${pcY + hdrH + adPad}`);
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${adSubPath}':reload=1:fontcolor=0xDDAA44:fontsize=${adSubSize}:x=${pcX + adPad}:y=${pcY + hdrH + adPad + adHeadSize + 4}`);
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${adCtaPath}':reload=1:fontcolor=${adAccent}:fontsize=${adCtaSize}:x=${pcX + adPad}:y=${pcY + hdrH + adPad + adHeadSize + adSubSize + 10}`);
+      }
+    } else if (adStyle === "ribbon") {
+      const rbSize = Math.round(scaleW * 0.14);
+      let rbX = scaleW - rbSize;
+      let rbY = 0;
+      if (adPos === "top-left" || adPos === "bottom-left") rbX = 0;
+      if (adPos === "bottom-left" || adPos === "bottom-right" || adPos === "bottom-center") rbY = scaleH - rbSize - effectiveTickerH;
+      parts.push(`drawbox=x=${rbX}:y=${rbY}:w=${rbSize}:h=${rbSize}:color=${adAccent}@0.92:t=fill`);
+      const rbFontSize = Math.max(9, Math.round(rbSize * 0.24));
+      const rbLabel = useTextfile ? undefined : escapeDrawtext((stream as any).adText || "AD");
+      parts.push(`drawtext=fontfile='${fontEsc}':text='${rbLabel || "AD"}':fontcolor=white:fontsize=${rbFontSize}:x=${rbX + Math.round(rbSize * 0.12)}:y=${rbY + Math.round(rbSize * 0.12)}`);
+      if (useTextfile) {
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${adCtaPath}':reload=1:fontcolor=white:fontsize=${rbFontSize}:x=${rbX + Math.round(rbSize * 0.12)}:y=${rbY + Math.round(rbSize * 0.4)}`);
       }
     }
   }
@@ -586,7 +787,8 @@ function buildFFmpegArgs(
     ((stream as any).lowerThirdStyle && (stream as any).lowerThirdStyle !== "none") ||
     ((stream as any).messageEnabled && (stream as any).messageText) ||
     (stream as any).subBoxEnabled ||
-    ((stream as any).chatEnabled && stream.youtubeChannelId)
+    ((stream as any).chatEnabled && stream.youtubeChannelId) ||
+    ((stream as any).adEnabled && (stream as any).adText)
   );
   const useTextfile = stream.overlayEnabled && true;
 

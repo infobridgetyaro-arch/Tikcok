@@ -128,6 +128,15 @@ export function getChatTextFilePath(streamId: string, index: number): string {
 export function getChatNameTextFilePath(streamId: string, index: number): string {
   return path.join(tmpDir, `chatname_${index}_${streamId}.txt`);
 }
+export function getAdTextFilePath(streamId: string): string {
+  return path.join(tmpDir, `adtext_${streamId}.txt`);
+}
+export function getAdSubTextFilePath(streamId: string): string {
+  return path.join(tmpDir, `adsubtext_${streamId}.txt`);
+}
+export function getAdCtaFilePath(streamId: string): string {
+  return path.join(tmpDir, `adcta_${streamId}.txt`);
+}
 
 // ── Write helpers ──────────────────────────────────────────────────────────
 
@@ -157,6 +166,10 @@ export function writeOverlayTextFiles(streamId: string) {
     : "— SUBSCRIBERS";
   safeWrite(getSubBoxTextFilePath(streamId), subDisplay);
   safeWrite(getViewerBoxTextFilePath(streamId), cached?.viewers || "—");
+
+  safeWrite(getAdTextFilePath(streamId), (stream as any).adText || "");
+  safeWrite(getAdSubTextFilePath(streamId), (stream as any).adSubText || "");
+  safeWrite(getAdCtaFilePath(streamId), (stream as any).adCtaLabel || "");
 }
 
 export function writeChatTextFiles(streamId: string) {
@@ -182,6 +195,9 @@ export function cleanupOverlayFiles(streamId: string) {
     getMessageTextFilePath(streamId),
     getSubBoxTextFilePath(streamId),
     getViewerBoxTextFilePath(streamId),
+    getAdTextFilePath(streamId),
+    getAdSubTextFilePath(streamId),
+    getAdCtaFilePath(streamId),
   ];
   for (let i = 0; i < 10; i++) {
     paths.push(getChatTextFilePath(streamId, i));
