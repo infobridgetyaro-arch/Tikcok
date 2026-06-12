@@ -28,14 +28,6 @@ jobs:
           streamlink --version
           yt-dlp --version
 
-      - name: Install cloudflared
-        run: |
-          curl -fsSL \
-            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb \
-            -o cloudflared.deb
-          sudo dpkg -i cloudflared.deb
-          cloudflared --version
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -81,16 +73,18 @@ jobs:
             sleep 1
           done
 
-      - name: Start Cloudflare Tunnel
+      - name: Start tunnel (localhost.run)
         run: |
-          cloudflared tunnel --url http://localhost:8080 \
-            --no-autoupdate \
-            2>&1 | tee /tmp/cf_tunnel.log &
+          ssh -o StrictHostKeyChecking=no \
+              -o ServerAliveInterval=30 \
+              -R 80:localhost:8080 \
+              localhost.run \
+            2>&1 | tee /tmp/tunnel.log &
           echo $! > /tmp/cf.pid
 
           echo "Waiting for tunnel URL..."
           for i in $(seq 1 30); do
-            URL=$(grep -oP 'https://[a-z0-9\-]+\.trycloudflare\.com' /tmp/cf_tunnel.log | head -1)
+            URL=$(grep -oP 'https://[a-zA-Z0-9\-]+\.lhr\.life' /tmp/tunnel.log | head -1)
             if [ -n "$URL" ]; then
               echo ""
               echo "╔══════════════════════════════════════════════════════╗"
@@ -108,7 +102,7 @@ jobs:
 
           if [ -z "$URL" ]; then
             echo "ERROR: Tunnel URL not found. Dumping log:"
-            cat /tmp/cf_tunnel.log
+            cat /tmp/tunnel.log
             exit 1
           fi
 
@@ -129,4 +123,4 @@ jobs:
           done
 
           echo "A process exited — shutting down."
-          tail -20 /tmp/cf_tunnel.log
+          tail -20 /tmp/tunnel.log
