@@ -125,6 +125,9 @@ export function getViewerBoxTextFilePath(streamId: string): string {
 export function getChatTextFilePath(streamId: string, index: number): string {
   return path.join(tmpDir, `chat_${index}_${streamId}.txt`);
 }
+export function getChatNameTextFilePath(streamId: string, index: number): string {
+  return path.join(tmpDir, `chatname_${index}_${streamId}.txt`);
+}
 
 // ── Write helpers ──────────────────────────────────────────────────────────
 
@@ -165,8 +168,8 @@ export function writeChatTextFiles(streamId: string) {
 
   for (let i = 0; i < maxMsgs; i++) {
     const msg = messages[messages.length - 1 - i];
-    const line = msg ? `${msg.authorName}: ${msg.message}` : "";
-    safeWrite(getChatTextFilePath(streamId, i), line);
+    safeWrite(getChatNameTextFilePath(streamId, i), msg ? msg.authorName : "");
+    safeWrite(getChatTextFilePath(streamId, i), msg ? msg.message : "");
   }
 }
 
@@ -180,7 +183,10 @@ export function cleanupOverlayFiles(streamId: string) {
     getSubBoxTextFilePath(streamId),
     getViewerBoxTextFilePath(streamId),
   ];
-  for (let i = 0; i < 10; i++) paths.push(getChatTextFilePath(streamId, i));
+  for (let i = 0; i < 10; i++) {
+    paths.push(getChatTextFilePath(streamId, i));
+    paths.push(getChatNameTextFilePath(streamId, i));
+  }
   paths.forEach((p) => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch {} });
 }
 

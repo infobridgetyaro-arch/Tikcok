@@ -790,8 +790,13 @@ function AdminStreamOverlay({ stream, index, onUpdate }: {
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
                 <SectionHeader icon={TrendingUp} label="Subscriber Counter" color="#34d399" />
-                <Switch checked={draft.subBoxEnabled} onCheckedChange={(v) => set("subBoxEnabled", v)} />
+                <Switch checked={draft.subBoxEnabled} onCheckedChange={(v) => { set("subBoxEnabled", v); if (v) set("overlayLiveCount", false); }} />
               </div>
+              {draft.subBoxEnabled && draft.overlayLiveCount && (
+                <p className="text-[10px] text-amber-400/80 bg-amber-400/10 rounded px-2 py-1">
+                  Subscriber Counter and YouTube Live Count can't both be on — Live Count was disabled.
+                </p>
+              )}
               {draft.subBoxEnabled && (
                 <div className="space-y-2.5 rounded-lg p-2.5" style={{ background: "rgba(8,12,24,0.6)", border: "1px solid rgba(30,41,59,0.7)" }}>
 
@@ -1038,7 +1043,7 @@ function AdminStreamOverlay({ stream, index, onUpdate }: {
                     <Youtube className="w-3.5 h-3.5 text-red-500" />
                     <span className="text-[11px] font-semibold text-slate-300">Live Sub Count in Headline</span>
                   </div>
-                  <Switch checked={draft.overlayLiveCount} onCheckedChange={(v) => set("overlayLiveCount", v)} />
+                  <Switch checked={draft.overlayLiveCount} onCheckedChange={(v) => { set("overlayLiveCount", v); if (v) set("subBoxEnabled", false); }} />
                 </div>
                 {draft.overlayLiveCount && (
                   <Input className="h-7 text-xs bg-slate-900/60 border-slate-700/60 text-slate-200 placeholder:text-slate-700 font-mono"

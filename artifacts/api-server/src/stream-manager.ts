@@ -10,7 +10,7 @@ import {
   getHeadlineTextFilePath, getTickerTextFilePath,
   getLtNameTextFilePath, getLtTitleTextFilePath,
   getMessageTextFilePath, getSubBoxTextFilePath,
-  getChatTextFilePath,
+  getChatTextFilePath, getChatNameTextFilePath,
   startLiveCountPolling,
 } from "./youtube-counter";
 import type { WebSocket } from "ws";
@@ -299,19 +299,21 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
     }
   }
 
-  if ((stream as any).subBoxEnabled && stream.youtubeChannelId) {
+  if ((stream as any).subBoxEnabled) {
     const subStyle = (stream as any).subBoxStyle || "card";
     const margin = Math.round(scaleW * 0.025);
     const sPos = (stream as any).subBoxPosition || "top-right";
 
     if (subStyle === "recent-activity") {
-      // Live chat messages list
-      const chatMaxMsgs = Math.min((stream as any).chatMaxMessages || 5, 5);
-      const msgFont = Math.max(8, Math.round(scaleH * 0.026));
-      const lineH = msgFont + 7;
-      const headerH = Math.round(lineH * 1.4);
-      const chatW = Math.round(scaleW * 0.34);
-      const chatH = headerH + lineH * chatMaxMsgs + 6;
+      // Live chat messages list — 2-line per slot: name (bright) + message (grey)
+      const chatMaxMsgs = Math.min((stream as any).chatMaxMessages || 5, 4);
+      const msgFont = Math.max(8, Math.round(scaleH * 0.025));
+      const nameFont = Math.max(7, Math.round(msgFont * 0.80));
+      const dotSize = nameFont + 1;
+      const slotH = nameFont + msgFont + 10;
+      const headerH = Math.max(18, Math.round(msgFont * 1.5 + 7));
+      const chatW = Math.round(scaleW * 0.35);
+      const chatH = headerH + slotH * chatMaxMsgs + 8;
       let chatX = scaleW - chatW - margin;
       let chatY = margin;
       switch (sPos) {
@@ -329,9 +331,15 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
       parts.push(`drawtext=fontfile='${fontEsc}':text='⚡ LIVE CHAT':fontcolor=0x38bdf8:fontsize=${hFont}:x=${chatX + 8}:y=${chatY + Math.round((headerH - hFont) / 2)}`);
       if (useTextfile) {
         for (let i = 0; i < chatMaxMsgs; i++) {
+          const namePath = escapeTextfilePath(getChatNameTextFilePath(stream.id, i));
           const chatPath = escapeTextfilePath(getChatTextFilePath(stream.id, i));
-          const msgY = chatY + headerH + i * lineH + 4;
-          parts.push(`drawtext=fontfile='${fontEsc}':textfile='${chatPath}':reload=1:fontcolor=0xCCCCCC:fontsize=${msgFont}:x=${chatX + 8}:y=${msgY}`);
+          const slotY = chatY + headerH + i * slotH + 5;
+          // Avatar dot
+          parts.push(`drawbox=x=${chatX + 6}:y=${slotY + 1}:w=${dotSize}:h=${dotSize}:color=0x38bdf8@0.85:t=fill`);
+          // Author name in bright color
+          parts.push(`drawtext=fontfile='${fontEsc}':textfile='${namePath}':reload=1:fontcolor=0x7dd3fc:fontsize=${nameFont}:x=${chatX + dotSize + 13}:y=${slotY}`);
+          // Message text in grey below
+          parts.push(`drawtext=fontfile='${fontEsc}':textfile='${chatPath}':reload=1:fontcolor=0xCCCCCC:fontsize=${msgFont}:x=${chatX + 8}:y=${slotY + nameFont + 4}`);
         }
       }
     } else {
@@ -400,12 +408,14 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
   // ── Live Chat Overlay ──────────────────────────────────────────────────────
   if ((stream as any).chatEnabled && stream.youtubeChannelId) {
     const chatStyle = (stream as any).chatStyle || "list";
-    const chatMaxMsgs = Math.min((stream as any).chatMaxMessages || 5, 10);
-    const msgFont = Math.max(8, Math.round(scaleH * 0.026));
+    const chatMaxMsgs = Math.min((stream as any).chatMaxMessages || 5, 8);
+    const msgFont = Math.max(8, Math.round(scaleH * 0.025));
+    const nameFont2 = Math.max(7, Math.round(msgFont * 0.80));
     const lineH = msgFont + 7;
+    const slotH = nameFont2 + lineH + 3;
     const headerH = Math.round(lineH * 1.4);
     const chatW = Math.round(scaleW * 0.34);
-    const chatH = headerH + lineH * chatMaxMsgs + 6;
+    const chatH = headerH + slotH * chatMaxMsgs + 8;
     const margin2 = Math.round(scaleW * 0.02);
     const cPos = (stream as any).chatPosition || "bottom-right";
     let chatX = scaleW - chatW - margin2;
@@ -431,11 +441,21 @@ function buildOverlayFilter(stream: StreamConfig, scaleW: number, scaleH: number
     }
 
     if (useTextfile) {
-      const fcolor = chatStyle === "bubble" ? "0xDCF8C6" : "0xCCCCCC";
+      // Chat: 2-line per slot — author name (bright) + message (styled)
+      const dotSize = nameFont2 + 1;
+      const nameColor = chatStyle === "bubble" ? "0xA0E9B5" : "0x7dd3fc";
+      const msgColor = chatStyle === "bubble" ? "0xDCF8C6" : "0xCCCCCC";
       for (let i = 0; i < chatMaxMsgs; i++) {
+        const namePath = escapeTextfilePath(getChatNameTextFilePath(stream.id, i));
         const chatPath = escapeTextfilePath(getChatTextFilePath(stream.id, i));
-        const msgY = chatY + headerH + i * lineH + 4;
-        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${chatPath}':reload=1:fontcolor=${fcolor}:fontsize=${msgFont}:x=${chatX + 8}:y=${msgY}`);
+        const slotY = chatY + headerH + i * slotH + 4;
+        // Avatar dot
+        const dotColor = chatStyle === "bubble" ? "0x25D366@0.85" : "0x38bdf8@0.85";
+        parts.push(`drawbox=x=${chatX + 6}:y=${slotY + 1}:w=${dotSize}:h=${dotSize}:color=${dotColor}:t=fill`);
+        // Author name
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${namePath}':reload=1:fontcolor=${nameColor}:fontsize=${nameFont2}:x=${chatX + dotSize + 13}:y=${slotY}`);
+        // Message text
+        parts.push(`drawtext=fontfile='${fontEsc}':textfile='${chatPath}':reload=1:fontcolor=${msgColor}:fontsize=${msgFont}:x=${chatX + 8}:y=${slotY + nameFont2 + 3}`);
       }
     }
   }
@@ -565,7 +585,7 @@ function buildFFmpegArgs(
     ((stream as any).overlaySocialEnabled && (stream as any).overlaySocialHandle) ||
     ((stream as any).lowerThirdStyle && (stream as any).lowerThirdStyle !== "none") ||
     ((stream as any).messageEnabled && (stream as any).messageText) ||
-    ((stream as any).subBoxEnabled && stream.youtubeChannelId) ||
+    (stream as any).subBoxEnabled ||
     ((stream as any).chatEnabled && stream.youtubeChannelId)
   );
   const useTextfile = stream.overlayEnabled && true;
