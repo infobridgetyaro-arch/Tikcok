@@ -114,21 +114,29 @@ export function LivePreview({ streamId, tiktokUsername, ratio }: LivePreviewProp
          * Single <video> element — never conditionally swapped — so HLS stays attached.
          */
         <div
+          className="aurora-preview-bg"
           style={{
-            background: "linear-gradient(180deg,#1a3a5c 0%,#122840 50%,#0d1f30 100%)",
-            border: "1px solid rgba(255,255,255,0.06)",
+            border: "1px solid rgba(255,255,255,0.08)",
             borderRadius: 12,
             overflow: "hidden",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            position: "relative",
             ...(ratio === "mobile" ? { height: 300 } : {}),
           }}
           data-testid={`preview-container-${streamId}`}
         >
+          {/* Aurora orbs rendered behind everything */}
+          <div className="aurora-orb aurora-orb-1" />
+          <div className="aurora-orb aurora-orb-2" />
+          <div className="aurora-orb aurora-orb-3" />
+          <div className="aurora-noise" />
+
           <div
             style={{
               position: "relative",
+              zIndex: 1,
               ...(ratio === "mobile"
                 ? { height: "100%", aspectRatio: "9/16" }
                 : { width: "100%", aspectRatio: "16/9" }

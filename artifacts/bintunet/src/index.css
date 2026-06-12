@@ -217,6 +217,61 @@
   }
 }
 
+/* ── Aurora gradient live preview background ── */
+@keyframes aurora-drift-1 {
+  0%, 100% { transform: translate(0%, 0%) scale(1);      opacity: 0.7; }
+  33%       { transform: translate(15%, -20%) scale(1.2); opacity: 0.9; }
+  66%       { transform: translate(-10%, 25%) scale(0.85); opacity: 0.6; }
+}
+@keyframes aurora-drift-2 {
+  0%, 100% { transform: translate(0%, 0%) scale(1);       opacity: 0.6; }
+  40%       { transform: translate(-20%, 15%) scale(1.25); opacity: 0.85; }
+  70%       { transform: translate(18%, -18%) scale(0.9);  opacity: 0.55; }
+}
+@keyframes aurora-drift-3 {
+  0%, 100% { transform: translate(0%, 0%) scale(1);      opacity: 0.5; }
+  50%       { transform: translate(22%, 10%) scale(1.3);  opacity: 0.75; }
+}
+
+.aurora-preview-bg {
+  background: #050008;
+}
+
+.aurora-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(48px);
+  pointer-events: none;
+  z-index: 0;
+}
+.aurora-orb-1 {
+  width: 70%; height: 70%;
+  top: -20%; left: -15%;
+  background: radial-gradient(circle, #7c3aed 0%, #4f46e5 40%, transparent 70%);
+  animation: aurora-drift-1 12s ease-in-out infinite;
+}
+.aurora-orb-2 {
+  width: 60%; height: 60%;
+  bottom: -20%; right: -10%;
+  background: radial-gradient(circle, #06b6d4 0%, #0ea5e9 40%, transparent 70%);
+  animation: aurora-drift-2 9s ease-in-out infinite;
+}
+.aurora-orb-3 {
+  width: 45%; height: 45%;
+  top: 20%; right: 10%;
+  background: radial-gradient(circle, #a855f7 0%, #ec4899 50%, transparent 70%);
+  animation: aurora-drift-3 15s ease-in-out infinite;
+}
+.aurora-noise {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+}
+
 /* ── Animated gradient video preview background ── */
 @keyframes gradient-drift {
   0%, 100% { background-position: 0% 50%; }
