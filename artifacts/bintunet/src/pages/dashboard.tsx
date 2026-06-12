@@ -346,7 +346,7 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-        <OverlayAdmin streams={streams} onUpdate={updateStream} />
+        <OverlayAdmin streams={streams} onUpdate={updateStream} onRestart={restartStream} />
 
         <div className="flex items-center justify-between gap-2">
           <div>

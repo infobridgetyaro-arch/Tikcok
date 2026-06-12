@@ -23,6 +23,7 @@ import { useWebSocket } from "@/hooks/use-websocket";
 interface OverlayAdminProps {
   streams: StreamConfig[];
   onUpdate: (id: string, data: Partial<StreamConfig>) => void;
+  onRestart?: (id: string) => void;
 }
 
 type OverlayDraft = {
@@ -140,6 +141,19 @@ function hasDraftChanges(draft: OverlayDraft, stream: StreamConfig): boolean {
     (k) => (draft[k] as any) !== ((stream as any)[k] ?? (buildDraft(stream) as any)[k])
   );
 }
+
+const STRUCTURAL_FIELDS = new Set([
+  "overlayEnabled", "overlayLogoPath", "overlayLogoPosition", "overlayLogoScale",
+  "overlayLogoAnimation", "overlayBannerColor", "overlayTickerColor", "overlayTickerSpeed",
+  "overlayLiveCount", "overlayQrEnabled", "overlayQrUrl", "overlayQrLabel",
+  "overlaySocialEnabled", "overlaySocialHandle", "overlayQrPosition", "overlayQrSize",
+  "lowerThirdStyle", "lowerThirdAccentColor", "lowerThirdAnimation", "tickerStyle",
+  "messageEnabled", "messageStyle", "messagePosition",
+  "subBoxEnabled", "subBoxStyle", "subBoxPosition", "subBoxShowViewers", "subBoxAnimStyle",
+  "chatEnabled", "chatPosition", "chatStyle", "chatMaxMessages",
+  "viewerLayout", "viewerScreenScale", "viewerScreenX", "viewerScreenY",
+  "adEnabled", "adStyle", "adBgColor", "adAccentColor", "adPosition", "adCountdown",
+]);
 
 // ── Tiny shared UI ────────────────────────────────────────────────────────────
 function EqBars({ color = "currentColor" }: { color?: string }) {
@@ -652,8 +666,10 @@ const TABS: { id: Tab; label: string; icon: any; color: string }[] = [
 ];
 
 // ── Per-stream panel ──────────────────────────────────────────────────────────
-function AdminStreamOverlay({ stream, index, onUpdate }: {
-  stream: StreamConfig; index: number; onUpdate: (id: string, data: Partial<StreamConfig>) => void;
+function AdminStreamOverlay({ stream, index, onUpdate, onRestart }: {
+  stream: StreamConfig; index: number;
+  onUpdate: (id: string, data: Partial<StreamConfig>) => void;
+  onRestart?: (id: string) => void;
 }) {
   const [tab, setTab] = useState<Tab>("overlay");
   const [draft, setDraft] = useState<OverlayDraft>(() => buildDraft(stream));
@@ -661,6 +677,11 @@ function AdminStreamOverlay({ stream, index, onUpdate }: {
   const [justApplied, setJustApplied] = useState(false);
 
   const pending = hasDraftChanges(draft, stream);
+  const hasPendingStructural = pending && (Object.keys(draft) as (keyof OverlayDraft)[]).some((k) => {
+    const draftVal = draft[k];
+    const streamVal = (stream as any)[k] ?? (buildDraft(stream) as any)[k];
+    return draftVal !== streamVal && STRUCTURAL_FIELDS.has(k);
+  });
 
   const set = <K extends keyof OverlayDraft>(k: K, v: OverlayDraft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
@@ -673,10 +694,19 @@ function AdminStreamOverlay({ stream, index, onUpdate }: {
       if (draftVal !== streamVal) (diff as any)[k] = draftVal;
     });
     if (Object.keys(diff).length === 0) return;
+    const needsRestart = Object.keys(diff).some((k) => STRUCTURAL_FIELDS.has(k));
     setApplying(true);
     onUpdate(stream.id, diff);
-    setTimeout(() => { setApplying(false); setJustApplied(true); }, 800);
-    setTimeout(() => setJustApplied(false), 3000);
+    if (needsRestart && onRestart) {
+      setTimeout(() => {
+        onRestart(stream.id);
+        setApplying(false);
+        setJustApplied(true);
+      }, 500);
+    } else {
+      setTimeout(() => { setApplying(false); setJustApplied(true); }, 800);
+    }
+    setTimeout(() => setJustApplied(false), 3500);
   };
 
   useEffect(() => { setDraft(buildDraft(stream)); }, [stream.id]);
@@ -746,7 +776,7 @@ function AdminStreamOverlay({ stream, index, onUpdate }: {
             <GridPicker value={draft.lowerThirdStyle} onChange={(v) => set("lowerThirdStyle", v as any)}
               options={LT_STYLES.map((s) => ({ ...s, preview: s.preview(draft.lowerThirdAccentColor) }))} cols={3} />
             {draft.lowerThirdStyle !== "none" && (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <FieldRow label="Name / Headline">
                   <Input className="h-8 text-xs bg-slate-900/60 border-slate-700/60 text-slate-200 placeholder:text-slate-700"
                     placeholder="John Smith" value={draft.lowerThirdName} onChange={(e) => set("lowerThirdName", e.target.value)} />
@@ -858,7 +888,7 @@ function AdminStreamOverlay({ stream, index, onUpdate }: {
             {draft.subBoxEnabled && (
               <>
                 <FieldRow label="Style">
-                  <div className="grid grid-cols-5 gap-1.5">
+                  <div className="grid grid-cols-3 gap-1.5">
                     {SUB_STYLES.map((s) => (
                       <button key={s.value} onClick={() => set("subBoxStyle", s.value as any)}
                         className="relative rounded overflow-hidden transition-all"
@@ -880,7 +910,7 @@ function AdminStreamOverlay({ stream, index, onUpdate }: {
                   </div>
                 </FieldRow>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-3">
                   <FieldRow label="Position">
                     <PillToggle value={draft.subBoxPosition} onChange={(v) => set("subBoxPosition", v as any)}
                       options={[
@@ -1173,20 +1203,33 @@ function AdminStreamOverlay({ stream, index, onUpdate }: {
         <LivePreviewMini draft={draft} stream={stream} />
 
         <div className="flex items-center gap-2">
-          <Button className="flex-1 gap-2 font-bold text-sm h-9" disabled={!pending || applying} onClick={apply}
-            style={pending ? { background: "linear-gradient(135deg, #16a34a, #15803d)", border: "none" } : {}}>
-            {applying ? <><Sparkles className="w-4 h-4 animate-spin" />Applying…</>
-              : justApplied ? <><Check className="w-4 h-4" />Applied!</>
-              : <><Sparkles className="w-4 h-4" />{pending ? "Apply to Live" : "Up to Date"}</>}
+          <Button className="flex-1 gap-2 font-bold text-sm h-10 min-h-[2.5rem]" disabled={!pending || applying} onClick={apply}
+            style={pending ? {
+              background: hasPendingStructural
+                ? "linear-gradient(135deg, #b45309, #92400e)"
+                : "linear-gradient(135deg, #16a34a, #15803d)",
+              border: "none",
+            } : {}}>
+            {applying
+              ? <><Sparkles className="w-4 h-4 animate-spin" />{hasPendingStructural ? "Restarting…" : "Applying…"}</>
+              : justApplied
+              ? <><Check className="w-4 h-4" />Applied!</>
+              : pending
+              ? hasPendingStructural
+                ? <><Sparkles className="w-4 h-4" />Apply &amp; Restart Stream</>
+                : <><Sparkles className="w-4 h-4" />Apply to Live</>
+              : <><Check className="w-4 h-4" />Up to Date</>}
           </Button>
           {pending && (
             <Button variant="ghost" size="sm" onClick={() => setDraft(buildDraft(stream))}
-              className="text-slate-500 hover:text-slate-300 h-9 px-3">Discard</Button>
+              className="text-slate-500 hover:text-slate-300 h-10 px-3 shrink-0">Discard</Button>
           )}
         </div>
         {pending && (
-          <p className="text-[10px] text-amber-600 text-center -mt-1">
-            Safe room · tap Apply to push live without interrupting the stream
+          <p className="text-[10px] text-center -mt-1" style={{ color: hasPendingStructural ? "#d97706" : "#16a34a" }}>
+            {hasPendingStructural
+              ? "Stream will restart briefly to apply layout changes"
+              : "Text changes apply live without interrupting the stream"}
           </p>
         )}
       </div>
@@ -1375,7 +1418,7 @@ function LivePreviewMini({ draft, stream }: { draft: OverlayDraft; stream: Strea
 }
 
 // ── Main OverlayAdmin panel ───────────────────────────────────────────────────
-export function OverlayAdmin({ streams, onUpdate }: OverlayAdminProps) {
+export function OverlayAdmin({ streams, onUpdate, onRestart }: OverlayAdminProps) {
   const [open, setOpen] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [qrTrackUrl, setQrTrackUrl] = useState<string | null>(null);
@@ -1452,7 +1495,7 @@ export function OverlayAdmin({ streams, onUpdate }: OverlayAdminProps) {
               <p className="text-slate-600 text-xs mt-0.5">
                 {activeStreams.length === 0
                   ? "No active streams — start a stream to access the control room"
-                  : "Layout · Overlay · Subs · Ads · Brand — apply live without restarting"}
+                  : "Layout · Overlay · Subs · Ads · Brand — text changes live, layout changes restart briefly"}
               </p>
             </div>
             <div className="text-slate-600 group-hover:text-slate-400 transition-colors">
@@ -1470,7 +1513,7 @@ export function OverlayAdmin({ streams, onUpdate }: OverlayAdminProps) {
               </div>
             ) : (
               activeStreams.map((stream, i) => (
-                <AdminStreamOverlay key={stream.id} stream={stream} index={i} onUpdate={onUpdate} />
+                <AdminStreamOverlay key={stream.id} stream={stream} index={i} onUpdate={onUpdate} onRestart={onRestart} />
               ))
             )}
 
