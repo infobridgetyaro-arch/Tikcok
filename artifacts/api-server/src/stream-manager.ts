@@ -127,8 +127,8 @@ function buildMeshGradientBg(scaleW: number, scaleH: number, fps: number, videoI
   // Scale source video to fit frame without letterbox padding
   parts.push(`[${videoInputIdx}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease[_mgvid]`);
 
-  // Overlay video centred on gradient canvas → [base]
-  parts.push(`[_mgbgfinal][_mgvid]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2[base]`);
+  // Keep full video + show gradient around it
+parts.push(`[_mgbgfinal][_mgvid]scale=\( {scaleW}: \){scaleH}:force_original_aspect_ratio=decrease,pad=\( {scaleW}: \){scaleH}:(ow-iw)/2:(oh-ih)/2[base]`);
 
   return parts;
 }
