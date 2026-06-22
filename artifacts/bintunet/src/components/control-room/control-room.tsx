@@ -433,6 +433,32 @@ function SectionDivider({ label }: { label: string }) {
   );
 }
 
+// Apply button with brief "Saved ✓" flash feedback
+function MicApplyButton({ onClick }: { onClick: () => void }) {
+  const [saved, setSaved] = React.useState(false);
+  const handleClick = () => {
+    onClick();
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+  return (
+    <button
+      onClick={handleClick}
+      title="Apply volume to all active streams (triggers a brief ~200ms fast-restart)"
+      style={{
+        padding: "4px 12px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer",
+        border: `1px solid ${saved ? "rgba(16,185,129,0.5)" : "rgba(167,139,250,0.4)"}`,
+        background: saved ? "rgba(16,185,129,0.12)" : "rgba(167,139,250,0.12)",
+        color: saved ? "#6ee7b7" : "#a78bfa",
+        whiteSpace: "nowrap",
+        transition: "all 0.2s ease",
+      }}
+    >
+      {saved ? "Saved ✓" : "Apply"}
+    </button>
+  );
+}
+
 // ── Break Panel (inline component) ──────────────────────────────────────────
 
 function BreakPanel({
@@ -1491,6 +1517,11 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
   const [micVolumeDisplay, setMicVolumeDisplay] = useState(100);
   const [micError, setMicError] = useState<string | null>(null);
   const [micLevel, setMicLevel] = useState(0);
+  const [micRetryLabel, setMicRetryLabel] = useState("");
+  // Noise cancellation
+  const [noiseCancelEnabled, setNoiseCancelEnabled] = useState(true);
+  const [noiseGateThreshold, setNoiseGateThreshold] = useState(20); // 0-100 maps to 0-0.10
+
   const micWsRef = useRef<WebSocket | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const micGainRef = useRef<GainNode | null>(null);
@@ -1499,9 +1530,29 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
   const processorRef = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const micAnimRef = useRef<number | null>(null);
+  const hpFilterRef = useRef<BiquadFilterNode | null>(null);
+  const compressorRef = useRef<DynamicsCompressorNode | null>(null);
+  const noiseGateNodeRef = useRef<AudioWorkletNode | null>(null);
+  const noiseCancelEnabledRef = useRef(true);
+  const noiseGateThresholdRef = useRef(20);
+
+  // Sync refs so audio callbacks always see the latest value
+  useEffect(() => { noiseCancelEnabledRef.current = noiseCancelEnabled; }, [noiseCancelEnabled]);
+  useEffect(() => { noiseGateThresholdRef.current = noiseGateThreshold; }, [noiseGateThreshold]);
+
+  // Live-update noise gate parameter without restarting mic
+  const applyNoiseGateParam = useCallback((enabled: boolean, threshold: number) => {
+    const node = noiseGateNodeRef.current;
+    if (!node) return;
+    const param = node.parameters.get("threshold");
+    if (!param) return;
+    // threshold 0 = gate fully open (disabled), 0.10 = high suppression
+    param.value = enabled ? threshold / 1000 : 0;
+  }, []);
 
   const startMic = useCallback(async () => {
     setMicError(null);
+    setMicRetryLabel("");
     setMicConnecting(true);
     try {
       let stream: MediaStream;
@@ -1527,49 +1578,106 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
       micStreamRef.current = stream;
       const ctx = new AudioContext({ sampleRate: 44100 });
       audioCtxRef.current = ctx;
-      // Some browsers (especially Safari) start an AudioContext in "suspended"
-      // state even when created inside a user-gesture handler.  Resume explicitly
-      // so that onaudioprocess fires and PCM data is actually sent to the server.
-      if (ctx.state === "suspended") {
-        await ctx.resume();
-      }
+      if (ctx.state === "suspended") await ctx.resume();
+
       const src = ctx.createMediaStreamSource(stream);
       const gain = ctx.createGain();
       gain.gain.value = micVolumeValRef.current / 100;
       micGainRef.current = gain;
 
-      // Analyser for VU meter
+      // ── Noise cancellation chain ─────────────────────────────────────────
+      // High-pass filter: cut rumble / fan noise below 80 Hz
+      const hpFilter = ctx.createBiquadFilter();
+      hpFilter.type = "highpass";
+      hpFilter.frequency.value = 80;
+      hpFilter.Q.value = 0.7;
+      hpFilterRef.current = hpFilter;
+
+      // Dynamics compressor: normalise levels, suppress sharp peaks
+      const compressor = ctx.createDynamicsCompressor();
+      compressor.threshold.value = -24;
+      compressor.knee.value = 10;
+      compressor.ratio.value = 4;
+      compressor.attack.value = 0.003;
+      compressor.release.value = 0.25;
+      compressorRef.current = compressor;
+
+      // Analyser for VU meter (post-processing so meter reflects cleaned signal)
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyserRef.current = analyser;
 
+      // ── WebSocket with retry ─────────────────────────────────────────────
       const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${proto}//${window.location.host}/ws-mic`);
-      micWsRef.current = ws;
-      ws.onopen = () => { setMicActive(true); setMicConnecting(false); };
-      ws.onclose = () => { setMicActive(false); setMicConnecting(false); };
-      ws.onerror = () => {
-        setMicActive(false);
-        setMicConnecting(false);
-        setMicError("WebSocket connection to /ws-mic failed. Check that the API server is running.");
-      };
+      const MAX_RETRIES = 3;
+      let attempt = 0;
 
-      // Audio graph: src → gain → analyser → sendNode → destination
-      // Prefer AudioWorkletNode (no deprecation, separate thread), fall back to ScriptProcessorNode
-      let sendNode: AudioNode;
+      const connectWs = (): Promise<WebSocket> => new Promise((resolve, reject) => {
+        attempt++;
+        if (attempt > 1) setMicRetryLabel(`Attempt ${attempt}/${MAX_RETRIES}…`);
+        const ws = new WebSocket(`${proto}//${window.location.host}/ws-mic`);
+        micWsRef.current = ws;
+        ws.onopen = () => { setMicRetryLabel(""); resolve(ws); };
+        ws.onerror = () => {
+          if (attempt < MAX_RETRIES) {
+            setTimeout(() => connectWs().then(resolve).catch(reject), 1500);
+          } else {
+            reject(new Error(`Cannot connect to audio server after ${MAX_RETRIES} attempts. ` +
+              `Make sure the API server (port 8080) is running and /ws-mic is reachable.`));
+          }
+        };
+      });
+
+      let ws: WebSocket;
       try {
-        await ctx.audioWorklet.addModule("/mic-worklet.js");
+        ws = await connectWs();
+      } catch (e: any) {
+        setMicError(e.message);
+        setMicConnecting(false);
+        stream.getTracks().forEach((t) => t.stop());
+        micStreamRef.current = null;
+        ctx.close();
+        audioCtxRef.current = null;
+        return;
+      }
+
+      ws.onclose = () => { setMicActive(false); setMicConnecting(false); };
+
+      // ── Audio worklets ───────────────────────────────────────────────────
+      // Load noise-gate + pcm-sender worklets; graceful fallback if either fails
+      let noiseGateNode: AudioWorkletNode | null = null;
+      let sendNode: AudioNode;
+
+      try {
+        await Promise.all([
+          ctx.audioWorklet.addModule("/mic-worklet.js"),
+          ctx.audioWorklet.addModule("/mic-noise-gate-worklet.js"),
+        ]);
+
+        // Noise gate worklet
+        noiseGateNode = new AudioWorkletNode(ctx, "noise-gate-processor");
+        const ngParam = noiseGateNode.parameters.get("threshold");
+        if (ngParam) {
+          ngParam.value = noiseCancelEnabledRef.current
+            ? noiseGateThresholdRef.current / 1000
+            : 0;
+        }
+        noiseGateNodeRef.current = noiseGateNode;
+
+        // PCM sender worklet
         const workletNode = new AudioWorkletNode(ctx, "pcm-sender-processor");
         workletNode.port.onmessage = (e: MessageEvent) => {
-          if (!ws || ws.readyState !== WebSocket.OPEN) return;
-          ws.send(e.data);
+          if (ws.readyState === WebSocket.OPEN) ws.send(e.data);
         };
         processorRef.current = workletNode;
         sendNode = workletNode;
       } catch {
+        // Fallback: ScriptProcessorNode (deprecated but widely supported)
+        noiseGateNode = null;
+        noiseGateNodeRef.current = null;
         const processor = ctx.createScriptProcessor(2048, 1, 1);
         processor.onaudioprocess = (e) => {
-          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          if (ws.readyState !== WebSocket.OPEN) return;
           const input = e.inputBuffer.getChannelData(0);
           const pcm = new Int16Array(input.length);
           for (let i = 0; i < input.length; i++) {
@@ -1582,11 +1690,22 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
         sendNode = processor;
       }
 
-      // Audio graph: src → gain → analyser → sendNode → destination
+      // ── Wire up audio graph ──────────────────────────────────────────────
+      // src → gain → hpFilter → compressor → [noiseGate?] → analyser → pcmSender → destination
       src.connect(gain);
-      gain.connect(analyser);
+      gain.connect(hpFilter);
+      hpFilter.connect(compressor);
+      if (noiseGateNode) {
+        compressor.connect(noiseGateNode);
+        noiseGateNode.connect(analyser);
+      } else {
+        compressor.connect(analyser);
+      }
       analyser.connect(sendNode);
       sendNode.connect(ctx.destination);
+
+      setMicActive(true);
+      setMicConnecting(false);
 
       // VU meter animation loop
       const vuData = new Uint8Array(analyser.frequencyBinCount);
@@ -1605,6 +1724,12 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
 
   const stopMic = useCallback(() => {
     if (micAnimRef.current) { cancelAnimationFrame(micAnimRef.current); micAnimRef.current = null; }
+    noiseGateNodeRef.current?.disconnect();
+    noiseGateNodeRef.current = null;
+    compressorRef.current?.disconnect();
+    compressorRef.current = null;
+    hpFilterRef.current?.disconnect();
+    hpFilterRef.current = null;
     processorRef.current?.disconnect();
     processorRef.current = null;
     analyserRef.current = null;
@@ -1617,6 +1742,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
     micWsRef.current = null;
     setMicActive(false);
     setMicLevel(0);
+    setMicRetryLabel("");
   }, []);
 
   const [superChatForm, setSuperChatForm] = useState({ user: "", amount: "", text: "" });
@@ -3277,24 +3403,13 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                     onChange={(e) => {
                       const v = Number(e.target.value);
                       setBs((prev) => ({ ...prev, globalStreamVolume: v }));
-                      // No auto-push — avoids restarting the stream while dragging
                     }}
                     style={{ flex: 1, accentColor: "#a78bfa", cursor: "pointer" }}
                   />
                   <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", width: 38, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
                     {bs.globalStreamVolume}%
                   </span>
-                  <button
-                    onClick={() => update({ globalStreamVolume: bs.globalStreamVolume })}
-                    title="Apply volume to all active streams (triggers a brief ~200ms fast-restart)"
-                    style={{
-                      padding: "4px 12px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer",
-                      border: "1px solid rgba(167,139,250,0.4)", background: "rgba(167,139,250,0.12)", color: "#a78bfa",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    Apply
-                  </button>
+                  <MicApplyButton onClick={() => update({ globalStreamVolume: bs.globalStreamVolume })} />
                 </div>
                 <div style={{ fontSize: 10, color: "rgba(255,255,255,0.28)", marginTop: 4, lineHeight: 1.5 }}>
                   Drag to preview level, then tap <strong style={{ color: "rgba(167,139,250,0.7)" }}>Apply</strong> to push to active streams (brief fast-restart).
@@ -3343,7 +3458,9 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                     opacity: micConnecting ? 0.8 : 1,
                   }}
                 >
-                  {micActive ? <><Mic size={13} /> Mic Active</> : micConnecting ? <>Connecting…</> : <><MicOff size={13} /> Enable Mic</>}
+                  {micActive ? <><Mic size={13} /> Mic Active</>
+                    : micConnecting ? <>{micRetryLabel || "Connecting…"}</>
+                    : <><MicOff size={13} /> Enable Mic</>}
                 </button>
                 {micActive && (
                   <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 999, background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.25)" }}>
@@ -3370,10 +3487,10 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                     background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)",
                   }}>
                     {Array.from({ length: 24 }).map((_, i) => {
-                      const threshold = i / 24;
-                      const active = micLevel > threshold;
-                      const isHot = threshold > 0.75;
-                      const isWarm = threshold > 0.5;
+                      const barThreshold = i / 24;
+                      const active = micLevel > barThreshold;
+                      const isHot = barThreshold > 0.75;
+                      const isWarm = barThreshold > 0.5;
                       return (
                         <div
                           key={i}
@@ -3393,10 +3510,84 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
               )}
 
               {micError && (
-                <div style={{ padding: "8px 12px", borderRadius: 8, background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.2)", fontSize: 11, color: "#fca5a5" }}>
-                  {micError}
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 12px", borderRadius: 8, background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.2)", fontSize: 11, color: "#fca5a5" }}>
+                  <span style={{ flex: 1 }}>{micError}</span>
+                  {!micActive && !micConnecting && (
+                    <button
+                      onClick={() => { setMicError(null); startMic(); }}
+                      style={{ flexShrink: 0, padding: "2px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "1px solid rgba(239,68,68,0.4)", background: "rgba(239,68,68,0.12)", color: "#fca5a5" }}
+                    >
+                      Retry
+                    </button>
+                  )}
                 </div>
               )}
+
+              {/* ── Noise Cancellation ──────────────────────────────────── */}
+              <SectionDivider label="Noise Cancellation" />
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {/* Enable toggle */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", fontWeight: 600 }}>
+                    AI Noise Gate
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", fontWeight: 400, marginTop: 1 }}>
+                      Silences background hum, fan, keyboard noise
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const next = !noiseCancelEnabled;
+                      setNoiseCancelEnabled(next);
+                      applyNoiseGateParam(next, noiseGateThreshold);
+                    }}
+                    style={{
+                      padding: "4px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                      border: `1px solid ${noiseCancelEnabled ? "rgba(16,185,129,0.5)" : "rgba(255,255,255,0.15)"}`,
+                      background: noiseCancelEnabled ? "rgba(16,185,129,0.15)" : "rgba(255,255,255,0.05)",
+                      color: noiseCancelEnabled ? "#6ee7b7" : "rgba(255,255,255,0.4)",
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    {noiseCancelEnabled ? "ON" : "OFF"}
+                  </button>
+                </div>
+
+                {/* Threshold slider */}
+                {noiseCancelEnabled && (
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                        Sensitivity
+                      </span>
+                      <span style={{ fontSize: 10, color: "#6ee7b7", fontWeight: 700 }}>
+                        {noiseGateThreshold < 15 ? "Low" : noiseGateThreshold < 40 ? "Medium" : noiseGateThreshold < 70 ? "High" : "Aggressive"}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={5} max={90} step={5}
+                      value={noiseGateThreshold}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setNoiseGateThreshold(v);
+                        applyNoiseGateParam(true, v);
+                      }}
+                      style={{ width: "100%", accentColor: "#10b981", cursor: "pointer" }}
+                    />
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 3, fontSize: 9, color: "rgba(255,255,255,0.25)" }}>
+                      <span>Low (soft noise)</span>
+                      <span>Aggressive (loud noise)</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Processing chain info */}
+                <div style={{ padding: "7px 10px", borderRadius: 7, background: "rgba(16,185,129,0.04)", border: "1px solid rgba(16,185,129,0.1)", fontSize: 10, color: "rgba(255,255,255,0.3)", lineHeight: 1.7 }}>
+                  <div style={{ color: "rgba(255,255,255,0.5)", fontWeight: 600, marginBottom: 2 }}>Processing chain (always active):</div>
+                  Browser noise suppression → 80 Hz high-pass filter → dynamics compressor{noiseCancelEnabled ? " → noise gate" : ""}
+                </div>
+              </div>
 
               <div style={{ padding: "8px 12px", borderRadius: 8, background: "rgba(16,185,129,0.05)", border: "1px solid rgba(16,185,129,0.1)", fontSize: 11, color: "rgba(255,255,255,0.35)", lineHeight: 1.6 }}>
                 Your browser mic streams directly into all active broadcasts via WebSocket → PCM16 → FFmpeg. No stream restart needed to toggle on/off.
