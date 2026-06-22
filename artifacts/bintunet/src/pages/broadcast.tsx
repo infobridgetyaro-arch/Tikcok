@@ -5,6 +5,10 @@ interface OverlayPosition { x: number; y: number; }
 interface BroadcastState {
   newsActive: boolean;
   newsText: string;
+  newsTitle?: string;
+  newsBgColor?: string;
+  newsLogo?: string;
+  newsScrollSpeed?: number;
   newsStyle: string;
   newsPosition: OverlayPosition;
   mobileNewsPosition: OverlayPosition;
@@ -552,184 +556,253 @@ function ToastChat({ messages, isMobile }: { messages: ChatMessage[]; isMobile?:
 
 /* ─── News overlays ─── */
 
-function NewsTicker({ text, isMobile, yPct }: { text: string; isMobile?: boolean; yPct?: number }) {
-  // Duplicate text 4× so the seamless -50% loop always has enough content
-  const chunk = `${text}   ◆   ${text}   ◆   ${text}   ◆   ${text}   ◆   `;
+type NewsProps = { text: string; title?: string; logo?: string; color?: string; isMobile?: boolean; yPct?: number; speed?: number; };
+
+function TickerScroll({ text, speed = 30, color = "#fff", fontSize = 14, fontWeight = 600, separator = "   ◆   " }: {
+  text: string; speed?: number; color?: string; fontSize?: number; fontWeight?: number; separator?: string;
+}) {
+  const chunk = `${text}${separator}${text}${separator}`;
+  return (
+    <div style={{ overflow: "hidden", flex: 1, display: "flex", alignItems: "center", minWidth: 0 }}>
+      <div style={{ display: "flex", flexShrink: 0, animation: `nt-ticker ${speed}s linear infinite`, willChange: "transform" }}>
+        <span style={{ whiteSpace: "nowrap", paddingRight: 60, fontSize, fontWeight, color }}>{chunk}</span>
+        <span style={{ whiteSpace: "nowrap", paddingRight: 60, fontSize, fontWeight, color }}>{chunk}</span>
+      </div>
+    </div>
+  );
+}
+
+function NewsAlJazeera({ text, title, logo, color, isMobile, yPct, speed }: NewsProps) {
+  const c = color || "#cc0001";
   const bottom = yPct !== undefined ? `${100 - yPct}%` : 0;
+  const h = isMobile ? 44 : 52;
   return (
-    <div style={{
-      position: "fixed", bottom, left: 0, right: 0, zIndex: 30,
-      display: "flex", alignItems: "stretch", height: isMobile ? 40 : 48,
-      background: "rgba(0,0,0,0.96)",
-      borderTop: "2px solid #cc0001",
-    }}>
-      {/* LIVE badge */}
-      <div style={{
-        background: "#cc0001",
-        color: "#fff", fontWeight: 900, fontSize: isMobile ? 10 : 12,
-        padding: isMobile ? "0 12px" : "0 18px",
-        display: "flex", alignItems: "center", gap: 6,
-        letterSpacing: "0.06em", textTransform: "uppercase",
-        flexShrink: 0,
-      }}>
-        <span style={{
-          width: 6, height: 6, borderRadius: "50%", background: "#fff",
-          display: "inline-block", flexShrink: 0,
-          animation: "nt-pulse 1s infinite", boxShadow: "0 0 6px #fff",
-        }} />
-        LIVE
+    <div style={{ position: "fixed", bottom, left: 0, right: 0, zIndex: 30, display: "flex", alignItems: "stretch", height: h, background: "#000", borderTop: `3px solid ${c}` }}>
+      <div style={{ display: "flex", alignItems: "center", padding: `0 ${isMobile ? 10 : 16}px`, gap: 8, flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.1)", minWidth: isMobile ? 60 : 90, justifyContent: "center" }}>
+        {logo
+          ? <img src={logo} alt="" style={{ height: isMobile ? 26 : 34, maxWidth: isMobile ? 52 : 74, objectFit: "contain" }} />
+          : <span style={{ fontSize: isMobile ? 11 : 13, fontWeight: 900, color: "#fff", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>{title || "LIVE"}</span>}
       </div>
-      {/* Scrolling text — two identical chunks, -50% translation = seamless loop */}
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", alignItems: "center" }}>
-        <div style={{
-          display: "flex", flexShrink: 0,
-          animation: "nt-marquee 32s linear infinite",
-          willChange: "transform",
-        }}>
-          <span style={{ whiteSpace: "nowrap", paddingRight: 80, color: "#fff", fontSize: isMobile ? 12 : 14, fontWeight: 600 }}>
-            {chunk}
-          </span>
-          <span style={{ whiteSpace: "nowrap", paddingRight: 80, color: "#fff", fontSize: isMobile ? 12 : 14, fontWeight: 600 }}>
-            {chunk}
-          </span>
-        </div>
+      <div style={{ background: c, display: "flex", alignItems: "center", padding: `0 ${isMobile ? 8 : 12}px`, gap: 5, flexShrink: 0 }}>
+        <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#fff", animation: "nt-pulse 1s infinite" }} />
+        <span style={{ color: "#fff", fontWeight: 900, fontSize: isMobile ? 9 : 11, letterSpacing: "0.08em" }}>LIVE</span>
       </div>
-      <style>{`
-        @keyframes nt-marquee { from{transform:translateX(0)} to{transform:translateX(-50%)} }
-        @keyframes nt-pulse   { 0%,100%{opacity:1} 50%{opacity:0.25} }
-      `}</style>
+      <TickerScroll text={text} speed={speed} color="#fff" fontSize={isMobile ? 12 : 14} />
     </div>
   );
 }
 
-function BreakingNews({ text }: { text: string }) {
+function NewsCNN({ text, title, logo, color, isMobile, yPct, speed }: NewsProps) {
+  const c = color || "#cc0001";
   const [flash, setFlash] = useState(false);
-  useEffect(() => {
-    const t = setInterval(() => setFlash((v) => !v), 700);
-    return () => clearInterval(t);
-  }, []);
+  useEffect(() => { const t = setInterval(() => setFlash(v => !v), 800); return () => clearInterval(t); }, []);
+  const bottom = yPct !== undefined ? `${100 - yPct}%` : 0;
+  const h = isMobile ? 44 : 52;
   return (
-    <>
-      <div style={{
-        position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 30,
-        background: flash ? "#9b0000" : "#cc0001",
-        transition: "background 0.4s ease",
-        padding: "10px 0",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", maxWidth: 1200, margin: "0 auto", padding: "0 24px", gap: 16 }}>
-          <div style={{
-            background: "#fff", color: "#cc0001",
-            fontWeight: 900, fontSize: 11,
-            padding: "4px 12px", borderRadius: 4,
-            letterSpacing: "0.1em", textTransform: "uppercase", flexShrink: 0,
-            animation: "breaking-badge 1.4s ease-in-out infinite",
-          }}>
-            ⚡ BREAKING
-          </div>
-          <div style={{ color: "#fff", fontSize: 15, fontWeight: 700, flex: 1 }}>{text}</div>
-          <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, flexShrink: 0 }}>
-            {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </div>
-        </div>
+    <div style={{ position: "fixed", bottom, left: 0, right: 0, zIndex: 30, height: h, display: "flex", alignItems: "stretch", background: "#0d0d0d" }}>
+      <div style={{ background: "#000", borderLeft: `4px solid ${c}`, display: "flex", alignItems: "center", padding: `0 ${isMobile ? 8 : 14}px`, flexShrink: 0, gap: 6, justifyContent: "center", minWidth: isMobile ? 56 : 80 }}>
+        {logo ? <img src={logo} alt="" style={{ height: isMobile ? 22 : 28, objectFit: "contain" }} />
+          : <span style={{ color: "#fff", fontWeight: 900, fontSize: isMobile ? 13 : 17, letterSpacing: "0.01em" }}>{title || "NEWS"}</span>}
       </div>
-      <style>{`@keyframes breaking-badge { 0%,100%{opacity:1;} 50%{opacity:0.5;} }`}</style>
-    </>
-  );
-}
-
-function LowerThirdNews({ text }: { text: string }) {
-  return (
-    <div style={{
-      position: "fixed", bottom: 60, left: 0, zIndex: 30,
-      animation: "lower-slide 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards",
-    }}>
-      <div style={{ display: "flex", alignItems: "stretch" }}>
-        <div style={{ width: 6, background: "#cc0001", flexShrink: 0 }} />
-        <div style={{
-          background: "rgba(0,0,0,0.9)", backdropFilter: "blur(12px)",
-          padding: "12px 20px",
-        }}>
-          <div style={{ color: "#fff", fontSize: 16, fontWeight: 800, letterSpacing: "0.01em" }}>{text}</div>
-          <div style={{ color: "#cc0001", fontSize: 11, fontWeight: 700, marginTop: 3, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-            BintuNet Live
-          </div>
-        </div>
+      <div style={{ background: flash ? c : "#8b0000", transition: "background 0.5s", display: "flex", alignItems: "center", padding: `0 ${isMobile ? 8 : 12}px`, gap: 4, flexShrink: 0 }}>
+        <span style={{ color: "#fff", fontWeight: 900, fontSize: isMobile ? 8 : 10, textTransform: "uppercase", letterSpacing: "0.1em" }}>⚡ BREAKING</span>
       </div>
-      <style>{`@keyframes lower-slide { from{opacity:0;transform:translateY(12px);} to{opacity:1;transform:translateY(0);} }`}</style>
+      <TickerScroll text={text} speed={speed} color="#f0f0f0" fontSize={isMobile ? 11 : 13} />
     </div>
   );
 }
 
-function SpotlightNews({ text }: { text: string }) {
+function NewsBBC({ text, title, logo, color, isMobile, yPct, speed }: NewsProps) {
+  const c = color || "#0057ff";
+  const bottom = yPct !== undefined ? `${100 - yPct}%` : 0;
+  const h = isMobile ? 50 : 58;
   return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 30,
-      display: "flex", alignItems: "center", justifyContent: "center",
-      background: "radial-gradient(ellipse at center, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.8) 100%)",
-      pointerEvents: "none",
-    }}>
-      <div style={{
-        textAlign: "center",
-        animation: "spotlight-pop 0.6s cubic-bezier(0.34,1.56,0.64,1) forwards",
-      }}>
-        <div style={{
-          color: "#fff", fontSize: 32, fontWeight: 900,
-          textShadow: "0 0 40px rgba(204,0,1,0.8), 0 0 80px rgba(204,0,1,0.4)",
-          letterSpacing: "0.02em", maxWidth: 700, lineHeight: 1.2,
-          animation: "spotlight-glow 3s ease-in-out infinite",
-        }}>
-          {text}
-        </div>
-        <div style={{ width: 60, height: 3, background: "#cc0001", margin: "14px auto 0", borderRadius: 2 }} />
+    <div style={{ position: "fixed", bottom, left: 0, right: 0, zIndex: 30, height: h, display: "flex", alignItems: "stretch", background: "#1a1a2e" }}>
+      <div style={{ background: c, display: "flex", alignItems: "center", justifyContent: "center", padding: `0 ${isMobile ? 10 : 18}px`, flexShrink: 0 }}>
+        {logo ? <img src={logo} alt="" style={{ height: isMobile ? 24 : 30, objectFit: "contain" }} />
+          : <span style={{ color: "#fff", fontWeight: 900, fontSize: isMobile ? 13 : 18, fontFamily: "Georgia, serif" }}>{title || "NEWS"}</span>}
       </div>
-      <style>{`
-        @keyframes spotlight-pop { from{opacity:0;transform:scale(0.9);} to{opacity:1;transform:scale(1);} }
-        @keyframes spotlight-glow { 0%,100%{text-shadow:0 0 30px rgba(204,0,1,0.6);} 50%{text-shadow:0 0 60px rgba(204,0,1,1),0 0 100px rgba(204,0,1,0.4);} }
-      `}</style>
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: `0 ${isMobile ? 10 : 16}px`, flex: 1, overflow: "hidden", gap: 3 }}>
+        <div style={{ fontSize: isMobile ? 9 : 10, color: c, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>Live Coverage</div>
+        <TickerScroll text={text} speed={speed} color="#fff" fontSize={isMobile ? 12 : 14} fontWeight={700} separator="  ·  " />
+      </div>
     </div>
   );
 }
 
+function NewsBloomberg({ text, title, logo, color, isMobile, yPct, speed }: NewsProps) {
+  const c = color || "#f59e0b";
+  const bottom = yPct !== undefined ? `${100 - yPct}%` : 0;
+  const h = isMobile ? 40 : 48;
+  const [time, setTime] = useState(() => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+  useEffect(() => { const t = setInterval(() => setTime(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })), 10000); return () => clearInterval(t); }, []);
+  return (
+    <div style={{ position: "fixed", bottom, left: 0, right: 0, zIndex: 30, height: h, display: "flex", alignItems: "stretch", background: "#0c0c0c", borderTop: `2px solid ${c}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: `0 ${isMobile ? 8 : 14}px`, flexShrink: 0, borderRight: `1px solid ${c}30` }}>
+        {logo ? <img src={logo} alt="" style={{ height: isMobile ? 20 : 26, objectFit: "contain" }} />
+          : <span style={{ color: c, fontWeight: 700, fontSize: isMobile ? 11 : 13, fontFamily: "monospace", letterSpacing: "0.06em" }}>{title || "FINANCE"}</span>}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", padding: `0 ${isMobile ? 8 : 12}px`, flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.06)" }}>
+        <span style={{ color: "rgba(255,255,255,0.4)", fontSize: isMobile ? 10 : 11, fontFamily: "monospace" }}>{time}</span>
+      </div>
+      <TickerScroll text={text} speed={speed} color="rgba(255,255,255,0.88)" fontSize={isMobile ? 11 : 13} fontWeight={500} separator="  |  " />
+    </div>
+  );
+}
+
+function NewsSkyNews({ text, title, logo, color, isMobile, yPct, speed }: NewsProps) {
+  const c = color || "#0ea5e9";
+  const bottom = yPct !== undefined ? `${100 - yPct}%` : 0;
+  const h = isMobile ? 44 : 52;
+  return (
+    <div style={{ position: "fixed", bottom, left: 0, right: 0, zIndex: 30, height: h, display: "flex", alignItems: "stretch" }}>
+      <div style={{ background: `linear-gradient(135deg, ${c} 0%, #0369a1 100%)`, display: "flex", alignItems: "center", justifyContent: "center", padding: `0 ${isMobile ? 10 : 16}px`, flexShrink: 0, minWidth: isMobile ? 64 : 90 }}>
+        {logo ? <img src={logo} alt="" style={{ height: isMobile ? 24 : 30, objectFit: "contain" }} />
+          : <span style={{ color: "#fff", fontWeight: 900, fontSize: isMobile ? 11 : 14, letterSpacing: "0.04em" }}>{title || "SKY NEWS"}</span>}
+      </div>
+      <div style={{ flex: 1, background: "rgba(0,0,0,0.92)", display: "flex", alignItems: "center", borderTop: `2px solid ${c}` }}>
+        <TickerScroll text={text} speed={speed} color="#fff" fontSize={isMobile ? 12 : 14} />
+      </div>
+    </div>
+  );
+}
+
+function NewsNeonWire({ text, title, logo, color, isMobile, yPct, speed }: NewsProps) {
+  const c = color || "#00ff88";
+  const bottom = yPct !== undefined ? `${100 - yPct}%` : 0;
+  const h = isMobile ? 42 : 50;
+  return (
+    <div style={{ position: "fixed", bottom, left: 0, right: 0, zIndex: 30, height: h, display: "flex", alignItems: "stretch", background: "rgba(0,4,16,0.97)", borderTop: `2px solid ${c}`, boxShadow: `0 -6px 24px ${c}35` }}>
+      <div style={{ display: "flex", alignItems: "center", padding: `0 ${isMobile ? 8 : 14}px`, gap: 6, flexShrink: 0, borderRight: `1px solid ${c}30`, justifyContent: "center" }}>
+        {logo ? <img src={logo} alt="" style={{ height: isMobile ? 22 : 28, objectFit: "contain", filter: `drop-shadow(0 0 4px ${c})` }} />
+          : <span style={{ color: c, fontWeight: 900, fontSize: isMobile ? 10 : 12, letterSpacing: "0.1em", textShadow: `0 0 10px ${c}`, fontFamily: "monospace" }}>{title || "WIRE"}</span>}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", paddingLeft: 10, flexShrink: 0, gap: 3 }}>
+        {[8, 14, 10, 16, 9].map((h2, i) => (
+          <div key={i} style={{ width: 2.5, height: h2, borderRadius: 2, background: c, opacity: 0.8, animation: `nt-pulse ${0.4 + i * 0.1}s ease-in-out infinite alternate` }} />
+        ))}
+      </div>
+      <TickerScroll text={text} speed={speed} color={c} fontSize={isMobile ? 11 : 13} fontWeight={600} />
+    </div>
+  );
+}
+
+function NewsFloatGlass({ text, title, logo, color, isMobile, yPct, speed }: NewsProps) {
+  const c = color || "#667eea";
+  const bottom = yPct !== undefined ? `${100 - yPct}%` : 10;
+  const h = isMobile ? 46 : 54;
+  return (
+    <div style={{ position: "fixed", bottom, left: isMobile ? 8 : 24, right: isMobile ? 8 : 24, zIndex: 30, height: h, display: "flex", alignItems: "stretch", borderRadius: 12, overflow: "hidden", background: "rgba(255,255,255,0.08)", backdropFilter: "blur(24px)", border: "1px solid rgba(255,255,255,0.14)", boxShadow: `0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px ${c}20` }}>
+      <div style={{ display: "flex", alignItems: "center", padding: `0 ${isMobile ? 10 : 16}px`, gap: 6, flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.1)", justifyContent: "center" }}>
+        {logo ? <img src={logo} alt="" style={{ height: isMobile ? 24 : 30, objectFit: "contain" }} />
+          : <span style={{ color: "#fff", fontWeight: 800, fontSize: isMobile ? 11 : 13 }}>{title || "NEWS"}</span>}
+      </div>
+      <div style={{ width: 3, background: `linear-gradient(180deg, ${c}, ${c}80)`, flexShrink: 0 }} />
+      <TickerScroll text={text} speed={speed} color="rgba(255,255,255,0.92)" fontSize={isMobile ? 12 : 14} fontWeight={600} />
+    </div>
+  );
+}
+
+function NewsSportsFlash({ text, title, logo, color, isMobile, yPct, speed }: NewsProps) {
+  const c = color || "#f59e0b";
+  const bottom = yPct !== undefined ? `${100 - yPct}%` : 0;
+  const badgeW = isMobile ? 100 : 130;
+  return (
+    <div style={{ position: "fixed", bottom, left: 0, right: 0, zIndex: 30, height: isMobile ? 44 : 52, display: "flex", alignItems: "stretch", background: "#000", overflow: "hidden" }}>
+      <div style={{ background: c, position: "absolute", left: 0, top: 0, bottom: 0, width: badgeW, clipPath: "polygon(0 0,90% 0,100% 100%,0 100%)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1 }}>
+        {logo ? <img src={logo} alt="" style={{ height: isMobile ? 22 : 28, objectFit: "contain", marginRight: 20 }} />
+          : <span style={{ color: "#000", fontWeight: 900, fontSize: isMobile ? 10 : 13, letterSpacing: "0.04em", marginRight: 20 }}>{title || "SPORT"}</span>}
+      </div>
+      <div style={{ marginLeft: badgeW + 10, flex: 1, display: "flex", alignItems: "center", overflow: "hidden" }}>
+        <TickerScroll text={text} speed={speed} color="#fff" fontSize={isMobile ? 12 : 14} separator="  ◆  " />
+      </div>
+    </div>
+  );
+}
+
+function NewsCinematic({ text, title, logo, color, isMobile, yPct, speed }: NewsProps) {
+  const c = color || "#e2c97e";
+  const bottom = yPct !== undefined ? `${100 - yPct}%` : 0;
+  const h = isMobile ? 42 : 50;
+  return (
+    <div style={{ position: "fixed", bottom, left: 0, right: 0, zIndex: 30, height: h, display: "flex", alignItems: "center", background: "#000", padding: `0 ${isMobile ? 14 : 28}px`, gap: 16 }}>
+      {(logo || title) && (
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, paddingRight: 16, borderRight: `1px solid ${c}30` }}>
+          {logo ? <img src={logo} alt="" style={{ height: isMobile ? 22 : 28, objectFit: "contain", opacity: 0.88 }} />
+            : <span style={{ color: c, fontSize: isMobile ? 11 : 14, fontFamily: "Georgia, serif", letterSpacing: "0.12em", fontWeight: 400 }}>{title}</span>}
+        </div>
+      )}
+      <TickerScroll text={text} speed={speed} color={c} fontSize={isMobile ? 12 : 14} fontWeight={400} separator="   —   " />
+    </div>
+  );
+}
+
+function NewsGoldLuxury({ text, title, logo, color, isMobile, yPct, speed }: NewsProps) {
+  const c = color || "#d4a842";
+  const bottom = yPct !== undefined ? `${100 - yPct}%` : 0;
+  const h = isMobile ? 48 : 58;
+  return (
+    <div style={{ position: "fixed", bottom, left: 0, right: 0, zIndex: 30, height: h, display: "flex", alignItems: "stretch", background: "linear-gradient(180deg, #0e0c07 0%, #1c1708 100%)", borderTop: `1px solid ${c}55` }}>
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: `0 ${isMobile ? 10 : 20}px`, flexShrink: 0, borderRight: `1px solid ${c}22`, gap: 3 }}>
+        {logo ? <img src={logo} alt="" style={{ height: isMobile ? 26 : 34, objectFit: "contain" }} />
+          : <>
+              <span style={{ color: c, fontWeight: 700, fontSize: isMobile ? 8 : 9, letterSpacing: "0.18em", textTransform: "uppercase" }}>{title || "EXCLUSIVE"}</span>
+              <div style={{ height: 1, background: `linear-gradient(90deg, ${c}, transparent)`, width: "100%" }} />
+            </>}
+      </div>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", overflow: "hidden" }}>
+        <TickerScroll text={text} speed={speed} color={c} fontSize={isMobile ? 12 : 14} fontWeight={500} separator="  ✦  " />
+      </div>
+    </div>
+  );
+}
+
+function NewsMinimal({ text, title, logo, color, isMobile, yPct, speed }: NewsProps) {
+  const c = color || "#ffffff";
+  const bottom = yPct !== undefined ? `${100 - yPct}%` : 0;
+  const h = isMobile ? 36 : 42;
+  return (
+    <div style={{ position: "fixed", bottom, left: 0, right: 0, zIndex: 30, height: h, display: "flex", alignItems: "center", background: "rgba(0,0,0,0.88)", borderTop: "1px solid rgba(255,255,255,0.10)", gap: 12, padding: `0 ${isMobile ? 10 : 18}px` }}>
+      {(logo || title) && (
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6, paddingRight: 12, borderRight: "1px solid rgba(255,255,255,0.1)" }}>
+          {logo ? <img src={logo} alt="" style={{ height: isMobile ? 18 : 22, objectFit: "contain", opacity: 0.85 }} />
+            : <span style={{ color: "rgba(255,255,255,0.5)", fontSize: isMobile ? 9 : 10, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>{title}</span>}
+        </div>
+      )}
+      <TickerScroll text={text} speed={speed} color={c} fontSize={isMobile ? 11 : 13} fontWeight={400} separator="   ·   " />
+    </div>
+  );
+}
+
+function NewsTicker({ text, isMobile, yPct }: { text: string; isMobile?: boolean; yPct?: number }) {
+  return <NewsAlJazeera text={text} isMobile={isMobile} yPct={yPct} />;
+}
+
+// kept so the old render still compiles (maps to Crawl → AlJazeera in switch)
 function CrawlNews({ text, isMobile }: { text: string; isMobile?: boolean }) {
-  const items = text.split("•").map((t) => t.trim()).filter(Boolean);
-  if (!items.length) return <NewsTicker text={text} isMobile={isMobile} />;
-  // Two sets of items → seamless -50% loop
-  const renderItems = (prefix: string) => [...items, ...items].map((item, i) => (
-    <span key={`${prefix}-${i}`} style={{
-      color: "#fff", fontSize: isMobile ? 12 : 13, fontWeight: 500,
-      flexShrink: 0, display: "flex", alignItems: "center", gap: 14,
-      paddingRight: 40, whiteSpace: "nowrap",
-    }}>
-      <span style={{ color: "#cc0001", fontWeight: 900, flexShrink: 0 }}>■</span>
-      {item}
-    </span>
-  ));
+  return <NewsAlJazeera text={text} isMobile={isMobile} separator="  ■  " />;
+}
+
+function NewsAlJazeera2({ text, isMobile, separator }: { text: string; isMobile?: boolean; separator?: string }) {
+  return <NewsAlJazeera text={text} isMobile={isMobile} separator={separator} />;
+}
+// workaround for CrawlNews legacy
+declare module "." {}
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _crawlAlias = CrawlNews;
+const _ajAlias = NewsAlJazeera2;
+
+/* ─── shared keyframes (injected once) ─── */
+function NewsKeyframes() {
   return (
-    <div style={{
-      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 30,
-      background: "rgba(0,0,0,0.96)",
-      borderTop: "2px solid #cc0001",
-    }}>
-      <div style={{ display: "flex", alignItems: "stretch", height: isMobile ? 40 : 44 }}>
-        <div style={{
-          background: "#cc0001", color: "#fff",
-          fontSize: isMobile ? 9 : 10, fontWeight: 900,
-          padding: isMobile ? "0 10px" : "0 14px",
-          display: "flex", alignItems: "center",
-          textTransform: "uppercase", letterSpacing: "0.08em",
-          flexShrink: 0,
-        }}>
-          NEWS
-        </div>
-        <div style={{ overflow: "hidden", flex: 1, display: "flex", alignItems: "center" }}>
-          <div style={{
-            display: "flex", alignItems: "center",
-            animation: "crawl-loop 36s linear infinite",
-            willChange: "transform",
-          }}>
-            {renderItems("a")}
-            {renderItems("b")}
-          </div>
+    <style>{`
+      @keyframes nt-ticker { from{transform:translateX(0)} to{transform:translateX(-50%)} }
+      @keyframes nt-pulse  { 0%,100%{opacity:1} 50%{opacity:0.2} }
+    `}</style>
+  );
+}
+/* dummy to avoid linter warning on renamed helper */
+const _ignore = [_crawlAlias, _ajAlias];
         </div>
       </div>
       <style>{`@keyframes crawl-loop { from{transform:translateX(0)} to{transform:translateX(-50%)} }`}</style>
