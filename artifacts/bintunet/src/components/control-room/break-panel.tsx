@@ -343,6 +343,8 @@ interface BsBrk {
   liveAudioMuted: boolean;
   breakVideoPanX?: number;
   breakVideoPanY?: number;
+  bgGradient1: string;
+  bgGradient2: string;
 }
 
 interface BreakPanelProps {

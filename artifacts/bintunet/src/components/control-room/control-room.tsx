@@ -489,7 +489,7 @@ function BreakPanel({
       });
       if (!res.ok) throw new Error("Upload failed");
       const data = await res.json();
-      localUpdate({ breakVideoUrl: data.url });
+      update({ breakVideoUrl: data.url });
     } catch {
     } finally {
       setUploading(false);
@@ -872,7 +872,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
         );
       }
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 15 } as MediaTrackConstraints,
+        video: { frameRate: { ideal: 30, max: 30 } } as MediaTrackConstraints,
         audio: false,
         // @ts-ignore — Chrome hint to pre-select Entire Screen
         preferCurrentTab: false,
@@ -964,7 +964,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                     });
                     const url = URL.createObjectURL(blob);
                     setScreenPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return url; });
-                  }, "image/jpeg", 0.70);
+                  }, "image/jpeg", 0.85);
                 };
 
                 screenRafRef.current = window.setInterval(captureFrame, FRAME_INTERVAL);
@@ -1052,7 +1052,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
   const musicCtxRef = useRef<AudioContext | null>(null);
   const musicSrcNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
   const musicGainNodeRef = useRef<GainNode | null>(null);
-  const musicProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const musicProcessorRef = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
   const musicWsRef = useRef<WebSocket | null>(null);
   const musicFileInputRef = useRef<HTMLInputElement | null>(null);
   const musicProgressRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1178,32 +1178,44 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
     musicSrcNodeRef.current.connect(gain);
 
     if (!isShared || !processorRef.current) {
-      // Create our own processor → ws-mic
-      const processor = ctx.createScriptProcessor(2048, 1, 1);
-      musicProcessorRef.current = processor;
-
       const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(`${proto}//${window.location.host}/ws-mic`);
       musicWsRef.current = ws;
 
-      processor.onaudioprocess = (e) => {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        const input = e.inputBuffer.getChannelData(0);
-        const pcm = new Int16Array(input.length);
-        for (let i = 0; i < input.length; i++) {
-          const s = Math.max(-1, Math.min(1, input[i]));
-          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-        ws.send(pcm.buffer);
-      };
+      // Prefer AudioWorkletNode (latest standard), fall back to ScriptProcessorNode
+      let sendNode: AudioNode;
+      try {
+        await ctx.audioWorklet.addModule("/mic-worklet.js");
+        const workletNode = new AudioWorkletNode(ctx, "pcm-sender-processor");
+        workletNode.port.onmessage = (e: MessageEvent) => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          ws.send(e.data);
+        };
+        musicProcessorRef.current = workletNode;
+        sendNode = workletNode;
+      } catch {
+        const processor = ctx.createScriptProcessor(2048, 1, 1);
+        processor.onaudioprocess = (e) => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          const input = e.inputBuffer.getChannelData(0);
+          const pcm = new Int16Array(input.length);
+          for (let i = 0; i < input.length; i++) {
+            const s = Math.max(-1, Math.min(1, input[i]));
+            pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          }
+          ws.send(pcm.buffer);
+        };
+        musicProcessorRef.current = processor;
+        sendNode = processor;
+      }
 
-      gain.connect(processor);
-      processor.connect(ctx.destination);
+      gain.connect(sendNode);
+      sendNode.connect(ctx.destination);
 
       ws.onopen = () => setMusicBroadcastActive(true);
       ws.onclose = () => { setMusicBroadcastActive(false); };
     } else {
-      // Mic is active — connect music gain to existing mic ScriptProcessor
+      // Mic is active — connect music gain to existing mic send node
       gain.connect(processorRef.current);
       setMusicBroadcastActive(true);
     }
@@ -1464,7 +1476,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
   const micGainRef = useRef<GainNode | null>(null);
   const micVolumeValRef = useRef(100);
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const processorRef = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const micAnimRef = useRef<number | null>(null);
 
@@ -1474,7 +1486,16 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
     try {
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            noiseSuppression: true,
+            echoCancellation: true,
+            autoGainControl: true,
+            channelCount: 1,
+            sampleRate: 44100,
+          },
+          video: false,
+        });
       } catch (e: any) {
         const msg = e?.name === "NotAllowedError" || e?.name === "PermissionDeniedError"
           ? "Microphone permission denied. Allow mic access in your browser settings and try again."
@@ -1502,9 +1523,6 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
       analyser.fftSize = 256;
       analyserRef.current = analyser;
 
-      const processor = ctx.createScriptProcessor(2048, 1, 1);
-      processorRef.current = processor;
-
       const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(`${proto}//${window.location.host}/ws-mic`);
       micWsRef.current = ws;
@@ -1515,22 +1533,40 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
         setMicConnecting(false);
         setMicError("WebSocket connection to /ws-mic failed. Check that the API server is running.");
       };
-      processor.onaudioprocess = (e) => {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        const input = e.inputBuffer.getChannelData(0);
-        const pcm = new Int16Array(input.length);
-        for (let i = 0; i < input.length; i++) {
-          const s = Math.max(-1, Math.min(1, input[i]));
-          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-        ws.send(pcm.buffer);
-      };
 
-      // Audio graph: src → gain → analyser → processor → destination
+      // Audio graph: src → gain → analyser → sendNode → destination
+      // Prefer AudioWorkletNode (no deprecation, separate thread), fall back to ScriptProcessorNode
+      let sendNode: AudioNode;
+      try {
+        await ctx.audioWorklet.addModule("/mic-worklet.js");
+        const workletNode = new AudioWorkletNode(ctx, "pcm-sender-processor");
+        workletNode.port.onmessage = (e: MessageEvent) => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          ws.send(e.data);
+        };
+        processorRef.current = workletNode;
+        sendNode = workletNode;
+      } catch {
+        const processor = ctx.createScriptProcessor(2048, 1, 1);
+        processor.onaudioprocess = (e) => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          const input = e.inputBuffer.getChannelData(0);
+          const pcm = new Int16Array(input.length);
+          for (let i = 0; i < input.length; i++) {
+            const s = Math.max(-1, Math.min(1, input[i]));
+            pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          }
+          ws.send(pcm.buffer);
+        };
+        processorRef.current = processor;
+        sendNode = processor;
+      }
+
+      // Audio graph: src → gain → analyser → sendNode → destination
       src.connect(gain);
       gain.connect(analyser);
-      analyser.connect(processor);
-      processor.connect(ctx.destination);
+      analyser.connect(sendNode);
+      sendNode.connect(ctx.destination);
 
       // VU meter animation loop
       const vuData = new Uint8Array(analyser.frequencyBinCount);

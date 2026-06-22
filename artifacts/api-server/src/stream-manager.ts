@@ -707,16 +707,16 @@ function buildFFmpegArgs(
       audioFilter,
     ].join(";");
   } else {
-    // Scale video to fill the full output frame (cover mode), cropping any
-    // overflow so there are never black bars on any side.
-    // force_original_aspect_ratio=increase scales up until the video meets
-    // or exceeds both dimensions, then crop trims to the exact target size,
-    // centering the frame.  This is equivalent to CSS object-fit:cover.
-    // yuva420p keeps the video in YUV colour space (avoids the swscaler
-    // "deprecated pixel format / range" warning that rgba triggers on YUV sources).
+    // Scale video to fit inside the output frame (letterbox/pillarbox mode).
+    // force_original_aspect_ratio=decrease scales down until both dimensions
+    // fit, then pad fills the remaining area with transparent pixels (0x000000**00**).
+    // yuva420p preserves the alpha channel so the transparent bars let the
+    // gradient on pipe:3 show through — gradient colour is visible on the
+    // upper/lower (or left/right) sides whenever the source aspect ratio
+    // differs from the output frame.  This is equivalent to CSS object-fit:contain.
     const videoSrcFilter = [
-      `[0:v]scale=${scaleW}:${scaleH}:force_original_aspect_ratio=increase`,
-      `crop=${scaleW}:${scaleH}`,
+      `[0:v]scale=${scaleW}:${scaleH}:force_original_aspect_ratio=decrease`,
+      `pad=${scaleW}:${scaleH}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`,
       `setsar=1`,
       `format=yuva420p[_src]`,
     ].join(",");
