@@ -4,8 +4,9 @@ A live-stream restreaming dashboard that captures TikTok/YouTube/camera feeds an
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 8080)
-- `pnpm --filter @workspace/bintunet run dev` — run the frontend (auto-assigned port)
+- **"Start API Server" workflow** — `PORT=8080 pnpm --filter @workspace/api-server run dev` (tsx watch, port 8080)
+- **"Start application" workflow** — `PORT=5000 BASE_PATH=/ pnpm --filter @workspace/bintunet run dev` (Vite HMR, port 5000 → external 80)
+- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (only needed for deploy)
 - `pnpm run typecheck` — full typecheck across all packages
 - Admin password: `bintunet` (hardcoded in `artifacts/api-server/src/bintunet-routes.ts`)
 
