@@ -6,7 +6,7 @@
  * Calls BintuNet's own /api/gateway/* endpoints (Paystack proxy).
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 type View = "checkout" | "status" | "otp" | "threeds" | "receipt" | "error";
 type Method = "mpesa" | "card";
@@ -21,7 +21,7 @@ const SHEET: React.CSSProperties = {
   position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10000,
   background: "#fff", borderRadius: "22px 22px 0 0",
   padding: "20px 20px 32px", transition: "transform 0.38s cubic-bezier(.32,1.1,.58,1)",
-  maxHeight: "92vh", overflowY: "auto",
+  maxHeight: "94vh", overflowY: "auto",
   boxShadow: "0 -8px 40px rgba(0,0,0,0.18)",
 };
 const IW: React.CSSProperties = { display: "flex", flexDirection: "column", marginBottom: 14 };
@@ -62,6 +62,164 @@ function HeartIcon() {
   );
 }
 
+/* ── Animated Credit Card Preview ─────────────────────────────────────── */
+function CardPreview({ card, flipped }: { card: CardState; flipped: boolean }) {
+  const num = card.number.replace(/\s/g, "").padEnd(16, "·");
+  const groups = [num.slice(0,4), num.slice(4,8), num.slice(8,12), num.slice(12,16)];
+  const displayNum = groups.join(" ");
+  const displayName = card.name.trim() || "CARDHOLDER NAME";
+  const displayExpiry = card.expiry || "MM/YY";
+
+  const cardType = (() => {
+    const n = card.number.replace(/\s/g, "");
+    if (/^4/.test(n)) return "visa";
+    if (/^5[1-5]/.test(n) || /^2[2-7]/.test(n)) return "mastercard";
+    if (/^3[47]/.test(n)) return "amex";
+    return null;
+  })();
+
+  return (
+    <div style={{ perspective: 1000, width: "100%", marginBottom: 20 }}>
+      <div style={{
+        position: "relative", width: "100%", paddingBottom: "56.25%",
+        transformStyle: "preserve-3d",
+        transition: "transform 0.6s cubic-bezier(0.4,0.2,0.2,1)",
+        transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)",
+      }}>
+        {/* Front */}
+        <div style={{
+          position: "absolute", inset: 0, backfaceVisibility: "hidden",
+          borderRadius: 16, overflow: "hidden",
+          background: "linear-gradient(135deg, #1a1f36 0%, #0d1b2a 40%, #1a2f1a 100%)",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.35), 0 4px 20px rgba(0,0,0,0.2)",
+          padding: "20px 24px",
+          display: "flex", flexDirection: "column", justifyContent: "space-between",
+        }}>
+          {/* Shimmer overlay */}
+          <div style={{
+            position: "absolute", inset: 0, borderRadius: 16,
+            background: "linear-gradient(135deg, rgba(255,255,255,0.06) 0%, transparent 50%, rgba(255,255,255,0.03) 100%)",
+            pointerEvents: "none",
+          }} />
+          {/* Chip + Logo row */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {/* EMV chip */}
+              <div style={{
+                width: 38, height: 28, borderRadius: 5,
+                background: "linear-gradient(135deg, #d4af37 0%, #f5d060 40%, #c8a227 100%)",
+                boxShadow: "inset 0 1px 2px rgba(255,255,255,0.5), 0 2px 4px rgba(0,0,0,0.3)",
+                display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
+                gap: 2, padding: 5,
+              }}>
+                {[0,1,2,3].map(i => (
+                  <div key={i} style={{ borderRadius: 2, background: "rgba(0,0,0,0.18)" }} />
+                ))}
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {/* Contactless icon */}
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.6 }}>
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" fill="rgba(255,255,255,0.08)" />
+                <path d="M7 12c0-2.76 2.24-5 5-5" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5" strokeLinecap="round" />
+                <path d="M10 12c0-1.1.9-2 2-2" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5" strokeLinecap="round" />
+                <path d="M4 12c0-4.42 3.58-8 8-8" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+              {/* Card brand logo */}
+              {cardType === "visa" && (
+                <span style={{ fontSize: 18, fontWeight: 900, fontStyle: "italic", color: "#fff", letterSpacing: 1, fontFamily: "Georgia, serif" }}>VISA</span>
+              )}
+              {cardType === "mastercard" && (
+                <div style={{ display: "flex", position: "relative", width: 36, height: 24 }}>
+                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: "#eb001b", position: "absolute", left: 0 }} />
+                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: "#f79e1b", position: "absolute", left: 12, mixBlendMode: "screen" }} />
+                </div>
+              )}
+              {cardType === "amex" && (
+                <span style={{ fontSize: 14, fontWeight: 900, color: "#60a5fa", letterSpacing: 1 }}>AMEX</span>
+              )}
+              {!cardType && (
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", fontWeight: 600 }}>CARD</span>
+              )}
+            </div>
+          </div>
+          {/* Card number */}
+          <div style={{ fontFamily: "'Courier New', monospace", fontSize: 19, fontWeight: 700, color: "#fff", letterSpacing: 3, textShadow: "0 1px 4px rgba(0,0,0,0.5)" }}>
+            {displayNum}
+          </div>
+          {/* Name + Expiry row */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+            <div>
+              <div style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 3 }}>Card Holder</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", letterSpacing: 1, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {displayName}
+              </div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 3 }}>Expires</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", letterSpacing: 2 }}>{displayExpiry}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Back */}
+        <div style={{
+          position: "absolute", inset: 0, backfaceVisibility: "hidden",
+          transform: "rotateY(180deg)",
+          borderRadius: 16, overflow: "hidden",
+          background: "linear-gradient(135deg, #1a1f36 0%, #0d1b2a 100%)",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
+          display: "flex", flexDirection: "column", justifyContent: "center",
+        }}>
+          {/* Magnetic strip */}
+          <div style={{ width: "100%", height: 40, background: "#111", marginBottom: 16 }} />
+          {/* CVV strip */}
+          <div style={{ padding: "0 24px", display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ flex: 1, height: 36, background: "#fff", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 12 }}>
+              <span style={{ color: "#111", fontFamily: "monospace", fontSize: 15, fontWeight: 700, letterSpacing: 4 }}>
+                {card.cvv ? card.cvv.replace(/./g, "•") : "•••"}
+              </span>
+            </div>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, whiteSpace: "nowrap" }}>CVV</span>
+          </div>
+          <div style={{ padding: "16px 24px 0", display: "flex", justifyContent: "flex-end" }}>
+            {cardType === "visa" && <span style={{ fontSize: 16, fontWeight: 900, fontStyle: "italic", color: "#fff", fontFamily: "Georgia, serif" }}>VISA</span>}
+            {cardType === "mastercard" && (
+              <div style={{ display: "flex", position: "relative", width: 36, height: 24 }}>
+                <div style={{ width: 24, height: 24, borderRadius: "50%", background: "#eb001b", position: "absolute", left: 0 }} />
+                <div style={{ width: 24, height: 24, borderRadius: "50%", background: "#f79e1b", position: "absolute", left: 12, mixBlendMode: "screen" }} />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Card brand icons row ─────────────────────────────────────────────── */
+function CardBrands() {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 14 }}>
+      {/* VISA */}
+      <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "4px 10px", display: "flex", alignItems: "center" }}>
+        <span style={{ fontSize: 14, fontWeight: 900, fontStyle: "italic", color: "#1a1f71", fontFamily: "Georgia, serif", letterSpacing: 1 }}>VISA</span>
+      </div>
+      {/* Mastercard */}
+      <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "4px 10px", display: "flex", alignItems: "center", gap: 3 }}>
+        <div style={{ position: "relative", width: 30, height: 18, display: "flex", alignItems: "center" }}>
+          <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#eb001b", position: "absolute", left: 0 }} />
+          <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#f79e1b", position: "absolute", left: 10 }} />
+        </div>
+      </div>
+      {/* Amex */}
+      <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "4px 10px", display: "flex", alignItems: "center" }}>
+        <span style={{ fontSize: 12, fontWeight: 900, color: "#2563eb", letterSpacing: 1 }}>AMEX</span>
+      </div>
+    </div>
+  );
+}
+
 export default function GatewayPaymentPage() {
   const [isOpen, setIsOpen]       = useState(false);
   const [view, setView]           = useState<View>("checkout");
@@ -70,6 +228,7 @@ export default function GatewayPaymentPage() {
   const [phone, setPhone]         = useState("");
   const [donorName, setDonorName] = useState("");
   const [card, setCard]           = useState<CardState>({ number: "", expiry: "", cvv: "", name: "" });
+  const [cardFlipped, setCardFlipped] = useState(false);
   const [receipt, setReceipt]     = useState<ReceiptData | null>(null);
   const [errorMsg, setErrorMsg]   = useState("");
   const [countdown, setCountdown] = useState(120);
@@ -85,21 +244,18 @@ export default function GatewayPaymentPage() {
   const [copied, setCopied]       = useState(false);
   const [streamName, setStreamName] = useState("BintuNet Live");
   const [healthy, setHealthy]     = useState<boolean | null>(null);
+  const cvvRef = useRef<HTMLInputElement>(null);
 
   const vis = (v: View) => view === v;
 
-  // Track QR scan + fetch health on mount
   useEffect(() => {
-    // Register this page load as a QR scan
     fetch("/api/gateway/scan", { method: "POST" }).catch(() => {});
-    // Health check
     fetch("/api/gateway/health")
       .then(r => r.json())
       .then((d: { status: string }) => setHealthy(d.status === "ok"))
       .catch(() => setHealthy(false));
   }, []);
 
-  // Start polling when reference is set
   useEffect(() => {
     if (!reference || view !== "status") return;
     let cancelled = false;
@@ -202,7 +358,6 @@ export default function GatewayPaymentPage() {
         const [label, hint, action] = labels[s] ?? ["Enter Code", "Check your phone.", "submit_otp"];
         setOtpLabel(label); setOtpHint(hint); setOtpAction(action); setOtpCode(""); setView("otp"); return;
       }
-      // pending/processing — start polling
       setStatusTitle("Awaiting Confirmation…");
       setStatusDesc(d.data?.gateway_response || "Your transaction is being processed.");
     } catch { showError("Network error. Please try again."); }
@@ -229,17 +384,15 @@ export default function GatewayPaymentPage() {
     } catch { showError("Network error. Please try again."); }
   }, [otpCode, otpAction, reference, amount, method, phone, card, showError]);
 
-  const closeAll = () => { setIsOpen(false); setView("checkout"); setOtpCode(""); setReference(""); };
-  const goBack = () => { setView("checkout"); setOtpCode(""); setReference(""); };
+  const closeAll = () => { setIsOpen(false); setView("checkout"); setOtpCode(""); setReference(""); setCardFlipped(false); };
+  const goBack = () => { setView("checkout"); setOtpCode(""); setReference(""); setCardFlipped(false); };
   const copyRef = () => { if (receipt?.reference) { navigator.clipboard.writeText(receipt.reference); setCopied(true); setTimeout(() => setCopied(false), 2000); } };
 
   return (
     <div style={{ minHeight: "100vh", background: `linear-gradient(160deg, ${DARK} 0%, #0d1f0f 60%, #1a2e1a 100%)`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "'Inter', system-ui, sans-serif", position: "relative", overflow: "hidden" }}>
-      {/* Animated background blobs */}
       <div style={{ position: "absolute", top: "10%", right: "-10%", width: 350, height: 350, borderRadius: "50%", background: "radial-gradient(circle, rgba(34,197,94,0.12) 0%, transparent 70%)", filter: "blur(60px)", pointerEvents: "none" }} />
       <div style={{ position: "absolute", bottom: "5%", left: "-10%", width: 300, height: 300, borderRadius: "50%", background: "radial-gradient(circle, rgba(34,197,94,0.07) 0%, transparent 70%)", filter: "blur(50px)", pointerEvents: "none" }} />
 
-      {/* Hero */}
       <div style={{ textAlign: "center", maxWidth: 380, position: "relative", zIndex: 1 }}>
         <div style={{ width: 72, height: 72, background: "rgba(34,197,94,0.15)", border: "2px solid rgba(34,197,94,0.3)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
           <HeartIcon />
@@ -249,7 +402,6 @@ export default function GatewayPaymentPage() {
           Send a donation via M-Pesa or card. It shows up live on the stream!
         </p>
 
-        {/* Health badge */}
         {healthy !== null && (
           <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 14px", borderRadius: 99, background: healthy ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)", border: `1px solid ${healthy ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`, marginBottom: 28 }}>
             <div style={{ width: 6, height: 6, borderRadius: "50%", background: healthy ? GREEN : "#ef4444", animation: "pulse 1.5s infinite" }} />
@@ -270,7 +422,6 @@ export default function GatewayPaymentPage() {
         </p>
       </div>
 
-      {/* Backdrop */}
       {isOpen && (
         <div onClick={closeAll} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", zIndex: 9999 }} />
       )}
@@ -284,13 +435,47 @@ export default function GatewayPaymentPage() {
         <p style={{ fontSize: 13, color: "#6b7280", margin: "0 0 20px" }}>All payments processed securely via Paystack</p>
 
         {/* Method tabs */}
-        <div style={{ display: "flex", gap: 6, marginBottom: 20, background: "#f3f4f6", borderRadius: 12, padding: 4 }}>
+        <div style={{ display: "flex", gap: 0, marginBottom: 20, background: "#f3f4f6", borderRadius: 12, padding: 4 }}>
           {(["mpesa", "card"] as Method[]).map(m => (
-            <button key={m} onClick={() => setMethod(m)} style={{ flex: 1, padding: "10px 0", border: "none", cursor: "pointer", borderRadius: 9, fontSize: 13, fontWeight: 700, transition: "all 0.2s", background: method === m ? "#fff" : "transparent", color: method === m ? "#111827" : "#9ca3af", boxShadow: method === m ? "0 2px 8px rgba(0,0,0,0.1)" : "none" }}>
-              {m === "mpesa" ? "📱 M-Pesa" : "💳 Card"}
+            <button
+              key={m}
+              onClick={() => { setMethod(m); setCardFlipped(false); }}
+              style={{
+                flex: 1, padding: "11px 0", border: "none", cursor: "pointer",
+                borderRadius: 9, fontSize: 14, fontWeight: 700,
+                transition: "all 0.22s cubic-bezier(0.34,1.56,0.64,1)",
+                background: method === m ? "#fff" : "transparent",
+                color: method === m ? "#111827" : "#9ca3af",
+                boxShadow: method === m ? "0 2px 10px rgba(0,0,0,0.12)" : "none",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+              }}
+            >
+              {m === "mpesa" ? (
+                <>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="5" y="2" width="14" height="20" rx="2"/>
+                    <circle cx="12" cy="17" r="1"/>
+                    <path d="M9 7h6"/>
+                  </svg>
+                  M-Pesa
+                </>
+              ) : (
+                <>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="1" y="4" width="22" height="16" rx="2"/>
+                    <line x1="1" y1="10" x2="23" y2="10"/>
+                  </svg>
+                  Credit / Debit Card
+                </>
+              )}
             </button>
           ))}
         </div>
+
+        {/* Animated card preview (card mode only) */}
+        {method === "card" && (
+          <CardPreview card={card} flipped={cardFlipped} />
+        )}
 
         {/* Donor name */}
         <div style={IW}>
@@ -327,27 +512,77 @@ export default function GatewayPaymentPage() {
           <>
             <div style={IW}>
               <label style={IL}>Card Number</label>
-              <input type="text" inputMode="numeric" value={card.number} onChange={e => setCard({ ...card, number: formatCardNumber(e.target.value) })} placeholder="1234 5678 9012 3456" maxLength={19} style={{ ...IF, letterSpacing: 2 }} />
+              <input
+                type="text" inputMode="numeric"
+                value={card.number}
+                onChange={e => setCard({ ...card, number: formatCardNumber(e.target.value) })}
+                onFocus={() => setCardFlipped(false)}
+                placeholder="1234 5678 9012 3456" maxLength={19}
+                style={{ ...IF, letterSpacing: 2, fontFamily: "monospace" }}
+              />
             </div>
             <div style={{ display: "flex", gap: 12, marginBottom: 14 }}>
               <div style={{ ...IW, flex: 1, marginBottom: 0 }}>
                 <label style={IL}>Expiry</label>
-                <input type="text" inputMode="numeric" value={card.expiry} onChange={e => setCard({ ...card, expiry: formatExpiry(e.target.value) })} placeholder="MM/YY" maxLength={5} style={IF} />
+                <input
+                  type="text" inputMode="numeric"
+                  value={card.expiry}
+                  onChange={e => setCard({ ...card, expiry: formatExpiry(e.target.value) })}
+                  onFocus={() => setCardFlipped(false)}
+                  placeholder="MM/YY" maxLength={5}
+                  style={IF}
+                />
               </div>
               <div style={{ ...IW, flex: 1, marginBottom: 0 }}>
                 <label style={IL}>CVV</label>
-                <input type="password" inputMode="numeric" value={card.cvv} onChange={e => setCard({ ...card, cvv: e.target.value.replace(/\D/g, "").slice(0, 4) })} placeholder="•••" maxLength={4} style={IF} />
+                <input
+                  ref={cvvRef}
+                  type="password" inputMode="numeric"
+                  value={card.cvv}
+                  onChange={e => setCard({ ...card, cvv: e.target.value.replace(/\D/g, "").slice(0, 4) })}
+                  onFocus={() => setCardFlipped(true)}
+                  onBlur={() => setCardFlipped(false)}
+                  placeholder="•••" maxLength={4}
+                  style={IF}
+                />
               </div>
             </div>
             <div style={IW}>
               <label style={IL}>Cardholder Name</label>
-              <input type="text" value={card.name} onChange={e => setCard({ ...card, name: e.target.value.toUpperCase() })} placeholder="JOHN DOE" style={IF} />
+              <input
+                type="text"
+                value={card.name}
+                onChange={e => setCard({ ...card, name: e.target.value.toUpperCase() })}
+                onFocus={() => setCardFlipped(false)}
+                placeholder="JOHN DOE"
+                style={IF}
+              />
             </div>
+            <CardBrands />
           </>
         )}
 
-        <button onClick={method === "mpesa" ? processMpesa : processCard} style={{ ...BTN, boxShadow: `0 4px 20px rgba(34,197,94,0.3)` }}>
-          {method === "mpesa" ? "💚 Pay via M-Pesa" : `💳 Donate KES ${amount || "0"}`}
+        <button
+          onClick={method === "mpesa" ? processMpesa : processCard}
+          style={{ ...BTN, boxShadow: `0 4px 20px rgba(34,197,94,0.3)`, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+        >
+          {method === "mpesa" ? (
+            <>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="5" y="2" width="14" height="20" rx="2"/>
+                <circle cx="12" cy="17" r="1"/>
+                <path d="M9 7h6"/>
+              </svg>
+              Pay via M-Pesa
+            </>
+          ) : (
+            <>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+              Pay KES {amount || "0"} Securely
+            </>
+          )}
         </button>
 
         <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "center", color: "#9ca3af", fontSize: 11 }}>

@@ -3091,7 +3091,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
 
           {/* ── Music tab ────────────────────────────────────────────── */}
           {activeTab === "music" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
 
               {/* Hidden file input */}
               <input
@@ -3110,70 +3110,74 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                 }}
               />
 
-              {/* ── Now Playing ── */}
+              {/* ── Player card ── */}
               <div style={{
-                borderRadius: 16,
-                background: "linear-gradient(145deg, rgba(20,8,30,0.95) 0%, rgba(30,12,48,0.95) 100%)",
-                border: "1px solid rgba(244,114,182,0.2)",
-                padding: "16px",
-                display: "flex", flexDirection: "column", gap: 12,
-                boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+                borderRadius: 20,
+                background: "linear-gradient(160deg, #0e0618 0%, #18082e 50%, #0e1a10 100%)",
+                border: "1px solid rgba(244,114,182,0.15)",
+                overflow: "hidden",
+                boxShadow: "0 16px 56px rgba(0,0,0,0.7)",
+                marginBottom: 10,
               }}>
-                {/* Album art + track info */}
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                {/* Now playing header */}
+                <div style={{
+                  padding: "16px 16px 0",
+                  display: "flex", alignItems: "center", gap: 14,
+                }}>
+                  {/* Vinyl / waveform disc */}
                   <div style={{
-                    width: 52, height: 52, borderRadius: 12, flexShrink: 0,
-                    background: "linear-gradient(135deg, rgba(244,114,182,0.25) 0%, rgba(168,85,247,0.25) 100%)",
-                    border: "1px solid rgba(244,114,182,0.25)",
+                    width: 64, height: 64, borderRadius: "50%", flexShrink: 0, position: "relative",
+                    background: musicPlaying
+                      ? "conic-gradient(from 0deg, #ec4899 0%, #a855f7 33%, #3b82f6 66%, #ec4899 100%)"
+                      : "conic-gradient(from 0deg, #374151 0%, #1f2937 50%, #374151 100%)",
+                    boxShadow: musicPlaying ? "0 0 24px rgba(236,72,153,0.45), 0 0 60px rgba(168,85,247,0.2)" : "none",
+                    animation: musicPlaying ? "music-spin 3s linear infinite" : "none",
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    position: "relative", overflow: "hidden",
+                    transition: "box-shadow 0.4s",
                   }}>
-                    {musicPlaying ? (
-                      <div style={{ display: "flex", gap: 2.5, alignItems: "flex-end", paddingBottom: 2 }}>
-                        {[12, 20, 14, 22, 10, 18].map((h, i) => (
-                          <div key={i} style={{
-                            width: 3, borderRadius: 2, background: "#f472b6",
-                            height: `${h}px`,
-                            animation: `cr-pulse ${0.35 + i * 0.07}s ease-in-out infinite alternate`,
-                          }} />
-                        ))}
-                      </div>
-                    ) : (
-                      <Music size={22} color="rgba(244,114,182,0.7)" />
-                    )}
+                    {/* Centre hole */}
+                    <div style={{
+                      width: 22, height: 22, borderRadius: "50%",
+                      background: "#0e0618",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      zIndex: 1,
+                    }}>
+                      {!musicPlaying && <Music size={10} color="rgba(244,114,182,0.5)" />}
+                    </div>
                   </div>
 
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {currentIdx !== null && playlist[currentIdx] ? (
                       <>
-                        <div style={{ fontSize: 14, fontWeight: 800, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", letterSpacing: -0.3 }}>
+                        <div style={{ fontSize: 15, fontWeight: 800, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", letterSpacing: -0.4, lineHeight: 1.2, marginBottom: 4 }}>
                           {playlist[currentIdx].title}
                         </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
-                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
-                            {playlist[currentIdx].isFile ? "📁 Local file" : "🎵 Stream"}
-                          </div>
-                          <span style={{ color: "rgba(255,255,255,0.15)", fontSize: 10 }}>·</span>
-                          <div style={{ fontSize: 10, color: "rgba(244,114,182,0.7)", fontWeight: 600 }}>
-                            {currentIdx + 1} / {playlist.length}
-                          </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: playlist[currentIdx].isFile ? "rgba(96,165,250,0.15)" : "rgba(244,114,182,0.15)", border: `1px solid ${playlist[currentIdx].isFile ? "rgba(96,165,250,0.3)" : "rgba(244,114,182,0.3)"}`, color: playlist[currentIdx].isFile ? "#93c5fd" : "#f9a8d4" }}>
+                            {playlist[currentIdx].isFile ? "LOCAL" : "STREAM"}
+                          </span>
+                          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>{currentIdx + 1} / {playlist.length}</span>
+                          {musicBroadcastActive && (
+                            <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 99, background: "rgba(244,114,182,0.2)", border: "1px solid rgba(244,114,182,0.4)", color: "#f472b6", animation: "music-blink 1.4s infinite" }}>● ON AIR</span>
+                          )}
                         </div>
                       </>
                     ) : (
-                      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", fontStyle: "italic" }}>
-                        No track selected
+                      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.28)", fontStyle: "italic", lineHeight: 1.4 }}>
+                        No track loaded<br />
+                        <span style={{ fontSize: 11 }}>Add a track below to start</span>
                       </div>
                     )}
                   </div>
                 </div>
 
                 {/* Progress bar */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", fontVariantNumeric: "tabular-nums", width: 32, textAlign: "right", flexShrink: 0 }}>
+                <div style={{ padding: "14px 16px 0", display: "flex", alignItems: "center", gap: 9 }}>
+                  <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", fontVariantNumeric: "tabular-nums", width: 28, textAlign: "right", flexShrink: 0, fontFamily: "monospace" }}>
                     {fmtTime(musicCurrentTime)}
                   </span>
                   <div
-                    style={{ flex: 1, height: 5, borderRadius: 3, background: "rgba(255,255,255,0.08)", cursor: "pointer", position: "relative" }}
+                    style={{ flex: 1, height: 4, borderRadius: 4, background: "rgba(255,255,255,0.06)", cursor: "pointer", position: "relative", overflow: "visible" }}
                     onClick={(e) => {
                       const el = musicAudioRef.current;
                       if (!el || !el.duration) return;
@@ -3182,29 +3186,29 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                       el.currentTime = pct * el.duration;
                     }}
                   >
-                    <div style={{ position: "absolute", left: 0, top: 0, height: "100%", borderRadius: 3, background: "linear-gradient(90deg, #ec4899, #f472b6)", width: `${musicProgress * 100}%`, transition: "width 0.4s linear" }} />
+                    <div style={{ position: "absolute", left: 0, top: 0, height: "100%", borderRadius: 4, background: "linear-gradient(90deg, #ec4899, #a855f7, #3b82f6)", width: `${musicProgress * 100}%`, transition: "width 0.3s linear" }} />
                     {musicProgress > 0 && (
                       <div style={{
                         position: "absolute", top: "50%", left: `${musicProgress * 100}%`,
                         transform: "translate(-50%, -50%)",
-                        width: 11, height: 11, borderRadius: "50%", background: "#fff",
-                        boxShadow: "0 0 6px rgba(244,114,182,0.8)",
+                        width: 12, height: 12, borderRadius: "50%", background: "#fff",
+                        boxShadow: "0 0 8px rgba(236,72,153,0.9), 0 0 20px rgba(168,85,247,0.5)",
                       }} />
                     )}
                   </div>
-                  <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", fontVariantNumeric: "tabular-nums", width: 32, flexShrink: 0 }}>
+                  <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", fontVariantNumeric: "tabular-nums", width: 28, flexShrink: 0, fontFamily: "monospace" }}>
                     {fmtTime(musicDuration)}
                   </span>
                 </div>
 
-                {/* Controls */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16 }}>
+                {/* Playback controls */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 16px" }}>
                   <button
                     onClick={() => { if (playlist.length === 0) return; const idx = ((currentIdx ?? 0) - 1 + playlist.length) % playlist.length; playTrack(idx); }}
-                    style={{ background: "none", border: "none", color: "rgba(255,255,255,0.45)", cursor: "pointer", display: "flex", padding: 6, borderRadius: 8, transition: "color 0.15s" }}
-                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#f9a8d4"; }}
-                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.45)"; }}
-                  ><SkipBack size={20} /></button>
+                    style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)", cursor: "pointer", display: "flex", padding: 9, borderRadius: 12, transition: "all 0.15s" }}
+                    onMouseEnter={(e) => { const el = e.currentTarget as HTMLElement; el.style.background = "rgba(244,114,182,0.15)"; el.style.color = "#f9a8d4"; }}
+                    onMouseLeave={(e) => { const el = e.currentTarget as HTMLElement; el.style.background = "rgba(255,255,255,0.05)"; el.style.color = "rgba(255,255,255,0.5)"; }}
+                  ><SkipBack size={16} /></button>
 
                   <button
                     onClick={() => {
@@ -3212,81 +3216,84 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                       musicPlaying ? pauseTrack() : resumeTrack();
                     }}
                     style={{
-                      width: 48, height: 48, borderRadius: "50%", border: "none", cursor: "pointer",
-                      background: "linear-gradient(135deg, #ec4899 0%, #f472b6 100%)",
+                      width: 56, height: 56, borderRadius: "50%", border: "none", cursor: "pointer",
+                      background: "linear-gradient(135deg, #ec4899 0%, #a855f7 60%, #3b82f6 100%)",
                       color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
-                      boxShadow: "0 4px 20px rgba(236,72,153,0.5)",
-                      transition: "transform 0.15s, box-shadow 0.15s",
+                      boxShadow: "0 6px 28px rgba(236,72,153,0.55), 0 2px 8px rgba(168,85,247,0.3)",
+                      transition: "transform 0.15s, box-shadow 0.15s", flexShrink: 0,
                     }}
-                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "scale(1.06)"; }}
-                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; }}
+                    onMouseEnter={(e) => { const el = e.currentTarget as HTMLElement; el.style.transform = "scale(1.08)"; el.style.boxShadow = "0 10px 40px rgba(236,72,153,0.7), 0 4px 16px rgba(168,85,247,0.4)"; }}
+                    onMouseLeave={(e) => { const el = e.currentTarget as HTMLElement; el.style.transform = "scale(1)"; el.style.boxShadow = "0 6px 28px rgba(236,72,153,0.55), 0 2px 8px rgba(168,85,247,0.3)"; }}
                   >
-                    {musicPlaying ? <Pause size={20} /> : <Play size={20} />}
+                    {musicPlaying ? <Pause size={22} /> : <Play size={22} style={{ marginLeft: 2 }} />}
                   </button>
 
                   <button
                     onClick={() => { if (playlist.length === 0) return; const idx = ((currentIdx ?? 0) + 1) % playlist.length; playTrack(idx); }}
-                    style={{ background: "none", border: "none", color: "rgba(255,255,255,0.45)", cursor: "pointer", display: "flex", padding: 6, borderRadius: 8, transition: "color 0.15s" }}
-                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#f9a8d4"; }}
-                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.45)"; }}
-                  ><SkipForward size={20} /></button>
+                    style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)", cursor: "pointer", display: "flex", padding: 9, borderRadius: 12, transition: "all 0.15s" }}
+                    onMouseEnter={(e) => { const el = e.currentTarget as HTMLElement; el.style.background = "rgba(244,114,182,0.15)"; el.style.color = "#f9a8d4"; }}
+                    onMouseLeave={(e) => { const el = e.currentTarget as HTMLElement; el.style.background = "rgba(255,255,255,0.05)"; el.style.color = "rgba(255,255,255,0.5)"; }}
+                  ><SkipForward size={16} /></button>
                 </div>
 
-                {/* Volume */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <Volume2 size={12} color="rgba(255,255,255,0.3)" />
-                  <input
-                    type="range" min={0} max={100} step={1} value={musicVolume}
-                    onChange={(e) => setMusicVolume(Number(e.target.value))}
-                    style={{ flex: 1, accentColor: "#f472b6", cursor: "pointer", height: 4 }}
-                  />
-                  <span style={{ fontSize: 11, color: "#f472b6", fontWeight: 700, width: 30, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{musicVolume}%</span>
-                </div>
-              </div>
+                {/* Volume + broadcast row */}
+                <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+                  {/* Volume */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 9, background: "rgba(255,255,255,0.03)", borderRadius: 10, padding: "8px 12px" }}>
+                    <Volume2 size={13} color="rgba(244,114,182,0.6)" style={{ flexShrink: 0 }} />
+                    <input
+                      type="range" min={0} max={100} step={1} value={musicVolume}
+                      onChange={(e) => setMusicVolume(Number(e.target.value))}
+                      style={{ flex: 1, accentColor: "#f472b6", cursor: "pointer" }}
+                    />
+                    <span style={{ fontSize: 11, color: "#f9a8d4", fontWeight: 700, width: 32, textAlign: "right", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{musicVolume}%</span>
+                  </div>
 
-              {/* ── Mix to broadcast ── */}
-              <div style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-                padding: "11px 14px", borderRadius: 12,
-                background: musicBroadcastActive ? "rgba(244,114,182,0.08)" : "rgba(255,255,255,0.03)",
-                border: `1px solid ${musicBroadcastActive ? "rgba(244,114,182,0.3)" : "rgba(255,255,255,0.07)"}`,
-                transition: "all 0.2s",
-              }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 6 }}>
-                    <RadioIcon size={13} color="#f472b6" />
-                    Mix to broadcast
-                    {musicBroadcastActive && (
-                      <span style={{ fontSize: 9, background: "#f472b6", color: "#fff", padding: "1px 6px", borderRadius: 99, fontWeight: 800, letterSpacing: 0.5 }}>LIVE</span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>
-                    {musicBroadcastActive ? "Music routing into your RTMP stream" : "Send music audio into your RTMP stream"}
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    if (musicBroadcastActive) { stopMusicBroadcast(); }
-                    else { setMusicBroadcast(true); startMusicBroadcast().catch(() => {}); }
-                  }}
-                  style={{
-                    width: 44, height: 26, borderRadius: 13, cursor: "pointer", position: "relative",
-                    background: musicBroadcastActive ? "#f472b6" : "rgba(255,255,255,0.1)",
-                    border: "none", transition: "all 0.2s ease", flexShrink: 0,
-                  }}
-                >
+                  {/* Mix to broadcast toggle */}
                   <div style={{
-                    position: "absolute", top: 3, left: musicBroadcastActive ? 21 : 3,
-                    width: 20, height: 20, borderRadius: "50%", background: "#fff",
-                    transition: "left 0.2s ease", boxShadow: "0 1px 4px rgba(0,0,0,0.4)",
-                  }} />
-                </button>
+                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                    padding: "10px 12px", borderRadius: 12,
+                    background: musicBroadcastActive ? "rgba(244,114,182,0.09)" : "rgba(255,255,255,0.03)",
+                    border: `1px solid ${musicBroadcastActive ? "rgba(244,114,182,0.28)" : "rgba(255,255,255,0.07)"}`,
+                    transition: "all 0.25s",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <RadioIcon size={14} color={musicBroadcastActive ? "#f472b6" : "rgba(255,255,255,0.3)"} />
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: musicBroadcastActive ? "#fce7f3" : "rgba(255,255,255,0.7)" }}>
+                          Mix to broadcast
+                        </div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 1 }}>
+                          {musicBroadcastActive ? "Routing music into RTMP stream" : "Send music into your RTMP stream"}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (musicBroadcastActive) { stopMusicBroadcast(); }
+                        else { setMusicBroadcast(true); startMusicBroadcast().catch(() => {}); }
+                      }}
+                      style={{
+                        width: 44, height: 26, borderRadius: 13, cursor: "pointer", position: "relative",
+                        background: musicBroadcastActive ? "linear-gradient(90deg, #ec4899, #a855f7)" : "rgba(255,255,255,0.1)",
+                        border: "none", transition: "all 0.22s ease", flexShrink: 0,
+                        boxShadow: musicBroadcastActive ? "0 2px 12px rgba(236,72,153,0.5)" : "none",
+                      }}
+                    >
+                      <div style={{
+                        position: "absolute", top: 3, left: musicBroadcastActive ? 21 : 3,
+                        width: 20, height: 20, borderRadius: "50%", background: "#fff",
+                        transition: "left 0.22s ease", boxShadow: "0 1px 4px rgba(0,0,0,0.4)",
+                      }} />
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {/* ── Error display ── */}
               {musicError && (
                 <div style={{
-                  padding: "10px 12px", borderRadius: 10,
+                  padding: "10px 12px", borderRadius: 10, marginBottom: 10,
                   background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)",
                   display: "flex", alignItems: "flex-start", gap: 8,
                 }}>
@@ -3315,133 +3322,141 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                 </div>
               )}
 
-              {/* ── Playlist ── */}
-              {playlist.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2, display: "flex", alignItems: "center", gap: 5, padding: "0 2px" }}>
-                    <ListMusic size={10} /> Playlist · {playlist.length} track{playlist.length !== 1 ? "s" : ""}
-                  </div>
-                  {playlist.map((track, idx) => (
-                    <div
-                      key={track.id}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderRadius: 10,
-                        background: currentIdx === idx ? "linear-gradient(135deg, rgba(244,114,182,0.1) 0%, rgba(168,85,247,0.06) 100%)" : "rgba(255,255,255,0.025)",
-                        border: `1px solid ${currentIdx === idx ? "rgba(244,114,182,0.22)" : "rgba(255,255,255,0.05)"}`,
-                        cursor: "pointer", transition: "all 0.15s ease",
-                      }}
-                      onClick={() => playTrack(idx)}
-                    >
-                      {/* Index / playing indicator */}
-                      <div style={{
-                        width: 26, height: 26, borderRadius: 7, flexShrink: 0,
-                        background: currentIdx === idx ? "rgba(244,114,182,0.2)" : "rgba(255,255,255,0.05)",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                      }}>
-                        {currentIdx === idx && musicPlaying
-                          ? <div style={{ display: "flex", gap: 1.5, alignItems: "flex-end" }}>
-                              {[8, 12, 7, 10].map((h, i) => (
-                                <div key={i} style={{ width: 2.5, borderRadius: 1.5, background: "#f472b6", height: `${h}px`, animation: `cr-pulse ${0.3 + i * 0.08}s ease-in-out infinite alternate` }} />
-                              ))}
-                            </div>
-                          : <span style={{ fontSize: 9, color: currentIdx === idx ? "#f9a8d4" : "rgba(255,255,255,0.3)", fontWeight: 700 }}>{idx + 1}</span>
-                        }
-                      </div>
-
-                      {/* Title + source */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, fontWeight: currentIdx === idx ? 700 : 500, color: currentIdx === idx ? "#fce7f3" : "rgba(255,255,255,0.75)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {track.title}
-                        </div>
-                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", marginTop: 1 }}>
-                          {track.isFile ? "Local file" : track.originalUrl ? "YouTube / URL" : "Direct URL"}
-                        </div>
-                      </div>
-
-                      {/* Refresh (YouTube tracks only) */}
-                      {track.originalUrl && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); refreshTrack(track.id); }}
-                          disabled={refreshingTrackId === track.id}
-                          title="Re-resolve link"
-                          style={{
-                            background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4, borderRadius: 5, flexShrink: 0,
-                            color: refreshingTrackId === track.id ? "#f472b6" : "rgba(255,255,255,0.22)",
-                            transition: "color 0.15s",
-                          }}
-                          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#f472b6"; }}
-                          onMouseLeave={(e) => { if (refreshingTrackId !== track.id) (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.22)"; }}
-                        >
-                          <RefreshCw size={12} style={refreshingTrackId === track.id ? { animation: "cr-spin 1s linear infinite" } : {}} />
-                        </button>
-                      )}
-
-                      {/* Delete */}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); removeTrack(track.id); }}
-                        title="Remove"
-                        style={{ background: "none", border: "none", color: "rgba(255,255,255,0.18)", cursor: "pointer", display: "flex", padding: 4, borderRadius: 5, flexShrink: 0, transition: "color 0.15s" }}
-                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#f87171"; }}
-                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.18)"; }}
-                      ><Trash2 size={12} /></button>
-                    </div>
-                  ))}
+              {/* ── Add Track section ── */}
+              <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 14, overflow: "hidden", marginBottom: 10 }}>
+                <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", gap: 6 }}>
+                  <Plus size={11} color="rgba(244,114,182,0.7)" />
+                  <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.09em", fontWeight: 700 }}>Add Track</span>
                 </div>
-              )}
-
-              {playlist.length === 0 && (
-                <div style={{ textAlign: "center", padding: "32px 16px", color: "rgba(255,255,255,0.18)", fontSize: 12 }}>
-                  <Music size={32} style={{ opacity: 0.18, margin: "0 auto 10px", display: "block" }} />
-                  <div style={{ fontWeight: 600 }}>No tracks yet</div>
-                  <div style={{ marginTop: 4, fontSize: 11, opacity: 0.7 }}>Paste a YouTube link below or upload an audio file</div>
-                </div>
-              )}
-
-              {/* ── Add track ── */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 14px", borderRadius: 12, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
-                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.08em", display: "flex", alignItems: "center", gap: 5 }}>
-                  <Plus size={10} /> Add Track
-                </div>
-                <input
-                  type="text"
-                  value={musicAddTitle}
-                  onChange={(e) => setMusicAddTitle(e.target.value)}
-                  placeholder="Custom title (optional)"
-                  style={{ padding: "8px 11px", borderRadius: 8, fontSize: 12, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.09)", color: "#fff", outline: "none" }}
-                />
-                <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
                   <input
                     type="text"
-                    value={musicAddUrl}
-                    onChange={(e) => setMusicAddUrl(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") addMusicUrl(); }}
-                    placeholder="YouTube or direct audio URL (.mp3, .wav…)"
-                    style={{ flex: 1, padding: "8px 11px", borderRadius: 8, fontSize: 12, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.09)", color: "#fff", outline: "none" }}
+                    value={musicAddTitle}
+                    onChange={(e) => setMusicAddTitle(e.target.value)}
+                    placeholder="Custom title (optional)"
+                    style={{ padding: "8px 11px", borderRadius: 9, fontSize: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "#fff", outline: "none" }}
                   />
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input
+                      type="text"
+                      value={musicAddUrl}
+                      onChange={(e) => setMusicAddUrl(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") addMusicUrl(); }}
+                      placeholder="YouTube or direct audio URL (.mp3, .wav…)"
+                      style={{ flex: 1, padding: "8px 11px", borderRadius: 9, fontSize: 12, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "#fff", outline: "none" }}
+                    />
+                    <button
+                      onClick={() => addMusicUrl()}
+                      disabled={!musicAddUrl.trim() || musicResolving}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 5, padding: "8px 14px", borderRadius: 9,
+                        fontSize: 12, fontWeight: 700, cursor: (!musicAddUrl.trim() || musicResolving) ? "not-allowed" : "pointer",
+                        background: "linear-gradient(135deg, rgba(236,72,153,0.25), rgba(168,85,247,0.25))",
+                        border: "1px solid rgba(244,114,182,0.3)",
+                        color: "#f9a8d4", opacity: (musicAddUrl.trim() && !musicResolving) ? 1 : 0.4, whiteSpace: "nowrap",
+                      }}
+                    >
+                      {musicResolving ? <><Loader2 size={12} style={{ animation: "cr-spin 1s linear infinite" }} /> Resolving…</> : <><Plus size={12} /> Add</>}
+                    </button>
+                  </div>
                   <button
-                    onClick={() => addMusicUrl()}
-                    disabled={!musicAddUrl.trim() || musicResolving}
+                    onClick={() => musicFileInputRef.current?.click()}
                     style={{
-                      display: "flex", alignItems: "center", gap: 5, padding: "8px 14px", borderRadius: 8,
-                      fontSize: 12, fontWeight: 700, cursor: (!musicAddUrl.trim() || musicResolving) ? "not-allowed" : "pointer",
-                      background: "rgba(244,114,182,0.18)", border: "1px solid rgba(244,114,182,0.28)",
-                      color: "#f9a8d4", opacity: (musicAddUrl.trim() && !musicResolving) ? 1 : 0.4, whiteSpace: "nowrap",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                      padding: "9px 14px", borderRadius: 9, fontSize: 12, fontWeight: 600,
+                      cursor: "pointer", background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.4)",
+                      transition: "all 0.15s",
                     }}
+                    onMouseEnter={(e) => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(244,114,182,0.4)"; el.style.color = "#f9a8d4"; }}
+                    onMouseLeave={(e) => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.12)"; el.style.color = "rgba(255,255,255,0.4)"; }}
                   >
-                    {musicResolving ? <><Loader2 size={12} style={{ animation: "cr-spin 1s linear infinite" }} /> Resolving…</> : "Add"}
+                    <Upload size={13} /> Upload audio file
                   </button>
                 </div>
-                <button
-                  onClick={() => musicFileInputRef.current?.click()}
-                  style={{
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                    padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                    cursor: "pointer", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)", color: "rgba(255,255,255,0.5)",
-                  }}
-                >
-                  <Upload size={13} /> Upload audio file
-                </button>
               </div>
+
+              {/* ── Playlist ── */}
+              {playlist.length > 0 ? (
+                <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 14, overflow: "hidden" }}>
+                  <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", gap: 6 }}>
+                    <ListMusic size={11} color="rgba(244,114,182,0.7)" />
+                    <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.09em", fontWeight: 700, flex: 1 }}>Playlist</span>
+                    <span style={{ fontSize: 10, color: "rgba(255,255,255,0.22)", fontWeight: 600 }}>{playlist.length} track{playlist.length !== 1 ? "s" : ""}</span>
+                  </div>
+                  <div style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: 2 }}>
+                    {playlist.map((track, idx) => (
+                      <div
+                        key={track.id}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 8, padding: "8px 8px", borderRadius: 10,
+                          background: currentIdx === idx ? "linear-gradient(135deg, rgba(236,72,153,0.12) 0%, rgba(168,85,247,0.08) 100%)" : "transparent",
+                          border: `1px solid ${currentIdx === idx ? "rgba(244,114,182,0.2)" : "transparent"}`,
+                          cursor: "pointer", transition: "all 0.15s ease",
+                        }}
+                        onClick={() => playTrack(idx)}
+                        onMouseEnter={(e) => { if (currentIdx !== idx) { const el = e.currentTarget as HTMLElement; el.style.background = "rgba(255,255,255,0.04)"; } }}
+                        onMouseLeave={(e) => { if (currentIdx !== idx) { const el = e.currentTarget as HTMLElement; el.style.background = "transparent"; } }}
+                      >
+                        <div style={{
+                          width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                          background: currentIdx === idx ? "rgba(236,72,153,0.2)" : "rgba(255,255,255,0.04)",
+                          display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.15s",
+                        }}>
+                          {currentIdx === idx && musicPlaying
+                            ? <div style={{ display: "flex", gap: 1.5, alignItems: "flex-end" }}>
+                                {[7, 12, 8, 11].map((h, i) => (
+                                  <div key={i} style={{ width: 2.5, borderRadius: 1.5, background: "#f472b6", height: `${h}px`, animation: `cr-pulse ${0.28 + i * 0.09}s ease-in-out infinite alternate` }} />
+                                ))}
+                              </div>
+                            : <span style={{ fontSize: 9, color: currentIdx === idx ? "#f9a8d4" : "rgba(255,255,255,0.25)", fontWeight: 700 }}>{idx + 1}</span>
+                          }
+                        </div>
+
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: currentIdx === idx ? 700 : 500, color: currentIdx === idx ? "#fce7f3" : "rgba(255,255,255,0.7)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {track.title}
+                          </div>
+                          <div style={{ fontSize: 9, color: "rgba(255,255,255,0.22)", marginTop: 1 }}>
+                            {track.isFile ? "Local file" : track.originalUrl ? "YouTube / URL" : "Direct URL"}
+                          </div>
+                        </div>
+
+                        {track.originalUrl && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); refreshTrack(track.id); }}
+                            disabled={refreshingTrackId === track.id}
+                            title="Re-resolve link"
+                            style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4, borderRadius: 5, flexShrink: 0, color: "rgba(255,255,255,0.2)", transition: "color 0.15s" }}
+                            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#f472b6"; }}
+                            onMouseLeave={(e) => { if (refreshingTrackId !== track.id) (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.2)"; }}
+                          >
+                            <RefreshCw size={11} style={refreshingTrackId === track.id ? { animation: "cr-spin 1s linear infinite" } : {}} />
+                          </button>
+                        )}
+
+                        <button
+                          onClick={(e) => { e.stopPropagation(); removeTrack(track.id); }}
+                          title="Remove"
+                          style={{ background: "none", border: "none", color: "rgba(255,255,255,0.15)", cursor: "pointer", display: "flex", padding: 4, borderRadius: 5, flexShrink: 0, transition: "color 0.15s" }}
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#f87171"; }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.15)"; }}
+                        ><Trash2 size={11} /></button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ textAlign: "center", padding: "28px 16px", color: "rgba(255,255,255,0.15)", fontSize: 12, border: "1px dashed rgba(255,255,255,0.06)", borderRadius: 14 }}>
+                  <Music size={28} style={{ opacity: 0.15, margin: "0 auto 10px", display: "block" }} />
+                  <div style={{ fontWeight: 600 }}>Playlist is empty</div>
+                  <div style={{ marginTop: 4, fontSize: 11, opacity: 0.7 }}>Add a YouTube link or upload an audio file above</div>
+                </div>
+              )}
+
+              <style>{`
+                @keyframes music-spin { to { transform: rotate(360deg); } }
+                @keyframes music-blink { 0%,100%{opacity:1;} 50%{opacity:0.35;} }
+              `}</style>
             </div>
           )}
 

@@ -458,7 +458,6 @@ function CompactChat({ messages, isMobile }: { messages: ChatMessage[]; isMobile
               <span style={{
                 fontSize: isMobile ? 10 : 11, fontWeight: 700,
                 color: accent, marginRight: 5,
-                background: "transparent",
               }}>{msg.authorName}</span>
               <span style={{ fontSize: isMobile ? 10 : 11, color: "rgba(255,255,255,0.82)", wordBreak: "break-word", lineHeight: 1.4 }}>{msg.text}</span>
             </div>
@@ -543,7 +542,6 @@ function ToastChat({ messages, isMobile }: { messages: ChatMessage[]; isMobile?:
                 color: accent,
                 marginBottom: 2,
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                background: "transparent",
               }}>{msg.authorName}</div>
               <div style={{ fontSize: isMobile ? 11 : 13, color: "rgba(255,255,255,0.9)", wordBreak: "break-word", lineHeight: 1.4 }}>{msg.text}</div>
             </div>

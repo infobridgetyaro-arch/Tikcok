@@ -199,7 +199,7 @@ export function YoutubePanel({
 
           {/* Video tab */}
           {tab === "video" && (
-            <div style={{ flex: 1, position: "relative", background: "#000" }}>
+            <div style={{ flex: 1, position: "relative", background: "#000", overflow: "hidden" }}>
               {!videoId ? (
                 <NoVideo />
               ) : (
@@ -208,7 +208,11 @@ export function YoutubePanel({
                   src={videoSrc!}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                   allowFullScreen
-                  style={{ width: "100%", height: "100%", border: "none", display: "block" }}
+                  style={{
+                    position: "absolute", inset: 0,
+                    width: "100%", height: "100%",
+                    border: "none", display: "block",
+                  }}
                   title="YouTube live video"
                 />
               )}
