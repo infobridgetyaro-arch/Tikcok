@@ -29,6 +29,7 @@ app.use(
 );
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({
+  limit: "10mb",
   verify: (_req: any, _res: any, buf: Buffer) => {
     // Capture raw body for Paystack webhook signature verification
     _req.rawBody = buf;
