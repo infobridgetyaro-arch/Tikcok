@@ -51,3 +51,11 @@ bootstrap().catch((err) => {
   logger.error({ err }, "Bootstrap failed");
   process.exit(1);
 });
+
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "Uncaught exception — keeping server alive");
+});
+
+process.on("unhandledRejection", (reason) => {
+  logger.error({ reason }, "Unhandled promise rejection — keeping server alive");
+});

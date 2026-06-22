@@ -284,8 +284,8 @@ export async function registerBintunetRoutes(
       cookie: {
         maxAge: 24 * 60 * 60 * 1000,
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production" || !!process.env.REPLIT_DEV_DOMAIN,
-        sameSite: process.env.REPLIT_DEV_DOMAIN ? "none" : "lax",
+        secure: false,
+        sameSite: "lax",
       },
     })
   );
