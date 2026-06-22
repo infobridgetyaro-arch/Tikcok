@@ -570,17 +570,21 @@ function buildFFmpegArgs(
       "-i", inputUrl,
     );
   } else {
-    // TikTok HLS
+    // TikTok HLS — aggressive reconnect so TLS/EOF drops never stop the stream.
+    // max_reload: keep re-fetching the HLS playlist indefinitely (live edge).
+    // reconnect_delay_max 30: back off up to 30s between retries (not hammering).
+    // rw_timeout 20s: allow more time on slow connections before declaring failure.
     args.push(
       "-reconnect", "1",
       "-reconnect_streamed", "1",
       "-reconnect_on_network_error", "1",
       "-reconnect_at_eof", "1",
-      "-reconnect_delay_max", "5",
-      "-rw_timeout", "10000000",
+      "-reconnect_delay_max", "30",
+      "-max_reload", "9999",
+      "-rw_timeout", "20000000",
       "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       "-referer", "https://www.tiktok.com/",
-      "-thread_queue_size", "4096",
+      "-thread_queue_size", "8192",
       // genpts: regenerate timestamps on reconnect so PTS discontinuities
       // don't stall the filter graph and cause a visible cut.
       "-fflags", "+genpts+discardcorrupt",
@@ -720,16 +724,17 @@ function buildFFmpegArgs(
       audioFilter,
     ].join(";");
   } else {
-    // Scale video to fit inside the output frame (letterbox/pillarbox mode).
-    // force_original_aspect_ratio=decrease scales down until both dimensions
-    // fit, then pad fills the remaining area with transparent pixels (0x000000**00**).
-    // yuva420p preserves the alpha channel so the transparent bars let the
-    // gradient on pipe:3 show through — gradient colour is visible on the
-    // upper/lower (or left/right) sides whenever the source aspect ratio
-    // differs from the output frame.  This is equivalent to CSS object-fit:contain.
+    // Scale video to fill the OUTPUT WIDTH exactly, then:
+    //   • pad top/bottom with transparent pixels when the scaled height < frame height
+    //     (e.g. landscape 16:9 source in a portrait 9:16 frame)
+    //   • center-crop top/bottom when the scaled height > frame height
+    //     (e.g. portrait 9:16 source in a landscape 16:9 frame)
+    // Result: left & right edges always touch the frame edge; gradient from
+    // pipe:3 shows through the transparent top/bottom bars.
     const videoSrcFilter = [
-      `[0:v]scale=${scaleW}:${scaleH}:force_original_aspect_ratio=decrease`,
-      `pad=${scaleW}:${scaleH}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`,
+      `[0:v]scale=${scaleW}:-2`,
+      `pad=${scaleW}:'if(lte(ih,${scaleH}),${scaleH},ih)':0:'if(lte(ih,${scaleH}),(${scaleH}-ih)/2,0)':color=0x00000000`,
+      `crop=${scaleW}:${scaleH}:0:'if(gte(ih,${scaleH}),(ih-${scaleH})/2,0)'`,
       `setsar=1`,
       `format=yuva420p[_src]`,
     ].join(",");
@@ -1583,25 +1588,31 @@ function handleProcessExit(streamId: string, code: number | null) {
   activeStreams.delete(streamId);
   try { proc.ffmpegProcess?.kill("SIGKILL"); } catch {}
 
-  if (proc.autoRestart && storage.getStream(streamId)) {
-    const delay = proc.urlExpired ? 500 : 1000;
-    sendLog(streamId, `Auto-restart enabled. Retrying in ${delay / 1000}s...`);
+  // Always reconnect on any unexpected exit as long as the stream still exists in storage.
+  // stopStream() removes the entry from activeStreams BEFORE killing FFmpeg, so this
+  // handler is only reached on true unexpected exits (crashes, network drops, TLS errors).
+  if (storage.getStream(streamId)) {
+    const delay = proc.urlExpired ? 500 : 3000;
+    const reason = code !== null ? `exit code ${code}` : "signal";
+    sendLog(streamId, `[ffmpeg] Process ended unexpectedly (${reason}) — reconnecting in ${delay / 1000}s...`);
     sendStatus(streamId, "reconnecting");
     setTimeout(() => {
       if (storage.getStream(streamId)) {
         startStream(streamId, !proc.urlExpired).catch((e: any) => {
-          sendLog(streamId, `Auto-restart failed: ${e.message}`);
-          sendStatus(streamId, "error");
+          sendLog(streamId, `[ffmpeg] Reconnect failed: ${e.message} — retrying in 10s...`);
+          sendStatus(streamId, "reconnecting");
+          setTimeout(() => {
+            if (storage.getStream(streamId)) {
+              startStream(streamId, true).catch(() => sendStatus(streamId, "error"));
+            }
+          }, 10000);
         });
       }
     }, delay);
   } else {
-    // Keep the stream card in the control room with "error" status.
-    // The user can see what happened, restart manually, or delete it.
-    // (Old behaviour deleted the stream entirely, which wiped the control room card.)
     clearCameraLink(streamId);
     sendStatus(streamId, "error");
-    sendLog(streamId, `Stream stopped unexpectedly. Click Restart to try again.`);
+    sendLog(streamId, `Stream ended.`);
   }
 }
 

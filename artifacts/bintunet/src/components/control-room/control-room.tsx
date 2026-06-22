@@ -2479,7 +2479,13 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                       <input
                         type="color"
                         value={(bs as any)[field]}
-                        onChange={(e) => (bs.bgGradientActive ? update : localUpdate)({ [field]: e.target.value } as any)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          localUpdate({ [field]: val } as any);
+                          // Always persist to server so gradient shows on next activation
+                          if ((window as any).__bgDebTimer) clearTimeout((window as any).__bgDebTimer);
+                          (window as any).__bgDebTimer = setTimeout(() => update({ [field]: val } as any), 400);
+                        }}
                         style={{ width: 36, height: 32, borderRadius: 6, border: "1px solid rgba(255,255,255,0.2)", cursor: "pointer", padding: 2 }}
                       />
                       <span style={{ fontSize: 11, fontFamily: "monospace", color: "rgba(255,255,255,0.5)" }}>
@@ -2522,7 +2528,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                 ].map((preset) => (
                   <button
                     key={preset.label}
-                    onClick={() => localUpdate({ bgGradient1: preset.c1, bgGradient2: preset.c2 })}
+                    onClick={() => update({ bgGradient1: preset.c1, bgGradient2: preset.c2 })}
                     style={{
                       display: "flex", alignItems: "center", gap: 6,
                       padding: "4px 10px", borderRadius: 20, cursor: "pointer",
