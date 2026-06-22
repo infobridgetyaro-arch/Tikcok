@@ -386,77 +386,166 @@ function GlassChat({ messages, isMobile }: { messages: ChatMessage[]; isMobile?:
 }
 
 function CompactChat({ messages, isMobile }: { messages: ChatMessage[]; isMobile?: boolean }) {
-  const visible = messages.slice(-12);
+  type LiveMsg = ChatMessage & { key: number; phase: "enter" | "live" | "exit" };
+  const [live, setLive] = useState<LiveMsg[]>([]);
+  const counter = useRef(0);
+  const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const MAX = 10;
+  const EXPIRE_MS = 10000;
+
+  useEffect(() => {
+    if (!messages.length) return;
+    const last = messages[messages.length - 1];
+    setLive(prev => {
+      if (prev.find(m => m.id === last.id)) return prev;
+      const key = counter.current++;
+      const next: LiveMsg = { ...last, key, phase: "enter" };
+
+      const t1 = setTimeout(() =>
+        setLive(p => p.map(m => m.key === key ? { ...m, phase: "live" as const } : m)), 40);
+      const t2 = setTimeout(() => {
+        setLive(p => p.map(m => m.key === key ? { ...m, phase: "exit" as const } : m));
+        const t3 = setTimeout(() => setLive(p => p.filter(m => m.key !== key)), 420);
+        timers.current.set(key + 1e6, t3);
+      }, EXPIRE_MS);
+      timers.current.set(key, t1);
+      timers.current.set(key + 5e5, t2);
+
+      return [...prev.slice(-(MAX - 1)), next];
+    });
+  }, [messages]);
+
+  useEffect(() => () => { timers.current.forEach(clearTimeout); }, []);
+
+  if (!live.length) return null;
+
   return (
     <div style={{
       position: "fixed", bottom: isMobile ? 60 : 110, right: isMobile ? 6 : 24,
-      zIndex: 20, width: isMobile ? "calc(100vw - 14px)" : 300,
-      background: "rgba(0,0,0,0.82)", backdropFilter: "blur(12px)",
-      borderRadius: 12, overflow: "hidden",
-      border: "1px solid rgba(255,255,255,0.08)",
+      zIndex: 20, width: isMobile ? "calc(100vw - 14px)" : 320,
+      background: "rgba(4,4,16,0.78)", backdropFilter: "blur(18px)",
+      borderRadius: 14, overflow: "hidden",
+      border: "1px solid rgba(255,255,255,0.07)",
       boxSizing: "border-box",
+      boxShadow: "0 12px 40px rgba(0,0,0,0.6)",
     }}>
-      <div style={{ padding: "6px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", gap: 6 }}>
-        <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#e53e3e", animation: "pulse 1.2s infinite" }} />
-        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.5)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Live Chat</span>
-        <style>{`@keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }`}</style>
+      <div style={{ padding: "5px 10px 5px 8px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#ff4444", animation: "cp-pulse 1.2s infinite" }} />
+        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.38)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", flex: 1 }}>Live Chat</span>
+        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.18)", fontWeight: 600 }}>{live.length}</span>
       </div>
-      {visible.map((msg, i) => (
-        <div key={msg.id} style={{
-          display: "flex", gap: 7, alignItems: "flex-start",
-          padding: "5px 10px",
-          borderBottom: "1px solid rgba(255,255,255,0.04)",
-          background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
-          animation: "compact-in 0.2s ease",
-          overflow: "hidden",
-        }}>
-          <Avatar msg={msg} size={20} />
-          <div style={{ minWidth: 0, flex: 1, overflow: "hidden" }}>
-            <span style={{ fontSize: isMobile ? 9 : 10, fontWeight: 800, color: msg.isOwner ? "#f59e0b" : msg.isModerator ? "#a78bfa" : "#6ee7b7", marginRight: 4 }}>{msg.authorName}</span>
-            <span style={{ fontSize: isMobile ? 10 : 11, color: "rgba(255,255,255,0.75)", wordBreak: "break-word" }}>{msg.text}</span>
+      {live.map((msg) => {
+        const accent = msg.isOwner ? "#fbbf24" : msg.isModerator ? "#a78bfa" : msg.isMember ? "#34d399" : "rgba(255,255,255,0.52)";
+        return (
+          <div key={msg.key} style={{
+            display: "flex", gap: 8, alignItems: "flex-start",
+            padding: "7px 10px",
+            borderBottom: "1px solid rgba(255,255,255,0.04)",
+            opacity: msg.phase === "live" ? 1 : 0,
+            transform: msg.phase === "enter" ? "translateY(-8px)" : msg.phase === "exit" ? "translateX(24px)" : "none",
+            transition: msg.phase === "enter"
+              ? "opacity 0.28s ease, transform 0.28s cubic-bezier(0.34,1.56,0.64,1)"
+              : msg.phase === "exit"
+              ? "opacity 0.4s ease-in, transform 0.4s ease-in"
+              : "none",
+          }}>
+            <Avatar msg={msg} size={24} />
+            <div style={{ minWidth: 0, flex: 1, overflow: "hidden" }}>
+              <span style={{
+                fontSize: isMobile ? 10 : 11, fontWeight: 700,
+                color: accent, marginRight: 5,
+                background: "transparent",
+              }}>{msg.authorName}</span>
+              <span style={{ fontSize: isMobile ? 10 : 11, color: "rgba(255,255,255,0.82)", wordBreak: "break-word", lineHeight: 1.4 }}>{msg.text}</span>
+            </div>
           </div>
-        </div>
-      ))}
-      <style>{`@keyframes compact-in { from{opacity:0;background:rgba(102,126,234,0.12);} to{opacity:1;} }`}</style>
+        );
+      })}
+      <style>{`@keyframes cp-pulse { 0%,100%{opacity:1;} 50%{opacity:0.18;} }`}</style>
     </div>
   );
 }
 
 function ToastChat({ messages, isMobile }: { messages: ChatMessage[]; isMobile?: boolean }) {
-  const visible = messages.slice(-4);
+  type LiveMsg = ChatMessage & { key: number; phase: "enter" | "live" | "exit" };
+  const [live, setLive] = useState<LiveMsg[]>([]);
+  const counter = useRef(0);
+  const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const MAX = 10;
+  const EXPIRE_MS = 8000;
+
+  useEffect(() => {
+    if (!messages.length) return;
+    const last = messages[messages.length - 1];
+    setLive(prev => {
+      if (prev.find(m => m.id === last.id)) return prev;
+      const key = counter.current++;
+      const next: LiveMsg = { ...last, key, phase: "enter" };
+
+      const t1 = setTimeout(() =>
+        setLive(p => p.map(m => m.key === key ? { ...m, phase: "live" as const } : m)), 40);
+      const t2 = setTimeout(() => {
+        setLive(p => p.map(m => m.key === key ? { ...m, phase: "exit" as const } : m));
+        const t3 = setTimeout(() => setLive(p => p.filter(m => m.key !== key)), 500);
+        timers.current.set(key + 1e6, t3);
+      }, EXPIRE_MS);
+      timers.current.set(key, t1);
+      timers.current.set(key + 5e5, t2);
+
+      return [...prev.slice(-(MAX - 1)), next];
+    });
+  }, [messages]);
+
+  useEffect(() => () => { timers.current.forEach(clearTimeout); }, []);
+
+  if (!live.length) return null;
+
   return (
     <div style={{
       position: "fixed", bottom: isMobile ? 60 : 110, right: isMobile ? 6 : 24,
-      display: "flex", flexDirection: "column", gap: 8,
-      zIndex: 20, maxWidth: isMobile ? "calc(100vw - 14px)" : undefined,
+      display: "flex", flexDirection: "column", gap: 7, alignItems: "flex-end",
+      zIndex: 20, maxWidth: isMobile ? "calc(100vw - 14px)" : 360,
+      pointerEvents: "none",
     }}>
-      {visible.map((msg, i) => {
-        const age = visible.length - 1 - i;
-        const accentColor = msg.isOwner ? "#f59e0b" : msg.isModerator ? "#6366f1" : "#e53e3e";
+      {live.map((msg, i) => {
+        const isNewest = i === live.length - 1;
+        const accent = msg.isOwner ? "#fbbf24" : msg.isModerator ? "#a78bfa" : "#ff4444";
         return (
-          <div key={msg.id} style={{
-            background: "rgba(15,15,30,0.92)", backdropFilter: "blur(16px)",
-            border: "1px solid rgba(255,255,255,0.1)",
-            borderLeft: `3px solid ${accentColor}`,
-            borderRadius: 10, padding: isMobile ? "7px 10px" : "9px 14px",
-            display: "flex", gap: 8, alignItems: "center",
-            maxWidth: isMobile ? "calc(100vw - 14px)" : 320,
+          <div key={msg.key} style={{
+            background: "rgba(6,6,20,0.88)", backdropFilter: "blur(20px)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderLeft: `3px solid ${accent}`,
+            borderRadius: 12, padding: isMobile ? "8px 10px" : "10px 14px",
+            display: "flex", gap: 9, alignItems: "center",
+            width: isMobile ? "calc(100vw - 14px)" : 340,
             boxSizing: "border-box",
-            transform: `scale(${1 - age * 0.03}) translateX(${age * 6}px)`,
-            opacity: 1 - age * 0.2,
-            transition: "all 0.35s ease",
-            animation: i === visible.length - 1 ? "toast-in 0.4s cubic-bezier(0.34,1.56,0.64,1)" : "none",
-            boxShadow: i === visible.length - 1 ? "0 8px 28px rgba(0,0,0,0.6)" : "none",
+            boxShadow: isNewest ? "0 8px 32px rgba(0,0,0,0.65)" : "none",
+            opacity: msg.phase === "live" ? 1 : 0,
+            transform: msg.phase === "enter"
+              ? "translateX(44px) scale(0.92)"
+              : msg.phase === "exit"
+              ? "translateX(60px) scale(0.88)"
+              : "none",
+            transition: msg.phase === "enter"
+              ? "opacity 0.38s cubic-bezier(0.34,1.56,0.64,1), transform 0.38s cubic-bezier(0.34,1.56,0.64,1)"
+              : msg.phase === "exit"
+              ? "opacity 0.45s ease-in, transform 0.45s ease-in"
+              : "none",
           }}>
-            <Avatar msg={msg} size={isMobile ? 20 : 26} />
+            <Avatar msg={msg} size={isMobile ? 24 : 30} />
             <div style={{ minWidth: 0, flex: 1, overflow: "hidden" }}>
-              <div style={{ fontSize: isMobile ? 9 : 10, fontWeight: 800, color: accentColor, marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{msg.authorName}</div>
-              <div style={{ fontSize: isMobile ? 10 : 12, color: "#fff", wordBreak: "break-word", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{msg.text}</div>
+              <div style={{
+                fontSize: isMobile ? 10 : 11, fontWeight: 800,
+                color: accent,
+                marginBottom: 2,
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                background: "transparent",
+              }}>{msg.authorName}</div>
+              <div style={{ fontSize: isMobile ? 11 : 13, color: "rgba(255,255,255,0.9)", wordBreak: "break-word", lineHeight: 1.4 }}>{msg.text}</div>
             </div>
           </div>
         );
       })}
-      <style>{`@keyframes toast-in { from{opacity:0;transform:translateX(50px) scale(0.9);} to{opacity:1;transform:translateX(0) scale(1);} }`}</style>
     </div>
   );
 }

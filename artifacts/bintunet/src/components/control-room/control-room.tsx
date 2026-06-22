@@ -905,18 +905,8 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
         selfBrowserSurface: "exclude",
       });
 
-      // ── Verify the user picked "Entire Screen", not a window or tab ─────
+      // Accept any display surface — monitor, window, or browser tab
       const videoTrack = stream.getVideoTracks()[0];
-      const surface = (videoTrack?.getSettings() as any)?.displaySurface;
-      if (surface && surface !== "monitor") {
-        stream.getTracks().forEach(t => t.stop());
-        throw Object.assign(
-          new Error(
-            `You selected a "${surface}" — please click "Entire Screen" (not a window or tab) in the picker, then try again.`
-          ),
-          { name: "WrongSurfaceError" }
-        );
-      }
 
       screenStreamRef.current = stream;
       screenStreamAliveRef.current = true;
