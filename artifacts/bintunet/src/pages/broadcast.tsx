@@ -563,12 +563,18 @@ function TickerScroll({ text, speed = 30, color = "#fff", fontSize = 14, fontWei
 }) {
   const chunk = `${text}${separator}${text}${separator}`;
   return (
-    <div style={{ overflow: "hidden", flex: 1, display: "flex", alignItems: "center", minWidth: 0 }}>
-      <div style={{ display: "flex", flexShrink: 0, animation: `nt-ticker ${speed}s linear infinite`, willChange: "transform" }}>
-        <span style={{ whiteSpace: "nowrap", paddingRight: 60, fontSize, fontWeight, color }}>{chunk}</span>
-        <span style={{ whiteSpace: "nowrap", paddingRight: 60, fontSize, fontWeight, color }}>{chunk}</span>
+    <>
+      <style>{`
+        @keyframes nt-ticker { from{transform:translateX(0)} to{transform:translateX(-50%)} }
+        @keyframes nt-pulse  { 0%,100%{opacity:1} 50%{opacity:0.2} }
+      `}</style>
+      <div style={{ overflow: "hidden", flex: 1, display: "flex", alignItems: "center", minWidth: 0 }}>
+        <div style={{ display: "flex", flexShrink: 0, animation: `nt-ticker ${speed}s linear infinite`, willChange: "transform" }}>
+          <span style={{ whiteSpace: "nowrap", paddingRight: 60, fontSize, fontWeight, color }}>{chunk}</span>
+          <span style={{ whiteSpace: "nowrap", paddingRight: 60, fontSize, fontWeight, color }}>{chunk}</span>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -774,41 +780,6 @@ function NewsMinimal({ text, title, logo, color, isMobile, yPct, speed }: NewsPr
   );
 }
 
-function NewsTicker({ text, isMobile, yPct }: { text: string; isMobile?: boolean; yPct?: number }) {
-  return <NewsAlJazeera text={text} isMobile={isMobile} yPct={yPct} />;
-}
-
-// kept so the old render still compiles (maps to Crawl → AlJazeera in switch)
-function CrawlNews({ text, isMobile }: { text: string; isMobile?: boolean }) {
-  return <NewsAlJazeera text={text} isMobile={isMobile} separator="  ■  " />;
-}
-
-function NewsAlJazeera2({ text, isMobile, separator }: { text: string; isMobile?: boolean; separator?: string }) {
-  return <NewsAlJazeera text={text} isMobile={isMobile} separator={separator} />;
-}
-// workaround for CrawlNews legacy
-declare module "." {}
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const _crawlAlias = CrawlNews;
-const _ajAlias = NewsAlJazeera2;
-
-/* ─── shared keyframes (injected once) ─── */
-function NewsKeyframes() {
-  return (
-    <style>{`
-      @keyframes nt-ticker { from{transform:translateX(0)} to{transform:translateX(-50%)} }
-      @keyframes nt-pulse  { 0%,100%{opacity:1} 50%{opacity:0.2} }
-    `}</style>
-  );
-}
-/* dummy to avoid linter warning on renamed helper */
-const _ignore = [_crawlAlias, _ajAlias];
-        </div>
-      </div>
-      <style>{`@keyframes crawl-loop { from{transform:translateX(0)} to{transform:translateX(-50%)} }`}</style>
-    </div>
-  );
-}
 
 /* ─── Ad overlays ─── */
 
@@ -1819,14 +1790,28 @@ export default function BroadcastPage() {
       {/* News overlay */}
       {state?.newsActive && !state.breakActive && !state.adActive && (() => {
         const newsPos = isMobile ? state.mobileNewsPosition : state.newsPosition;
-        const yPct = newsPos?.y;
+        const np: NewsProps = {
+          text: state.newsText,
+          title: state.newsTitle,
+          logo: state.newsLogo,
+          color: state.newsBgColor,
+          isMobile,
+          yPct: newsPos?.y,
+          speed: state.newsScrollSpeed || 30,
+        };
         switch (state.newsStyle) {
-          case "Ticker":      return <NewsTicker text={state.newsText} isMobile={isMobile} yPct={yPct} />;
-          case "Breaking":    return <BreakingNews text={state.newsText} />;
-          case "Lower Third": return <LowerThirdNews text={state.newsText} />;
-          case "Spotlight":   return <SpotlightNews text={state.newsText} />;
-          case "Crawl":       return <CrawlNews text={state.newsText} isMobile={isMobile} />;
-          default:            return <NewsTicker text={state.newsText} isMobile={isMobile} yPct={yPct} />;
+          case "Al Jazeera":  return <NewsAlJazeera  {...np} />;
+          case "CNN":         return <NewsCNN         {...np} />;
+          case "BBC":         return <NewsBBC         {...np} />;
+          case "Bloomberg":   return <NewsBloomberg   {...np} />;
+          case "Sky News":    return <NewsSkyNews     {...np} />;
+          case "Neon Wire":   return <NewsNeonWire    {...np} />;
+          case "Float Glass": return <NewsFloatGlass  {...np} />;
+          case "Sports":      return <NewsSportsFlash {...np} />;
+          case "Cinematic":   return <NewsCinematic   {...np} />;
+          case "Gold Luxury": return <NewsGoldLuxury  {...np} />;
+          case "Minimal":     return <NewsMinimal     {...np} />;
+          default:            return <NewsAlJazeera   {...np} />;
         }
       })()}
 

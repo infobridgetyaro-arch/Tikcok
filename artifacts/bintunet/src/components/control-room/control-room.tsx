@@ -52,8 +52,9 @@ interface BroadcastState {
   newsText: string;
   newsTitle: string;
   newsBgColor: string;
+  newsLogo: string;
+  newsScrollSpeed: number;
   newsStyle: string;
-  newsAnimation: string;
   newsPosition: OverlayPosition;
   adActive: boolean;
   adText: string;
@@ -160,7 +161,7 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode; accent: string }[] 
   { id: "stage",  label: "Stage",    icon: <LayoutGrid size={13} />,                  accent: "#a78bfa" },
 ];
 
-const NEWS_STYLES       = ["Ticker", "Breaking", "Lower Third", "Spotlight", "Crawl", "Pop-up", "Scroll Banner"] as const;
+const NEWS_STYLES       = ["Al Jazeera", "CNN", "BBC", "Bloomberg", "Sky News", "Neon Wire", "Float Glass", "Sports", "Cinematic", "Gold Luxury", "Minimal"] as const;
 const NEWS_ANIMATIONS   = ["None", "Fade", "→", "←", "↓", "↙", "↗", "Typewriter", "Pop-in", "Letter Fade", "Bounce", "Reveal"] as const;
 const AD_STYLES         = ["Banner", "Card", "Corner Pop", "Fullscreen", "Strip"] as const;
 const BREAK_STYLES      = ["Video Play", "Countdown", "Wave", "Glass", "Neon", "Minimal", "Gradient"] as const;
@@ -797,8 +798,8 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
   // Local UI state — changes here are NOT pushed to the server until Go Live is tapped
   const [bs, setBs] = useState<BroadcastState>({
     newsActive: false, newsText: "Welcome to the live stream! Stay tuned for more updates.",
-    newsTitle: "", newsBgColor: "#cc0001",
-    newsStyle: "Ticker", newsAnimation: "Fade",
+    newsTitle: "", newsBgColor: "#cc0001", newsLogo: "", newsScrollSpeed: 30,
+    newsStyle: "Al Jazeera",
     newsPosition: { x: 0, y: 95 },
     adActive: false, adText: "Big Sale — 50% Off Today Only!", adSub: "Use code LIVE at checkout.", adStyle: "Banner",
     adPosition: { x: 0, y: 0 },
@@ -2066,84 +2067,151 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
           {/* ── NEWS ── */}
           {activeTab === "news" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+              {/* ── Logo upload ── */}
+              <input
+                type="file" accept="image/*" id="news-logo-file-input" style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (ev) => localUpdate({ newsLogo: (ev.target?.result as string) || "" });
+                  reader.readAsDataURL(file);
+                  e.target.value = "";
+                }}
+              />
+              <div style={{ padding: "10px 12px", borderRadius: 12, background: "rgba(102,126,234,0.06)", border: "1px solid rgba(102,126,234,0.15)", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.38)", textTransform: "uppercase", letterSpacing: "0.09em", fontWeight: 700 }}>Channel Logo</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {bs.newsLogo ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+                      <div style={{ background: "#000", borderRadius: 8, padding: "6px 10px", border: "1px solid rgba(255,255,255,0.1)", display: "flex", alignItems: "center", gap: 8 }}>
+                        <img src={bs.newsLogo} alt="logo" style={{ height: 32, maxWidth: 80, objectFit: "contain" }} />
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <button
+                          onClick={() => document.getElementById("news-logo-file-input")?.click()}
+                          style={{ fontSize: 10, padding: "4px 10px", borderRadius: 6, border: "1px solid rgba(102,126,234,0.4)", background: "rgba(102,126,234,0.1)", color: "#a5b4fc", cursor: "pointer", fontWeight: 600 }}
+                        >Change</button>
+                        <button
+                          onClick={() => localUpdate({ newsLogo: "" })}
+                          style={{ fontSize: 10, padding: "4px 10px", borderRadius: 6, border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.07)", color: "#fca5a5", cursor: "pointer", fontWeight: 600 }}
+                        >Remove</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => document.getElementById("news-logo-file-input")?.click()}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 8, padding: "10px 14px",
+                        borderRadius: 10, border: "2px dashed rgba(102,126,234,0.3)",
+                        background: "rgba(102,126,234,0.04)", color: "rgba(255,255,255,0.45)",
+                        cursor: "pointer", fontSize: 12, fontWeight: 600, width: "100%", justifyContent: "center",
+                        transition: "all 0.18s",
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(102,126,234,0.6)"; (e.currentTarget as HTMLElement).style.color = "#a5b4fc"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(102,126,234,0.3)"; (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.45)"; }}
+                    >
+                      <Newspaper size={14} /> Upload logo (PNG / SVG / JPG)
+                    </button>
+                  )}
+                </div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.22)", lineHeight: 1.5 }}>
+                  Logo appears on the left of every ticker style. Use transparent PNG for best results.
+                </div>
+              </div>
+
+              {/* ── Headline text ── */}
               <TextInput
                 value={bs.newsText}
                 onChange={(v) => localUpdate({ newsText: v })}
-                placeholder="News headline / scrolling text…"
+                placeholder="Scrolling headline text — loops continuously…"
               />
+
+              {/* ── Channel label (fallback when no logo) ── */}
               <TextInput
                 value={bs.newsTitle}
                 onChange={(v) => localUpdate({ newsTitle: v })}
-                placeholder="Title label (e.g. BREAKING, SPORTS, your channel name)…"
+                placeholder="Channel label shown when no logo (e.g. BBC, SPORT, LIVE)…"
               />
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em", whiteSpace: "nowrap" }}>Accent Color</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input
-                    type="color"
-                    value={bs.newsBgColor}
-                    onChange={(e) => localUpdate({ newsBgColor: e.target.value })}
-                    style={{ width: 34, height: 28, borderRadius: 6, border: "1px solid rgba(255,255,255,0.12)", cursor: "pointer", background: "none" }}
-                  />
-                  <span style={{ fontSize: 11, fontFamily: "monospace", color: "rgba(255,255,255,0.5)" }}>{bs.newsBgColor}</span>
-                </div>
+
+              {/* ── Accent color ── */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", textTransform: "uppercase", letterSpacing: "0.07em", whiteSpace: "nowrap" }}>Accent</div>
+                <input
+                  type="color" value={bs.newsBgColor}
+                  onChange={(e) => localUpdate({ newsBgColor: e.target.value })}
+                  style={{ width: 32, height: 26, borderRadius: 6, border: "1px solid rgba(255,255,255,0.12)", cursor: "pointer", background: "none" }}
+                />
+                <span style={{ fontSize: 10, fontFamily: "monospace", color: "rgba(255,255,255,0.4)" }}>{bs.newsBgColor}</span>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                  {["#cc0001","#0057ff","#00a651","#f59e0b","#7c3aed","#000000"].map((c) => (
+                  {["#cc0001","#0057ff","#0ea5e9","#f59e0b","#00ff88","#d4a842","#7c3aed","#000000"].map((c) => (
                     <button key={c} onClick={() => localUpdate({ newsBgColor: c })} style={{
                       width: 18, height: 18, borderRadius: 4, background: c, border: `2px solid ${bs.newsBgColor === c ? "#fff" : "transparent"}`, cursor: "pointer",
                     }} />
                   ))}
                 </div>
               </div>
-              <div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.07em" }}>Style</div>
-                <StylePills styles={NEWS_STYLES} current={bs.newsStyle} accent="#667eea" onSelect={(s) => localUpdate({ newsStyle: s })} />
+
+              {/* ── Scroll speed ── */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 12px", borderRadius: 10, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", textTransform: "uppercase", letterSpacing: "0.07em" }}>Scroll Speed</div>
+                  <span style={{ fontSize: 11, color: "#667eea", fontWeight: 700 }}>
+                    {bs.newsScrollSpeed <= 15 ? "Fast" : bs.newsScrollSpeed <= 25 ? "Normal" : bs.newsScrollSpeed <= 40 ? "Smooth" : "Slow"}
+                  </span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>Fast</span>
+                  <input
+                    type="range" min={10} max={60} step={5} value={bs.newsScrollSpeed}
+                    onChange={(e) => localUpdate({ newsScrollSpeed: Number(e.target.value) })}
+                    style={{ flex: 1, accentColor: "#667eea", cursor: "pointer" }}
+                  />
+                  <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>Slow</span>
+                </div>
               </div>
 
+              {/* ── Style picker ── */}
               <div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.07em" }}>
-                  Entry Animation
-                </div>
-                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                  {NEWS_ANIMATIONS.map((anim) => {
-                    const isCharAnim = ["Typewriter", "Pop-in", "Letter Fade", "Bounce", "Reveal"].includes(anim);
-                    const isSlideAnim = ["→", "←", "↓", "↙", "↗"].includes(anim);
-                    const accent = isCharAnim ? "#a78bfa" : isSlideAnim ? "#34d399" : "#667eea";
-                    const active = bs.newsAnimation === anim;
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.07em" }}>Ticker Style — 11 designs</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                  {(NEWS_STYLES as readonly string[]).map((s) => {
+                    const active = bs.newsStyle === s;
+                    const styleColors: Record<string, string> = {
+                      "Al Jazeera": "#cc0001", "CNN": "#b91c1c", "BBC": "#2563eb", "Bloomberg": "#f59e0b",
+                      "Sky News": "#0ea5e9", "Neon Wire": "#00ff88", "Float Glass": "#818cf8",
+                      "Sports": "#f97316", "Cinematic": "#e2c97e", "Gold Luxury": "#d4a842", "Minimal": "#94a3b8",
+                    };
+                    const sc = styleColors[s] || "#667eea";
                     return (
                       <button
-                        key={anim}
-                        onClick={() => localUpdate({ newsAnimation: anim })}
-                        title={isCharAnim ? "Character-level" : isSlideAnim ? "Slide" : "Overlay"}
+                        key={s}
+                        onClick={() => localUpdate({ newsStyle: s })}
                         style={{
-                          padding: "3px 9px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer",
-                          border: `1px solid ${active ? accent : "rgba(255,255,255,0.1)"}`,
-                          background: active ? `${accent}22` : "transparent",
+                          padding: "5px 11px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                          border: `1px solid ${active ? sc : "rgba(255,255,255,0.1)"}`,
+                          background: active ? `${sc}22` : "transparent",
                           color: active ? "#fff" : "rgba(255,255,255,0.45)",
-                          transition: "all 0.18s ease", fontFamily: "inherit",
+                          transition: "all 0.18s",
                         }}
-                      >
-                        {anim}
-                      </button>
+                      >{s}</button>
                     );
                   })}
                 </div>
-                <div style={{ marginTop: 6, fontSize: 10, color: "rgba(255,255,255,0.25)", lineHeight: 1.5 }}>
-                  <span style={{ color: "rgba(52,211,153,0.7)" }}>Arrows</span> = whole-bar slide &nbsp;·&nbsp;
-                  <span style={{ color: "rgba(167,139,250,0.7)" }}>Text effects</span> = character-level animation
+                <div style={{ marginTop: 8, fontSize: 10, color: "rgba(255,255,255,0.22)", lineHeight: 1.55 }}>
+                  All styles feature seamless looping scroll. Logo and accent color apply to every style.
                 </div>
               </div>
 
               <PositionSliders
                 pos={getPos("newsPosition")}
-                label={`Position — ${editMode}`}
+                label={`Vertical Position — ${editMode}`}
                 accent="#667eea"
                 onChange={setPos("newsPosition")}
               />
               <SizeSlider value={bs.newsScale} onChange={(v) => localUpdate({ newsScale: v })} accent="#667eea" />
-              <div style={{ padding: "8px 12px", borderRadius: 7, background: "rgba(102,126,234,0.06)", border: "1px solid rgba(102,126,234,0.15)", fontSize: 11, color: "rgba(255,255,255,0.38)", lineHeight: 1.5 }}>
-                Text, style, and animation are staged — applied when you tap <strong style={{ color: "#667eea" }}>Go Live</strong>.
-              </div>
+
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <ToggleButton
                   active={bs.newsActive}
@@ -2155,8 +2223,9 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                     newsText: bs.newsText,
                     newsTitle: bs.newsTitle,
                     newsBgColor: bs.newsBgColor,
+                    newsLogo: bs.newsLogo,
+                    newsScrollSpeed: bs.newsScrollSpeed,
                     newsStyle: bs.newsStyle,
-                    newsAnimation: bs.newsAnimation,
                     newsPosition: bs.newsPosition,
                     mobileNewsPosition: bs.mobileNewsPosition,
                     newsScale: bs.newsScale,
