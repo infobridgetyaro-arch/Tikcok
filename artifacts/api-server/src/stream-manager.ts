@@ -580,7 +580,6 @@ function buildFFmpegArgs(
       "-reconnect_on_network_error", "1",
       "-reconnect_at_eof", "1",
       "-reconnect_delay_max", "30",
-      "-max_reload", "9999",
       "-rw_timeout", "20000000",
       "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       "-referer", "https://www.tiktok.com/",
