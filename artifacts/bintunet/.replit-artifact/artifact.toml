@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "BintuNet Controller"
+version = "1.0.0"
+id = "artifacts/bintunet"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 5000
+
+[services.development]
+run = "pnpm --filter @workspace/bintunet run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/bintunet", "run", "build" ]
+publicDir = "artifacts/bintunet/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "5000"
+BASE_PATH = "/"

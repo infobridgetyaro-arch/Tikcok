@@ -1,0 +1,394 @@
+Using the above paystack project to handle the payment flow
+REDESIGN AND EXTEND MY EXISTING LIVE STREAM MONETIZATION SYSTEM.
+
+RENAME ALL “DONATION” SYSTEMS TO: SUPERCHAT
+
+DO NOT CHANGE:
+- Paystack integration
+- Backend payment logic
+- Webhook system
+- Gateway Payment flow
+- QR system
+- WebSocket infrastructure
+- Database core structure (only extend if needed)
+
+ONLY CHANGE:
+- UI/UX design
+- Overlay system naming
+- Animation system
+- Gift system design
+- Superchat visual branding
+
+────────────────────────────────────────
+1. CORE FEATURE: SUPERCHAT SYSTEM
+────────────────────────────────────────
+
+Replace all donation terminology with:
+
+💬 SUPERCHAT
+
+SuperChat is the unified system for:
+- Payments
+- Gifts
+- Alerts
+- Tiers
+- Live overlays
+
+Every Paystack payment becomes a SuperChat event.
+
+────────────────────────────────────────
+2. SUPERCHAT GIFT ECONOMY (TIKTOK STYLE)
+────────────────────────────────────────
+
+Introduce SuperChat Gifts (like TikTok coins system):
+
+💎 SUPERCHAT GIFTS
+
+Mapping:
+
+- KES 50   → Spark SuperChat
+- KES 100  → Glow SuperChat
+- KES 500  → Star SuperChat
+- KES 1000 → Rocket SuperChat
+- KES 2000+ → Universe SuperChat
+
+Each SuperChat gift has:
+- Icon
+- Animation style
+- Sound effect
+- Color theme
+- Tier classification
+
+────────────────────────────────────────
+3. SUPERCHAT TIERS
+────────────────────────────────────────
+
+Keep tier logic but rename UI:
+
+🥈 SILVER SUPERCHAT
+🥇 GOLD SUPERCHAT
+🎓 UNIVERSITY SUPERCHAT
+
+Each tier controls:
+- Overlay intensity
+- Animation strength
+- Sound depth
+- Duration
+
+────────────────────────────────────────
+4. TIKTOK-STYLE SUPERCHAT POPUP (GLOBAL EVENT)
+────────────────────────────────────────
+
+Replace all payment success popups with:
+
+SUPERCHAT LIVE BURST
+
+Trigger: superchat_success
+
+UI:
+- Full screen overlay
+- Dark blur background
+- Neon glow burst
+- Floating particles
+- Gift explosion animation
+
+Content:
+✨ SUPERCHAT RECEIVED ✨
+👤 {name}
+💰 {amount}
+🎁 {gift_type}
+
+Animation:
+- Zoom burst (0.8 → 1.0)
+- Glow ripple effect
+- Particle explosion
+- Clap sound effect
+
+Duration: 1.0 – 1.5 seconds max
+
+────────────────────────────────────────
+5. SUPERCHAT OVERLAY CARDS
+────────────────────────────────────────
+
+Persistent overlay (5 minutes):
+
+Design:
+- Glassmorphism card
+- Rounded corners (20px)
+- Left glowing accent bar
+- Soft shadow depth
+- Smooth slide-in animation
+
+Content:
+👤 Name
+📺 Channel Name
+💬 SUPERCHAT amount
+🎁 Gift type
+🏅 Tier badge
+
+────────────────────────────────────────
+6. SUPERCHAT GIFT CATEGORIES
+────────────────────────────────────────
+
+Add structured gift system:
+
+- ✨ Spark SuperChat
+- 💙 Glow SuperChat
+- ⭐ Star SuperChat
+- 🚀 Rocket SuperChat
+- 🌌 Universe SuperChat
+- 👑 Crown SuperChat
+- 🎓 University SuperChat
+
+Each must include:
+- Unique animation
+- Unique sound
+- Unique color theme
+- Visual particle style
+
+────────────────────────────────────────
+7. OVERLAY BEHAVIOR RULES
+────────────────────────────────────────
+
+- All SuperChat alerts must queue (no overlap)
+- Same user repeated SuperChats must stack into combo
+- System must prevent spam flooding UI
+- Only 1 global burst animation at a time
+- Tier overlays can stack separately
+
+────────────────────────────────────────
+8. REAL-TIME FLOW
+────────────────────────────────────────
+
+Paystack payment success
+      ↓
+Webhook verification
+      ↓
+SuperChat engine
+      ↓
+Gift classifier
+      ↓
+Tier classifier
+      ↓
+WebSocket event:
+   "superchat_received"
+      ↓
+Overlay engine:
+   - Select gift animation
+   - Trigger TikTok burst
+   - Show tier overlay
+      ↓
+Stream UI updates instantly
+
+────────────────────────────────────────
+9. AUDIO SYSTEM
+────────────────────────────────────────
+
+Each SuperChat triggers sound:
+
+- Spark → soft chime
+- Glow → light pop
+- Star → sparkle sound
+- Rocket → whoosh boom
+- Universe → cinematic clap + bass hit
+
+Must be non-blocking and optional.
+
+────────────────────────────────────────
+10. PERFORMANCE REQUIREMENTS
+────────────────────────────────────────
+
+System must:
+- Handle extreme concurrent SuperChats
+- Never drop events
+- Use queue-based rendering
+- Avoid memory leaks
+- Run smoothly under high load
+- Never require stream restart
+
+────────────────────────────────────────
+OUTPUT REQUIRED:
+────────────────────────────────────────
+
+- SuperChat UI redesign
+- Gift system design
+- Tier system mapping
+- TikTok-style burst animation
+- Overlay card design (glassmorphism)
+- Queue + stacking logic
+- Sound integration hooks
+REDESIGN AND ENHANCE MY EXISTING QR CODE OVERLAY SYSTEM.
+
+IMPORTANT RULES:
+- DO NOT rebuild QR system
+- DO NOT change backend logic
+- DO NOT change payment flow
+- DO NOT change Paystack or Gateway Payment
+- ONLY enhance UI, controls, and features
+
+────────────────────────────────────────
+1. CORE GOAL
+────────────────────────────────────────
+
+Turn the QR overlay into a professional LIVE STREAM CONTROLLED ASSET like OBS Studio + TikTok Live Studio.
+
+It must feel like a broadcast-grade interactive element.
+
+────────────────────────────────────────
+2. ENHANCED QR OVERLAY DESIGN
+────────────────────────────────────────
+
+Upgrade QR visual design:
+
+STYLE OPTIONS:
+- Glassmorphism frame (default)
+- Neon border glow mode
+- Minimal clean mode
+- Holographic premium mode (University streams)
+
+QR container must include:
+- Rounded corners (18–24px)
+- Soft shadow depth
+- Subtle animated border glow
+- Background blur layer
+- Optional floating animation (very slow)
+
+────────────────────────────────────────
+3. ADVANCED POSITIONING SYSTEM (UPGRADE)
+────────────────────────────────────────
+
+Enhance existing XY system with:
+
+✔ Drag & Drop (OBS-style)
+✔ Snap-to-grid option
+✔ Safe zone boundaries overlay
+✔ Corner presets:
+   - Top-left
+   - Top-right
+   - Bottom-left
+   - Bottom-right
+   - Center
+
+✔ Lock position toggle
+✔ Layer depth (Z-index control)
+✔ Rotation control (optional)
+✔ Scale anchor (center / corner / edge)
+
+────────────────────────────────────────
+4. SMART AUTO POSITIONING (NEW FEATURE)
+────────────────────────────────────────
+
+Add intelligent positioning modes:
+
+AUTO MODE OPTIONS:
+
+- 🎯 Smart Safe Placement
+  → avoids SuperChat, chat, alerts automatically
+
+- 📱 Mobile Optimized Mode
+  → moves QR for portrait streams
+
+- 🎥 Camera Focus Mode
+  → keeps QR away from center subject
+
+- 🔥 High Conversion Mode
+  → places QR where viewers click most
+
+────────────────────────────────────────
+5. LIVE CONTROL FEATURES
+────────────────────────────────────────
+
+Control room must include:
+
+QR PANEL:
+- Show / Hide toggle
+- Live preview window
+- Position X/Y sliders
+- Drag handle editor
+- Size slider
+- Opacity control
+- Rotation control
+- Animation selector
+
+NEW ADDITIONS:
+- “Pulse QR” toggle (subtle attention animation)
+- “Glow intensity” slider
+- “Border style selector”
+- “Auto reposition toggle”
+- “Reset to optimal position”
+- “Test scan mode” (simulate user scan behavior)
+
+────────────────────────────────────────
+6. ANIMATION SYSTEM (UPGRADE)
+────────────────────────────────────────
+
+Add smooth animations:
+
+ENTRY:
+- fadeIn
+- scaleUp (0.9 → 1.0)
+
+IDLE:
+- slow pulse glow
+- optional floating drift (very subtle)
+
+EXIT:
+- fadeOut
+- shrink + blur
+
+RULE:
+- GPU only animations (transform + opacity)
+- No layout reflow animations
+
+────────────────────────────────────────
+7. RESPONSIVE STREAM BEHAVIOR
+────────────────────────────────────────
+
+QR must automatically adapt:
+
+- 16:9 landscape streams
+- 9:16 vertical streams
+- mobile viewing overlays
+- resolution scaling changes
+
+It must maintain relative XY positioning.
+
+────────────────────────────────────────
+8. OVERLAY SAFETY RULES
+────────────────────────────────────────
+
+QR must NEVER:
+- block SuperChat alerts
+- overlap live chat overlays
+- cover important UI elements
+
+Add:
+- collision detection with overlay layers
+- automatic reposition suggestion system
+
+────────────────────────────────────────
+9. PERFORMANCE REQUIREMENTS
+────────────────────────────────────────
+
+- Must run smoothly during high stream load
+- No flickering when updating position
+- No stream restart required
+- Instant WebSocket sync across control room and stream
+- No memory leaks on frequent position changes
+
+────────────────────────────────────────
+10. INTEGRATION FLOW (UNCHANGED CORE)
+────────────────────────────────────────
+
+Container URL → Gateway Payment Route → QR Generated → Overlay Rendered → XY Position Applied → WebSocket Sync → Live Stream Updated
+
+────────────────────────────────────────
+OUTPUT REQUIRED:
+────────────────────────────────────────
+
+- Redesigned QR overlay UI (modern broadcast style)
+- Enhanced XY positioning system (drag + sliders + presets)
+- Smart auto-positioning system
+- Animation system upgrades
+- Control room UI redesign
+- Overlay safety layer system

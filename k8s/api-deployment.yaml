@@ -1,0 +1,170 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bintunet-api
+  namespace: bintunet
+  labels:
+    app: bintunet-api
+    version: latest
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bintunet-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0        # zero-downtime rolling deploy
+  template:
+    metadata:
+      labels:
+        app: bintunet-api
+    spec:
+      terminationGracePeriodSeconds: 60   # drain in-flight requests
+      containers:
+        - name: api
+          image: ghcr.io/YOURORG/bintunet-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "8080"
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bintunet-secrets
+                  key: redis-url
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bintunet-secrets
+                  key: session-secret
+            - name: BINTUNET_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bintunet-secrets
+                  key: app-password
+            - name: HLS_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: bintunet-config
+                  key: hls-enabled
+            - name: R2_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: bintunet-secrets
+                  key: r2-endpoint
+                  optional: true
+            - name: R2_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bintunet-secrets
+                  key: r2-access-key-id
+                  optional: true
+            - name: R2_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bintunet-secrets
+                  key: r2-secret-access-key
+                  optional: true
+            - name: R2_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: bintunet-config
+                  key: r2-bucket
+                  optional: true
+            - name: CDN_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: bintunet-config
+                  key: cdn-base-url
+                  optional: true
+            - name: YOUTUBE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bintunet-secrets
+                  key: youtube-api-key
+                  optional: true
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/uploads
+            - name: hls-segments
+              mountPath: /tmp/hls
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: uploads-pvc
+        - name: hls-segments
+          emptyDir:
+            sizeLimit: 500Mi    # HLS segments auto-pruned by FFmpeg; 500Mi is generous
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bintunet-api
+  namespace: bintunet
+spec:
+  selector:
+    app: bintunet-api
+  ports:
+    - port: 80
+      targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: uploads-pvc
+  namespace: bintunet
+spec:
+  accessModes:
+    - ReadWriteMany       # needed for multi-replica (use NFS or cloud RWX storage class)
+  resources:
+    requests:
+      storage: 10Gi
+---
+# Secrets — create before deploying:
+#   kubectl create secret generic bintunet-secrets \
+#     --from-literal=redis-url="redis://redis:6379" \
+#     --from-literal=session-secret="$(openssl rand -hex 32)" \
+#     --from-literal=app-password="your_password" \
+#     --from-literal=r2-endpoint="https://xxx.r2.cloudflarestorage.com" \
+#     --from-literal=r2-access-key-id="..." \
+#     --from-literal=r2-secret-access-key="..." \
+#     --from-literal=youtube-api-key="..." \
+#     -n bintunet
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bintunet-config
+  namespace: bintunet
+data:
+  hls-enabled: "false"
+  r2-bucket: "bintunet-hls"
+  cdn-base-url: "https://live.yourdomain.com"

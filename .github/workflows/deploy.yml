@@ -1,0 +1,132 @@
+name: Run BintuNet
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  serve:
+    name: Start server & expose public URL
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -y -q
+          sudo apt-get install -y -q ffmpeg python3 python3-pip
+          pip3 install --quiet streamlink
+          sudo curl -fsSL \
+            https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+            -o /usr/local/bin/yt-dlp
+          sudo chmod a+rx /usr/local/bin/yt-dlp
+          ffmpeg -version | head -1
+          streamlink --version
+          yt-dlp --version
+
+      - name: Install ngrok
+        run: |
+          curl -fsSL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz \
+            | sudo tar -xz -C /usr/local/bin
+          ngrok --version
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: PORT=3000 BASE_PATH=/ pnpm --filter @workspace/bintunet run build
+        env:
+          NODE_ENV: production
+
+      - name: Build API server
+        run: pnpm --filter @workspace/api-server run build
+
+      - name: Prepare runtime directories
+        run: |
+          mkdir -p artifacts/api-server/uploads
+          mkdir -p artifacts/api-server/tmp_overlay
+
+      - name: Start API server
+        run: |
+          NODE_ENV=production \
+          PORT=8080 \
+          SESSION_SECRET="${{ secrets.SESSION_SECRET }}" \
+          GOOGLE_API_KEY="${{ secrets.GOOGLE_API_KEY }}" \
+          node --enable-source-maps artifacts/api-server/dist/index.mjs &
+          echo $! > /tmp/server.pid
+
+          echo "Waiting for server on port 8080..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/api/auth/check > /dev/null 2>&1; then
+              echo "✓ Server is up"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Start ngrok tunnel
+        run: |
+          ngrok config add-authtoken "${{ secrets.NGROK_TOKEN }}"
+          ngrok http 8080 --log=stdout > /tmp/ngrok.log 2>&1 &
+          echo $! > /tmp/ngrok.pid
+
+          echo "Waiting for ngrok URL..."
+          for i in $(seq 1 30); do
+            URL=$(curl -sf http://localhost:4040/api/tunnels \
+              | grep -oP '"public_url":"https://[^"]+' \
+              | head -1 \
+              | cut -d'"' -f3)
+            if [ -n "$URL" ]; then
+              echo ""
+              echo "╔══════════════════════════════════════════════════════╗"
+              echo "║  🚀 BintuNet is LIVE                                 ║"
+              echo "║                                                      ║"
+              echo "║  URL : $URL"
+              echo "║  Login password : bintunet                           ║"
+              echo "╚══════════════════════════════════════════════════════╝"
+              echo ""
+              echo "PUBLIC_URL=$URL" >> $GITHUB_ENV
+              break
+            fi
+            sleep 1
+          done
+
+          if [ -z "$URL" ]; then
+            echo "ERROR: ngrok URL not found. Dumping log:"
+            cat /tmp/ngrok.log
+            exit 1
+          fi
+
+      - name: Keep alive
+        run: |
+          echo "Server running at $PUBLIC_URL"
+          echo "This job will keep running for up to 4 hours."
+          echo "Cancel the workflow in GitHub Actions to shut it down."
+          echo ""
+
+          while kill -0 $(cat /tmp/server.pid) 2>/dev/null && \
+                kill -0 $(cat /tmp/ngrok.pid) 2>/dev/null; do
+            sleep 30
+
+            if [ $(( $(date +%s) % 300 )) -lt 30 ]; then
+              echo "$(date -u '+%H:%M:%S') ♥  $PUBLIC_URL — still alive"
+            fi
+          done
+
+          echo "A process exited — shutting down."
+          tail -20 /tmp/ngrok.log

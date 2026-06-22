@@ -1,0 +1,40 @@
+# Horizontal Pod Autoscaler — scales API nodes based on CPU utilisation
+# At 10M viewers the FFmpeg workers are CPU-bound; scale them aggressively.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: bintunet-api-hpa
+  namespace: bintunet
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: bintunet-api
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30     # scale up fast during traffic spikes
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300    # scale down slowly — avoid killing streams mid-encode
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

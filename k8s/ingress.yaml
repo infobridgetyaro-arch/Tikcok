@@ -1,0 +1,35 @@
+# Ingress — routes HTTP traffic to the API service
+# Requires: nginx-ingress-controller + cert-manager (Let's Encrypt)
+#
+# Install:
+#   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+#   kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bintunet-ingress
+  namespace: bintunet
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"    # long timeout for WS
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "2048m"      # allow large video uploads
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/websocket-services: "bintunet-api"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - app.yourdomain.com
+      secretName: bintunet-tls
+  rules:
+    - host: app.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: bintunet-api
+                port:
+                  number: 80

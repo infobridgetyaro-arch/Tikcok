@@ -1,0 +1,86 @@
+version: "3.9"
+
+# BintuNet Controller — Full Stack Docker Compose
+#
+# Services:
+#   redis     — shared state (heartbeat, stream configs, WS bus)
+#   api       — Express API + WebSocket + FFmpeg orchestration
+#
+# Usage:
+#   Development:  docker compose up
+#   Production:   docker compose -f docker-compose.yml up -d
+#
+# Required env vars (copy from .env.example → .env):
+#   SESSION_SECRET, BINTUNET_PASSWORD, R2_*, CDN_BASE_URL, YOUTUBE_API_KEY
+
+services:
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - bintunet
+
+  # ── API Server ─────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: artifacts/api-server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      REDIS_URL: redis://redis:6379
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET required}
+      BINTUNET_PASSWORD: ${BINTUNET_PASSWORD:-bintunet}
+      HLS_ENABLED: ${HLS_ENABLED:-false}
+      HLS_SEGMENT_DIR: /tmp/hls
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      CDN_BASE_URL: ${CDN_BASE_URL:-}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "8080:8080"
+    volumes:
+      - uploads:/app/uploads
+      - hls_segments:/tmp/hls
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - bintunet
+    # Resource limits — adjust based on your VPS size
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+volumes:
+  redis_data:
+  uploads:
+  hls_segments:
+
+networks:
+  bintunet:
+    driver: bridge
