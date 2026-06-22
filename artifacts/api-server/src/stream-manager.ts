@@ -44,10 +44,23 @@ export function preloadBreakVideo(url: string): void {
       logger.info(`Break preload: direct URL resolved for ${url}`);
       return;
     } catch (e: any) {
-      // Download is too slow for background preload — mark as error (fallback to download on Go Live)
-      const msg = e?.message?.includes("cookies") ? e.message : "Requires download — will start on Go Live (1–2 min first time)";
-      breakVideoPreloadCache.set(url, { status: "error", error: msg, startedAt: Date.now() });
-      logger.warn(`Break preload: ${msg}`);
+      if (e?.message?.includes("cookies")) {
+        breakVideoPreloadCache.set(url, { status: "error", error: e.message, startedAt: Date.now() });
+        logger.warn(`Break preload: ${e.message}`);
+        return;
+      }
+      // Start downloading immediately in the background so it's ready by Go Live
+      logger.info(`Break preload: starting background download for ${url}`);
+      breakVideoPreloadCache.set(url, { status: "loading", startedAt: Date.now() });
+      downloadYouTubeVideoToTemp(url, (m) => logger.info(`Break preload download: ${m}`))
+        .then((filePath) => {
+          breakVideoPreloadCache.set(url, { status: "ready", resolvedUrl: filePath, startedAt: Date.now() });
+          logger.info(`Break preload: download complete → ${filePath}`);
+        })
+        .catch((dlErr: any) => {
+          breakVideoPreloadCache.set(url, { status: "error", error: dlErr.message, startedAt: Date.now() });
+          logger.warn(`Break preload download failed: ${dlErr.message}`);
+        });
     }
   })().catch(() => {});
 }

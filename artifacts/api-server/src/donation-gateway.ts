@@ -269,11 +269,26 @@ export function registerDonationGateway(app: Express): void {
   });
 
   // ── GET /api/gateway/url ─────────────────────────────────────────────────
-  app.get("/api/gateway/url", (_req: Request, res: Response): void => {
-    const url = getGatewayPaymentUrl();
+  app.get("/api/gateway/url", (req: Request, res: Response): void => {
+    let url = getGatewayPaymentUrl();
+
+    // Fallback: derive from the incoming request host so it works in every
+    // Replit environment (dev, preview, deployed) even when REPLIT_DOMAINS
+    // and REPLIT_DEV_DOMAIN are not set.
+    if (!url) {
+      const forwardedHost = (req.headers["x-forwarded-host"] as string | undefined)
+        ?.split(",")[0]?.trim();
+      const host = forwardedHost || req.headers.host || "";
+      if (host) {
+        const proto = (req.headers["x-forwarded-proto"] as string | undefined) || "https";
+        url = `${proto}://${host}/gateway-payment`;
+      }
+    }
+
+    const base = url ? url.replace("/gateway-payment", "") : getGatewayBaseUrl();
     res.json({
       gatewayUrl: url,
-      baseUrl: getGatewayBaseUrl(),
+      baseUrl: base,
       configured: !!url,
       paystackConfigured: !!paystackKey(),
     });

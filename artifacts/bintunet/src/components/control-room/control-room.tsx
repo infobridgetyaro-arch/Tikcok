@@ -938,36 +938,43 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                   requestAnimationFrame(waitForDimensions);
                   return;
                 }
-                // Cap resolution to 1280px wide for smooth delivery
-                const MAX_W = 1280;
+                // Cap at 960px — fast enough to encode without lag
+                const MAX_W = 960;
                 const aspect = video.videoWidth / video.videoHeight;
                 canvas.width = Math.min(video.videoWidth, MAX_W);
                 canvas.height = Math.round(canvas.width / aspect);
                 const ctx2d = canvas.getContext("2d", { willReadFrequently: false })!;
 
-                const TARGET_FPS = 15;
-                const FRAME_INTERVAL = Math.round(1000 / TARGET_FPS); // ~67 ms
-                let encoding = false;
+                // rAF loop at 24 fps — synced to display, no drift, no dropped frames
+                const TARGET_FPS = 24;
+                const FRAME_MS = 1000 / TARGET_FPS;
+                let lastCapture = 0;
+                let blobPending = false;
 
-                const captureFrame = () => {
-                  if (encoding) return;
+                const captureFrame = (now: number) => {
+                  if (!screenStreamAliveRef.current) return;
+                  screenRafRef.current = requestAnimationFrame(captureFrame);
+
+                  if (now - lastCapture < FRAME_MS) return;    // rate-limit to 24 fps
                   if (ws.readyState !== WebSocket.OPEN) return;
-                  if ((ws as any).bufferedAmount > 128 * 1024) return;
+                  if ((ws as any).bufferedAmount > 512 * 1024) return; // WS backpressure
+                  if (blobPending) return;                       // skip if encoder is busy
 
-                  encoding = true;
+                  lastCapture = now;
+                  blobPending = true;
                   ctx2d.drawImage(video, 0, 0, canvas.width, canvas.height);
                   canvas.toBlob((blob) => {
-                    encoding = false;
+                    blobPending = false;
                     if (!blob || ws.readyState !== WebSocket.OPEN) return;
                     blob.arrayBuffer().then((ab) => {
                       if (ws.readyState === WebSocket.OPEN) ws.send(ab);
                     });
                     const url = URL.createObjectURL(blob);
                     setScreenPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return url; });
-                  }, "image/jpeg", 0.85);
+                  }, "image/jpeg", 0.75);
                 };
 
-                screenRafRef.current = window.setInterval(captureFrame, FRAME_INTERVAL);
+                screenRafRef.current = requestAnimationFrame(captureFrame);
               };
               waitForDimensions();
             }
@@ -979,7 +986,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
         };
 
         ws.onclose = () => {
-          clearInterval(screenRafRef.current);
+          cancelAnimationFrame(screenRafRef.current);
           screenRafRef.current = 0;
 
           if (!screenStreamAliveRef.current) {
@@ -1016,7 +1023,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
 
   const stopScreenShare = useCallback(() => {
     screenStreamAliveRef.current = false;
-    clearInterval(screenRafRef.current);
+    cancelAnimationFrame(screenRafRef.current);
     screenRafRef.current = 0;
     if (screenElapsedRef.current) { clearInterval(screenElapsedRef.current); screenElapsedRef.current = null; }
     screenStreamRef.current?.getTracks().forEach((t) => t.stop());
@@ -1156,28 +1163,42 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
 
   const startMusicBroadcast = useCallback(async () => {
     const el = getMusicAudio();
-    // Build standalone AudioContext if mic isn't using one, else share
-    let ctx = audioCtxRef.current;
-    let isShared = true;
-    if (!ctx || ctx.state === "closed") {
-      ctx = new AudioContext({ sampleRate: 44100 });
-      isShared = false;
-      musicCtxRef.current = ctx;
+
+    // Reuse the mic's AudioContext if it's alive, otherwise reuse the music's
+    // own dedicated context (never close it — createMediaElementSource can only
+    // be called once per element, so we must keep the same context).
+    let ctx: AudioContext;
+    if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+      ctx = audioCtxRef.current;
+    } else if (musicCtxRef.current && musicCtxRef.current.state !== "closed") {
+      ctx = musicCtxRef.current;
     } else {
+      ctx = new AudioContext({ sampleRate: 44100 });
       musicCtxRef.current = ctx;
     }
     if (ctx.state === "suspended") await ctx.resume();
 
-    // Create media element source (can only be created once per element per context)
-    if (!musicSrcNodeRef.current) {
-      musicSrcNodeRef.current = ctx.createMediaElementSource(el);
+    // createMediaElementSource may only be called once per element.
+    // If the src node exists but belongs to a different (now-closed) context,
+    // we need a fresh audio element.
+    if (musicSrcNodeRef.current) {
+      try { musicSrcNodeRef.current.context; } catch {
+        musicSrcNodeRef.current = null;
+        musicAudioRef.current = null; // let getMusicAudio() create a fresh one
+      }
     }
+    if (!musicSrcNodeRef.current) {
+      const freshEl = getMusicAudio();
+      musicSrcNodeRef.current = ctx.createMediaElementSource(freshEl);
+    }
+
     const gain = ctx.createGain();
     gain.gain.value = musicVolume / 100;
     musicGainNodeRef.current = gain;
     musicSrcNodeRef.current.connect(gain);
 
-    if (!isShared || !processorRef.current) {
+    const isMicShared = ctx === audioCtxRef.current && !!processorRef.current;
+    if (!isMicShared) {
       const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(`${proto}//${window.location.host}/ws-mic`);
       musicWsRef.current = ws;
@@ -1216,27 +1237,26 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
       ws.onclose = () => { setMusicBroadcastActive(false); };
     } else {
       // Mic is active — connect music gain to existing mic send node
-      gain.connect(processorRef.current);
+      if (processorRef.current) gain.connect(processorRef.current);
       setMusicBroadcastActive(true);
     }
 
     // When broadcasting, let the AudioContext control volume; mute HTML5 volume
-    el.volume = 1;
+    getMusicAudio().volume = 1;
   }, [getMusicAudio, musicVolume]);
 
   const stopMusicBroadcast = useCallback(() => {
+    // Disconnect gain and processor, but keep the AudioContext and src node alive.
+    // createMediaElementSource can only be called once per element — closing the
+    // context would make it impossible to restart broadcast without a page reload.
     musicSrcNodeRef.current?.disconnect();
-    musicSrcNodeRef.current = null;
     musicGainNodeRef.current?.disconnect();
     musicGainNodeRef.current = null;
     musicProcessorRef.current?.disconnect();
     musicProcessorRef.current = null;
     musicWsRef.current?.close();
     musicWsRef.current = null;
-    if (musicCtxRef.current && musicCtxRef.current !== audioCtxRef.current) {
-      musicCtxRef.current.close().catch(() => {});
-    }
-    musicCtxRef.current = null;
+    // musicCtxRef and musicSrcNodeRef are intentionally kept alive for re-use
     if (musicAudioRef.current) musicAudioRef.current.volume = musicVolume / 100;
     setMusicBroadcastActive(false);
     setMusicBroadcast(false);
@@ -2756,7 +2776,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                     {screenPreviewUrl && (
                       <div style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(129,140,248,0.2)", background: "#000", position: "relative" }}>
                         <img src={screenPreviewUrl} alt="Screen preview" style={{ width: "100%", display: "block" }} />
-                        <div style={{ position: "absolute", bottom: 6, right: 8, padding: "2px 7px", borderRadius: 5, background: "rgba(0,0,0,0.6)", fontSize: 10, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>10 fps</div>
+                        <div style={{ position: "absolute", bottom: 6, right: 8, padding: "2px 7px", borderRadius: 5, background: "rgba(0,0,0,0.6)", fontSize: 10, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>24 fps</div>
                       </div>
                     )}
 
