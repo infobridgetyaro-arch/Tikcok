@@ -1114,6 +1114,13 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
   const musicFileInputRef = useRef<HTMLInputElement | null>(null);
   const musicProgressRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Stable refs so onerror (created once) can always access current state
+  const playlistRef = useRef<MusicTrack[]>([]);
+  const currentIdxRef = useRef<number | null>(null);
+  const refreshTrackRef = useRef<((id: string) => Promise<void>) | null>(null);
+  useEffect(() => { playlistRef.current = playlist; }, [playlist]);
+  useEffect(() => { currentIdxRef.current = currentIdx; }, [currentIdx]);
+
   // Ensure audio element exists
   const getMusicAudio = useCallback((): HTMLAudioElement => {
     if (!musicAudioRef.current) {
@@ -1121,11 +1128,25 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
       el.preload = "metadata";
       el.onerror = () => {
         const code = el.error?.code;
+        // Auto-refresh on network / load-failure errors (codes 2 & 4)
+        // These almost always mean a YouTube CDN URL expired.
+        if (code === 2 || code === 4) {
+          const ci = currentIdxRef.current;
+          if (ci !== null) {
+            const track = playlistRef.current[ci];
+            if (track?.originalUrl && refreshTrackRef.current) {
+              setMusicError("Track link expired — auto-refreshing…");
+              setMusicPlaying(false);
+              setTimeout(() => refreshTrackRef.current!(track.id), 500);
+              return;
+            }
+          }
+        }
         const msg =
           code === 1 ? "Playback aborted." :
-          code === 2 ? "Network error — track link may have expired. Try re-adding the track." :
-          code === 3 ? "Audio format not supported by your browser. Try a different track." :
-          code === 4 ? "Track could not be loaded — the link may have expired. Re-add the track to refresh it." :
+          code === 2 ? "Network error — re-add the track to reload it." :
+          code === 3 ? "Audio format not supported by your browser." :
+          code === 4 ? "Track could not be loaded — tap Refresh link below." :
           "Unknown playback error.";
         setMusicError(msg);
         setMusicPlaying(false);
@@ -1355,40 +1376,42 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
   const [refreshingTrackId, setRefreshingTrackId] = useState<string | null>(null);
 
   const refreshTrack = useCallback(async (trackId: string) => {
-    setPlaylist((pl) => {
-      const track = pl.find((t) => t.id === trackId);
-      if (!track?.originalUrl) return pl;
-      setRefreshingTrackId(trackId);
-      setMusicError(null);
-      fetch("/api/music/resolve", {
+    const track = playlistRef.current.find((t) => t.id === trackId);
+    if (!track?.originalUrl) return;
+
+    setRefreshingTrackId(trackId);
+    setMusicError(null);
+    try {
+      const res = await fetch("/api/music/resolve", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: track.originalUrl }),
-      }).then(async (res) => {
-        const data = await res.json();
-        if (!res.ok) { setMusicError(data.error ?? "Could not refresh track"); return; }
-        setPlaylist((prev) => prev.map((t) => t.id === trackId ? { ...t, url: data.proxyUrl } : t));
-        // If this track was playing, restart it with new URL
-        setCurrentIdx((ci) => {
-          if (ci !== null) {
-            setPlaylist((prev) => {
-              const idx = prev.findIndex((t) => t.id === trackId);
-              if (idx === ci && musicAudioRef.current) {
-                musicAudioRef.current.src = data.proxyUrl;
-                musicAudioRef.current.play().catch(() => {});
-                setMusicPlaying(true);
-              }
-              return prev;
-            });
-          }
-          return ci;
-        });
-      }).catch((e: any) => setMusicError(`Refresh failed: ${e?.message}`))
-        .finally(() => setRefreshingTrackId(null));
-      return pl;
-    });
+      });
+      const data = await res.json();
+      if (!res.ok) { setMusicError(data.error ?? "Could not refresh track"); return; }
+
+      // Update the playlist URL
+      setPlaylist((prev) => prev.map((t) => t.id === trackId ? { ...t, url: data.proxyUrl } : t));
+
+      // If this is the currently-playing track, swap src and resume
+      const ci = currentIdxRef.current;
+      const idx = playlistRef.current.findIndex((t) => t.id === trackId);
+      if (ci !== null && idx === ci && musicAudioRef.current) {
+        musicAudioRef.current.src = data.proxyUrl;
+        musicAudioRef.current.play().catch(() => {});
+        setMusicPlaying(true);
+        setMusicError(null);
+      }
+    } catch (e: any) {
+      setMusicError(`Refresh failed: ${e?.message ?? "network error"}`);
+    } finally {
+      setRefreshingTrackId(null);
+    }
   }, []);
+
+  // Keep refreshTrackRef in sync so onerror (created once) always calls latest version
+  useEffect(() => { refreshTrackRef.current = refreshTrack; }, [refreshTrack]);
 
   const removeTrack = useCallback((id: string) => {
     setPlaylist((prev) => {
