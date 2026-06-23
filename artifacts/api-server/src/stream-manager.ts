@@ -541,6 +541,7 @@ function buildFFmpegArgs(
       ...(cookieHeader ? [cookieHeader.trimEnd()] : []),
     ];
     args.push(
+      "-re",
       "-headers", ytHeaderLines.join("\r\n") + "\r\n",
       "-reconnect", "1",
       "-reconnect_streamed", "1",
@@ -555,7 +556,9 @@ function buildFFmpegArgs(
   } else if (sourceType === "xspace") {
     // X Space: yt-dlp extracts the HLS audio URL; FFmpeg reads audio-only.
     // No video track — the filter graph uses lavfi black + gradient as video.
+    // -re: read at native framerate so FFmpeg doesn't race ahead of real-time.
     args.push(
+      "-re",
       "-reconnect", "1",
       "-reconnect_streamed", "1",
       "-reconnect_on_network_error", "1",
@@ -581,7 +584,10 @@ function buildFFmpegArgs(
     // max_reload: keep re-fetching the HLS playlist indefinitely (live edge).
     // reconnect_delay_max 30: back off up to 30s between retries (not hammering).
     // rw_timeout 20s: allow more time on slow connections before declaring failure.
+    // -re: read at native framerate so FFmpeg doesn't race through buffered HLS
+    //      segments faster than real-time (prevents YouTube "too fast" errors).
     args.push(
+      "-re",
       "-reconnect", "1",
       "-reconnect_streamed", "1",
       "-reconnect_on_network_error", "1",
