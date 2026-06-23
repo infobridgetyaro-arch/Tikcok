@@ -583,16 +583,24 @@ function buildFFmpegArgs(
     );
   } else {
     // TikTok HLS — aggressive reconnect so TLS/EOF drops never stop the stream.
-    // max_reload: keep re-fetching the HLS playlist indefinitely (live edge).
-    // reconnect_delay_max 30: back off up to 30s between retries (not hammering).
-    // rw_timeout 20s: allow more time on slow connections before declaring failure.
+    // tls_verify 0: TikTok CDN edge servers often use certificates that don't
+    //   match the request hostname; disabling verification prevents the
+    //   "Decryption has failed" TLS error that kills the stream after ~10s.
+    // reconnect_delay_max 5: recover fast — expired HLS segments need a quick
+    //   retry, not a 30s back-off that leaves the stream frozen.
+    // rw_timeout 10s: detect dead connections faster so handleProcessExit fires
+    //   sooner and a fresh URL is fetched for recovery.
+    // multiple_requests 1: reuse the HTTP/TLS connection across HLS segment
+    //   requests, reducing per-segment TLS handshake overhead.
     args.push(
       "-reconnect", "1",
       "-reconnect_streamed", "1",
       "-reconnect_on_network_error", "1",
       "-reconnect_at_eof", "1",
-      "-reconnect_delay_max", "30",
-      "-rw_timeout", "20000000",
+      "-reconnect_delay_max", "5",
+      "-multiple_requests", "1",
+      "-tls_verify", "0",
+      "-rw_timeout", "10000000",
       "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       "-referer", "https://www.tiktok.com/",
       "-thread_queue_size", "8192",
