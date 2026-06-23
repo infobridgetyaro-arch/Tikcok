@@ -1,4 +1,5 @@
 import { createServer } from "http";
+import { exec } from "child_process";
 import app from "./app";
 import { registerBintunetRoutes } from "./bintunet-routes";
 import { logger } from "./lib/logger";
@@ -23,6 +24,16 @@ if (Number.isNaN(port) || port <= 0) {
 const httpServer = createServer(app);
 
 async function bootstrap() {
+  // ── Kill any orphaned FFmpeg processes from a previous server instance ──
+  // When tsx watch hot-reloads (e.g. after a code change), the in-memory
+  // activeStreams map is wiped but child FFmpeg processes keep running as
+  // orphans — they hold open RTMP connections to YouTube/Facebook forever.
+  // Kill them all at startup before registering any routes.
+  await new Promise<void>((resolve) => {
+    exec("pkill -9 -x ffmpeg 2>/dev/null; pkill -9 -f yt-dlp 2>/dev/null; true", () => resolve());
+  });
+  logger.info("Killed any orphaned ffmpeg/yt-dlp processes from previous run");
+
   // ── Load stream configs from Redis (if configured) ─────────────────────
   await hybridStorage.init();
 

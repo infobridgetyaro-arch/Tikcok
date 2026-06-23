@@ -1577,22 +1577,11 @@ export function stopStream(streamId: string) {
   // finally exits — we don't want it to re-broadcast "deleted" or try to auto-restart.
   activeStreams.delete(streamId);
 
-  // Don't send 'q' to FFmpeg stdin when it's used for browser camera video data
-  if (proc.inputUrl !== "__browser__") {
-    try {
-      if (proc.ffmpegProcess?.stdin?.writable) {
-        proc.ffmpegProcess.stdin.write("q");
-        proc.ffmpegProcess.stdin.end();
-      }
-    } catch {}
-  }
-
-  setTimeout(() => {
-    try { proc.ffmpegProcess?.kill("SIGTERM"); } catch {}
-  }, 300);
-  setTimeout(() => {
-    try { proc.ffmpegProcess?.kill("SIGKILL"); } catch {}
-  }, 2000);
+  // SIGKILL immediately — no graceful drain.
+  // SIGTERM causes FFmpeg to flush its encoder buffer and send RTMP finalization
+  // packets before exiting, meaning data keeps flowing to YouTube for up to ~2 s.
+  // SIGKILL stops the process (and all I/O) at the OS level instantly.
+  try { proc.ffmpegProcess?.kill("SIGKILL"); } catch {}
 
   activeStreams.delete(streamId);
   sendStatus(streamId, "idle");
