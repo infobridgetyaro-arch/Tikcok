@@ -1333,21 +1333,9 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                       sourceType: resolved.sourceType as "tiktok" | "youtube" | "camera",
                       resolvedAt: Date.now(),
                     });
-                    sendLog(streamId, `[prefetch] Fresh URL ready — performing seamless source refresh...`);
-
-                    const stillRunning = activeStreams.get(streamId);
-                    if (stillRunning?.ffmpegProcess === ffmpegProc) {
-                      // keepStatus=true: UI stays "streaming" — no flash of "reconnecting"
-                      hardKillAndRestart(streamId, 300, false /* use cached URL */, true /* keepStatus */);
-                    }
+                    sendLog(streamId, `[prefetch] Fresh URL cached — will be used on next manual restart.`);
                   } catch (e: any) {
-                    sendLog(streamId, `[prefetch] URL refresh failed (${e.message?.slice(0, 120)}) — will retry in 4 min`);
-                    // Retry sooner on failure so we don't hit an expired URL cold
-                    const retryProc = activeStreams.get(streamId);
-                    if (retryProc?.ffmpegProcess === ffmpegProc) {
-                      retryProc.prefetchTimer = undefined;
-                      schedulePrefetch(4 * 60 * 1000);
-                    }
+                    sendLog(streamId, `[prefetch] URL refresh failed (${e.message?.slice(0, 120)})`);
                   }
                 }, intervalMs);
 
@@ -1367,11 +1355,8 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
               streamId,
               () => lastFrameCount,
               () => {
-                urlCache.delete(streamId);
-                const proc = activeStreams.get(streamId);
-                if (proc?.ffmpegProcess === ffmpegProc) {
-                  hardKillAndRestart(streamId, 1000);
-                }
+                sendLog(streamId, `[watchdog] No new frames — stream may be frozen. Click Restart to recover.`);
+                sendStatus(streamId, "error");
               },
             );
             if (liveProc) liveProc.stallWatchdog = stallWatchdog;
@@ -1403,43 +1388,22 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
           // CDN doesn't require cookies — this only fires on genuine URL expiry.
           // Always refresh the URL and restart; never permanently kill the stream.
           urlCache.delete(streamId);
-          const proc = activeStreams.get(streamId);
-          if (proc && !proc.urlExpired) {
-            proc.urlExpired = true; // debounce — only once per FFmpeg instance
-            sendLog(streamId, `[youtube] CDN URL expired (${trimmed.includes("404") ? "404" : "403"}) — fetching fresh URL and restarting…`);
-            if (proc.ffmpegProcess === ffmpegProc) {
-              hardKillAndRestart(streamId, 300, true /* forceNewUrl */);
-            }
-          }
+          sendLog(streamId, `[youtube] CDN URL expired (${trimmed.includes("404") ? "404" : "403"}) — click Restart to fetch a fresh URL.`);
+          sendStatus(streamId, "error");
           return;
         }
 
         if (trimmed.includes("HTTP error 429") || trimmed.includes("429 Too Many Requests")) {
-          // YouTube CDN is rate-limiting segment requests.
-          // Strategy: restart once with a fresh URL + 10 s backoff to let the
-          // rate-limit window expire. With cookies.txt the 429 should not recur.
-          const proc = activeStreams.get(streamId);
-          if (proc && !proc.urlExpired) {
-            proc.urlExpired = true; // debounce — only fire once per FFmpeg instance
-            urlCache.delete(streamId);
-            sendLog(streamId, `[youtube] Rate-limited (429) — backing off 10 s then fetching fresh URL...`);
-            sendLog(streamId, `[tip] Upload cookies.txt in Settings → YouTube Cookies to prevent 429s.`);
-            if (proc.ffmpegProcess === ffmpegProc) {
-              hardKillAndRestart(streamId, 10_000, true /* forceNewUrl */);
-            }
-          }
+          urlCache.delete(streamId);
+          sendLog(streamId, `[youtube] Rate-limited (429) — click Restart to reconnect.`);
+          sendLog(streamId, `[tip] Upload cookies.txt in Settings → YouTube Cookies to prevent 429s.`);
+          sendStatus(streamId, "error");
           return;
         }
 
         if (trimmed.includes("Too many failure for output")) {
-          // Permanent RTMP failure — tee muxer gave up on the output entirely.
-          // FFmpeg keeps running but sends nothing to YouTube/Facebook → black stream.
-          // Must restart to re-establish the RTMP connection.
-          sendLog(streamId, `[ffmpeg] RTMP output permanently dropped — restarting to reconnect...`);
-          const proc = activeStreams.get(streamId);
-          if (proc?.ffmpegProcess === ffmpegProc) {
-            hardKillAndRestart(streamId, 2000);
-          }
+          sendLog(streamId, `[ffmpeg] RTMP output permanently dropped — click Restart to reconnect.`);
+          sendStatus(streamId, "error");
           return;
         }
 
@@ -1460,12 +1424,8 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
           trimmed.includes("Connection timed out") ||
           trimmed.includes("Operation timed out")
         ) {
-          // Persistent timeout — RTMP server is unreachable. Restart to reconnect.
-          sendLog(streamId, `[ffmpeg] RTMP connection timed out — reconnecting...`);
-          const proc = activeStreams.get(streamId);
-          if (proc?.ffmpegProcess === ffmpegProc) {
-            hardKillAndRestart(streamId, 3000);
-          }
+          sendLog(streamId, `[ffmpeg] RTMP connection timed out — click Restart to reconnect.`);
+          sendStatus(streamId, "error");
           return;
         }
 
@@ -1512,22 +1472,15 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       handleProcessExit(streamId, code);
     });
 
-    // Startup watchdog: no frames within N seconds → restart.
-    // Uses hardKillAndRestart (not stopStream) so auto-restart is honoured — stopStream would
-    // set autoRestart=false before exiting, permanently silencing a stream that just had a
-    // slow startup (e.g. TikTok URL resolution + FFmpeg init on a busy server).
-    //
-    // Timeouts by source type:
-    //   browser camera: 90s — guest WebSocket connection needs extra time to negotiate
-    //   all others: 60s — URL is already resolved before FFmpeg starts (TikTok, YouTube HLS, RTSP).
+    // Startup watchdog: if no frames arrive within the timeout, mark the stream as
+    // error so the user knows it failed to start — no auto-restart.
     const startupTimeout = inputUrl === "__browser__" ? 90000 : 60000;
     const watchdog = setTimeout(() => {
       if (!gotFrames) {
-        sendLog(streamId, `Timeout: No frames encoded after ${startupTimeout / 1000}s — restarting...`);
+        sendLog(streamId, `Timeout: No frames encoded after ${startupTimeout / 1000}s — stream failed to start. Check source and click Restart.`);
         const liveProc = activeStreams.get(streamId);
         if (liveProc?.ffmpegProcess === ffmpegProc) {
-          // Force a fresh URL fetch: the source may have expired during the long wait.
-          hardKillAndRestart(streamId, 1000, true /* forceNewUrl */);
+          sendStatus(streamId, "error");
         }
       }
     }, startupTimeout);
@@ -1557,19 +1510,6 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
   } catch (err: any) {
     sendLog(streamId, `Failed: ${err.message}`);
     sendStatus(streamId, "error");
-
-    if (stream.autoRestart) {
-      sendLog(streamId, "Auto-restart enabled. Retrying in 15 seconds...");
-      sendStatus(streamId, "reconnecting");
-      setTimeout(() => {
-        if (storage.getStream(streamId)) {
-          startStream(streamId).catch((e: any) => {
-            sendLog(streamId, `Auto-restart failed: ${e.message}`);
-            sendStatus(streamId, "error");
-          });
-        }
-      }, 15000);
-    }
   }
 }
 
@@ -1611,36 +1551,13 @@ function handleProcessExit(streamId: string, code: number | null) {
   activeStreams.delete(streamId);
   try { proc.ffmpegProcess?.kill("SIGKILL"); } catch {}
 
-  // Always reconnect on any unexpected exit as long as the stream still exists in storage.
-  // stopStream() removes the entry from activeStreams BEFORE killing FFmpeg, so this
-  // handler is only reached on true unexpected exits (crashes, network drops, TLS errors).
-  if (storage.getStream(streamId)) {
-    const delay = proc.urlExpired ? 500 : 3000;
-    const reason = code !== null ? `exit code ${code}` : "signal";
-    sendLog(streamId, `[ffmpeg] Process ended unexpectedly (${reason}) — reconnecting in ${delay / 1000}s...`);
-    sendStatus(streamId, "reconnecting");
-    setTimeout(() => {
-      // Race-condition guard: FFmpeg may have exited at the same instant the
-      // user clicked Stop. If so, do not reconnect — honour the stop intent.
-      if (manuallyStopped.has(streamId)) return;
-      if (storage.getStream(streamId)) {
-        startStream(streamId, !proc.urlExpired).catch((e: any) => {
-          sendLog(streamId, `[ffmpeg] Reconnect failed: ${e.message} — retrying in 10s...`);
-          sendStatus(streamId, "reconnecting");
-          setTimeout(() => {
-            if (manuallyStopped.has(streamId)) return;
-            if (storage.getStream(streamId)) {
-              startStream(streamId, true).catch(() => sendStatus(streamId, "error"));
-            }
-          }, 10000);
-        });
-      }
-    }, delay);
-  } else {
-    clearCameraLink(streamId);
-    sendStatus(streamId, "error");
-    sendLog(streamId, `Stream ended.`);
-  }
+  // stopStream() removes from activeStreams BEFORE killing FFmpeg, so reaching
+  // here means a true unexpected exit (crash, source drop, TLS error).
+  // Do NOT auto-reconnect — show error and let the user decide to restart.
+  const reason = code !== null ? `exit code ${code}` : "signal";
+  sendLog(streamId, `[ffmpeg] Process ended unexpectedly (${reason}) — click Restart to reconnect.`);
+  clearCameraLink(streamId);
+  sendStatus(streamId, "error");
 }
 
 export function stopStream(streamId: string) {
