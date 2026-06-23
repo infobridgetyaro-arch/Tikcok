@@ -912,47 +912,25 @@ export class OverlayRenderer {
     const c2 = state.bgGradient2 || "#0891b2";
     const [r1, g1, b1] = hexToRgb(c1);
     const [r2, g2, b2] = hexToRgb(c2);
-    // Accent: midpoint blend of the two colours
-    const rA = Math.round((r1 + r2) / 2);
-    const gA = Math.round((g1 + g2) / 2);
-    const bA = Math.round((b1 + b2) / 2);
 
-    // No opaque base fill — gradient is composited ON TOP of the live video
-    // as a semi-transparent atmosphere layer.  Blobs fade from the centre
-    // outward so the video content remains legible underneath.
+    // Two horizontal gradient bars — top edge fades from colour1 inward,
+    // bottom edge fades from colour2 inward.  The middle of the frame stays
+    // transparent so the video content is never obscured.
+    const barH = Math.round(H * 0.28);
 
-    // ── Primary colour blob — top-left (matches purple glow drawbox + gblur) ─
-    const grad1 = ctx.createRadialGradient(
-      W * 0.18, H * 0.18, 0,
-      W * 0.18, H * 0.18, W * 0.55,
-    );
-    grad1.addColorStop(0, `rgba(${r1},${g1},${b1},0.72)`);
-    grad1.addColorStop(0.45, `rgba(${r1},${g1},${b1},0.38)`);
-    grad1.addColorStop(1, `rgba(${r1},${g1},${b1},0)`);
-    ctx.fillStyle = grad1;
-    ctx.fillRect(0, 0, W, H);
+    // ── Top bar: colour1 solid at top → transparent at bar bottom ───────────
+    const topGrad = ctx.createLinearGradient(0, 0, 0, barH);
+    topGrad.addColorStop(0,   `rgba(${r1},${g1},${b1},1)`);
+    topGrad.addColorStop(1,   `rgba(${r1},${g1},${b1},0)`);
+    ctx.fillStyle = topGrad;
+    ctx.fillRect(0, 0, W, barH);
 
-    // ── Secondary colour blob — bottom-right (matches cyan glow drawbox) ────
-    const grad2 = ctx.createRadialGradient(
-      W * 0.82, H * 0.82, 0,
-      W * 0.82, H * 0.82, W * 0.6,
-    );
-    grad2.addColorStop(0, `rgba(${r2},${g2},${b2},0.6)`);
-    grad2.addColorStop(0.45, `rgba(${r2},${g2},${b2},0.28)`);
-    grad2.addColorStop(1, `rgba(${r2},${g2},${b2},0)`);
-    ctx.fillStyle = grad2;
-    ctx.fillRect(0, 0, W, H);
-
-    // ── Accent blob — centre (matches magenta centre drawbox) ───────────────
-    const grad3 = ctx.createRadialGradient(
-      W * 0.5, H * 0.5, 0,
-      W * 0.5, H * 0.5, W * 0.38,
-    );
-    grad3.addColorStop(0, `rgba(${rA},${gA},${bA},0.32)`);
-    grad3.addColorStop(0.5, `rgba(${rA},${gA},${bA},0.14)`);
-    grad3.addColorStop(1, `rgba(${rA},${gA},${bA},0)`);
-    ctx.fillStyle = grad3;
-    ctx.fillRect(0, 0, W, H);
+    // ── Bottom bar: colour2 solid at bottom → transparent at bar top ────────
+    const botGrad = ctx.createLinearGradient(0, H, 0, H - barH);
+    botGrad.addColorStop(0,   `rgba(${r2},${g2},${b2},1)`);
+    botGrad.addColorStop(1,   `rgba(${r2},${g2},${b2},0)`);
+    ctx.fillStyle = botGrad;
+    ctx.fillRect(0, H - barH, W, barH);
   }
 
   // ── STATS BAR ──────────────────────────────────────────────────────────────

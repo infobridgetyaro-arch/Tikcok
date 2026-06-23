@@ -478,6 +478,7 @@ function BreakPanel({
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [preloadStatus, setPreloadStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const preloadPollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  const accent = "#f59e0b";
 
   useEffect(() => {
     const url = (bs.breakVideoUrl ?? "").trim();
@@ -509,11 +510,7 @@ function BreakPanel({
     try {
       const fd = new FormData();
       fd.append("video", file);
-      const res = await fetch("/api/upload/break-video", {
-        method: "POST",
-        credentials: "include",
-        body: fd,
-      });
+      const res = await fetch("/api/upload/break-video", { method: "POST", credentials: "include", body: fd });
       if (!res.ok) throw new Error("Upload failed");
       const data = await res.json();
       update({ breakVideoUrl: data.url });
@@ -524,247 +521,42 @@ function BreakPanel({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <TextInput value={bs.breakText} onChange={(v) => localUpdate({ breakText: v })} placeholder="Break message…" />
-      <div>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.07em" }}>Break Style</div>
-        <StylePills styles={BREAK_STYLES} current={bs.breakStyle} accent="#f59e0b" onSelect={(s) => localUpdate({ breakStyle: s })} />
-      </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
 
-      <div>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.07em" }}>Break Video Background Mode</div>
-        <div style={{ display: "flex", gap: 6 }}>
-          {([
-            { mode: "fullscreen" as const, icon: "⬛", label: "Full Screen" },
-            { mode: "live-bg" as const, icon: "📹", label: "Live BG" },
-            { mode: "gradient-bg" as const, icon: "🎨", label: "Gradient BG" },
-          ] as const).map(({ mode, icon, label }) => (
-            <button
-              key={mode}
-              onClick={() => update({ breakVideoMode: mode })}
-              style={{
-                flex: 1, padding: "9px 6px", borderRadius: 10, fontSize: 10, fontWeight: 700,
-                border: `1px solid ${bs.breakVideoMode === mode ? "#f59e0b" : "rgba(255,255,255,0.1)"}`,
-                background: bs.breakVideoMode === mode ? "rgba(245,158,11,0.14)" : "rgba(255,255,255,0.04)",
-                color: bs.breakVideoMode === mode ? "#fcd34d" : "rgba(255,255,255,0.5)",
-                cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 5,
-                transition: "all 0.18s ease",
-              }}
-            >
-              <span style={{ fontSize: 16 }}>{icon}</span>
-              <span>{label}</span>
-            </button>
-          ))}
-        </div>
-        <div style={{ marginTop: 6, fontSize: 10, color: "rgba(255,255,255,0.3)", lineHeight: 1.5 }}>
-          {bs.breakVideoMode === "fullscreen" && "Break video fills the full screen — live feed not visible."}
-          {bs.breakVideoMode === "live-bg" && "Live stream shows through the letterbox bars around the video."}
-          {bs.breakVideoMode === "gradient-bg" && "Animated gradient fills the letterbox bars behind the video."}
-        </div>
-
-        {/* Gradient color pickers — only shown when gradient-bg is selected */}
-        {bs.breakVideoMode === "gradient-bg" && (
-          <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center" }}>
-            {(["bgGradient1", "bgGradient2"] as const).map((field, i) => (
-              <div key={field} style={{ flex: 1 }}>
-                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.07em" }}>
-                  BG Colour {i + 1}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input
-                    type="color"
-                    value={(bs as any)[field]}
-                    onChange={(e) => localUpdate({ [field]: e.target.value } as any)}
-                    style={{ width: 36, height: 30, borderRadius: 6, border: "1px solid rgba(255,255,255,0.2)", cursor: "pointer", padding: 2 }}
-                  />
-                  <span style={{ fontSize: 10, fontFamily: "monospace", color: "rgba(255,255,255,0.45)" }}>
-                    {(bs as any)[field]}
-                  </span>
-                </div>
-              </div>
-            ))}
-            <div style={{ display: "flex", alignItems: "flex-end", paddingBottom: 2 }}>
-              <div style={{
-                width: 44, height: 26, borderRadius: 6,
-                background: `linear-gradient(135deg, ${bs.bgGradient1}, ${bs.bgGradient2})`,
-                border: "1px solid rgba(255,255,255,0.12)",
-              }} />
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* XY pan — position the break video within the output frame */}
-      {bs.breakVideoUrl && (
-        <div>
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.07em" }}>Video Position (Pan)</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.45)" }}>Horizontal (X)</span>
-                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", fontFamily: "monospace" }}>{bs.breakVideoPanX ?? 50}%</span>
-              </div>
-              <input type="range" min="0" max="100" value={bs.breakVideoPanX ?? 50}
-                onChange={(e) => update({ breakVideoPanX: Number(e.target.value) })}
-                style={{ width: "100%", accentColor: "#f59e0b" }}
-              />
-            </div>
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.45)" }}>Vertical (Y)</span>
-                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", fontFamily: "monospace" }}>{bs.breakVideoPanY ?? 50}%</span>
-              </div>
-              <input type="range" min="0" max="100" value={bs.breakVideoPanY ?? 50}
-                onChange={(e) => update({ breakVideoPanY: Number(e.target.value) })}
-                style={{ width: "100%", accentColor: "#f59e0b" }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      <SectionDivider label="Break Video (optional)" />
-      <div style={{ color: "rgba(255,255,255,0.45)", fontSize: 11, lineHeight: 1.5 }}>
-        Play a video during the break on this dashboard preview. Paste a public URL or upload a file (MP4, WebM, MOV — up to 500 MB).
-      </div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <TextInput
-          value={bs.breakVideoUrl}
-          onChange={(v) => update({ breakVideoUrl: v })}
-          placeholder="https://… or leave empty for no video"
-        />
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="video/*"
-          style={{ display: "none" }}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleUpload(file);
-          }}
-        />
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
-          style={{
-            padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer",
-            border: "1px solid rgba(245,158,11,0.4)", background: "rgba(245,158,11,0.1)",
-            color: "#fbbf24", whiteSpace: "nowrap", flexShrink: 0, opacity: uploading ? 0.5 : 1,
-          }}
-        >
-          {uploading ? "Uploading…" : "📁 Upload"}
-        </button>
-      </div>
-
-      {/* ── YouTube preload status indicator ── */}
-      {preloadStatus !== "idle" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, padding: "5px 0" }}>
-          {preloadStatus === "loading" && (
-            <span style={{ color: "#93c5fd", display: "flex", alignItems: "center", gap: 5 }}>
-              <span style={{ display: "inline-block", animation: "cr-spin 1s linear infinite", fontSize: 12 }}>⟳</span>
-              Pre-resolving YouTube URL in background…
+      {/* ── Status + Go Live banner ─────────────────────────────────── */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+        padding: "10px 14px", borderRadius: 12,
+        background: bs.breakActive
+          ? "linear-gradient(135deg, rgba(245,158,11,0.18), rgba(217,119,6,0.10))"
+          : "rgba(255,255,255,0.03)",
+        border: `1px solid ${bs.breakActive ? "rgba(245,158,11,0.45)" : "rgba(255,255,255,0.08)"}`,
+        transition: "all 0.3s",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <div style={{
+            width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+            background: bs.breakActive ? accent : "rgba(255,255,255,0.2)",
+            boxShadow: bs.breakActive ? `0 0 10px ${accent}` : "none",
+            animation: bs.breakActive ? "cr-pulse 1.4s infinite" : "none",
+          }} />
+          <span style={{ fontSize: 13, fontWeight: 700, color: bs.breakActive ? "#fcd34d" : "rgba(255,255,255,0.55)", whiteSpace: "nowrap" }}>
+            {bs.breakActive ? "Break is LIVE" : "Break is Off"}
+          </span>
+          {activeStreamCount === 0 && !bs.breakActive && (
+            <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 99, background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.25)", color: "#f87171", flexShrink: 0 }}>
+              No stream running
             </span>
           )}
-          {preloadStatus === "ready" && (
-            <span style={{ color: "#34d399", fontWeight: 600 }}>✓ URL resolved — break will start instantly on Go Live</span>
+          {bs.breakActive && (
+            <span style={{ fontSize: 10, color: "#fbbf24", opacity: 0.7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {bs.breakStyle}
+            </span>
           )}
-          {preloadStatus === "error" && (
-            <span style={{ color: "#fbbf24" }}>⚠ Will download on Go Live (1–2 min on first load)</span>
-          )}
         </div>
-      )}
-
-      {bs.breakVideoUrl && (
-        <div style={{ borderRadius: 10, overflow: "hidden", background: "#000", border: "1px solid rgba(245,158,11,0.2)" }}>
-          {/youtube\.com|youtu\.be/.test(bs.breakVideoUrl) ? (() => {
-            const ytMatch = bs.breakVideoUrl.match(/(?:v=|youtu\.be\/|\/shorts\/|\/embed\/|\/live\/)([a-zA-Z0-9_-]{11})/);
-            const embedId = ytMatch?.[1];
-            if (embedId) {
-              return (
-                <iframe
-                  key={bs.breakVideoUrl}
-                  src={`https://www.youtube.com/embed/${embedId}?autoplay=0&controls=1`}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                  style={{ width: "100%", height: 200, border: "none", display: "block" }}
-                />
-              );
-            }
-            return (
-              <div style={{ padding: 16, color: "rgba(255,255,255,0.5)", fontSize: 11, textAlign: "center" }}>
-                YouTube link saved — will be extracted via yt-dlp when break goes live.
-              </div>
-            );
-          })() : (
-            <video
-              key={bs.breakVideoUrl}
-              src={bs.breakVideoUrl}
-              controls
-              loop
-              style={{ width: "100%", maxHeight: 200, display: "block" }}
-            />
-          )}
-          <div style={{ display: "flex", justifyContent: "flex-end", padding: "6px 10px" }}>
-            <button
-              onClick={() => update({ breakVideoUrl: "" })}
-              style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", cursor: "pointer", background: "none", border: "none" }}
-            >
-              ✕ Remove video
-            </button>
-          </div>
-        </div>
-      )}
-
-      {bs.breakStyle === "Video Play" && (
-        <div style={{ padding: "8px 12px", borderRadius: 7, background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.30)", fontSize: 11, color: "#fcd34d", lineHeight: 1.5 }}>
-          <strong>Video Play</strong> — the break video fills the screen with no overlay text. Paste a URL or upload a video above before going live.
-        </div>
-      )}
-      {bs.breakStyle === "Video Play" && activeStreamCount === 0 && (
-        <div style={{ padding: "8px 12px", borderRadius: 7, background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.30)", fontSize: 11, color: "#f87171", lineHeight: 1.5 }}>
-          ⚠ <strong>No stream is live.</strong> Start a stream first — the break video is composited server-side into the active FFmpeg pipeline and requires a running stream.
-        </div>
-      )}
-      <div style={{ padding: "8px 12px", borderRadius: 7, background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.15)", fontSize: 11, color: "rgba(255,255,255,0.38)", lineHeight: 1.5 }}>
-        Break style and message are staged — tap <strong style={{ color: "#f59e0b" }}>Go Live</strong> to put the stream on break with a 3-second warning. The live stream is never reconnected — video is composited on top.
-      </div>
-
-      {/* Audio mute controls */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button
-          onClick={() => update({ breakVideoMuted: !bs.breakVideoMuted })}
-          title="Mute / unmute break video audio in the browser display"
-          style={{
-            display: "flex", alignItems: "center", gap: 6,
-            padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer",
-            border: `1px solid ${bs.breakVideoMuted ? "rgba(239,68,68,0.5)" : "rgba(255,255,255,0.15)"}`,
-            background: bs.breakVideoMuted ? "rgba(239,68,68,0.12)" : "rgba(255,255,255,0.05)",
-            color: bs.breakVideoMuted ? "#f87171" : "rgba(255,255,255,0.6)",
-            transition: "all 0.18s ease",
-          }}
-        >
-          {bs.breakVideoMuted ? "🔇" : "🔊"} {bs.breakVideoMuted ? "Video Audio: Muted" : "Video Audio: On"}
-        </button>
-        <button
-          onClick={() => update({ liveAudioMuted: !bs.liveAudioMuted })}
-          title="Mute / unmute live stream audio in the RTMP output (triggers fast restart)"
-          style={{
-            display: "flex", alignItems: "center", gap: 6,
-            padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer",
-            border: `1px solid ${bs.liveAudioMuted ? "rgba(239,68,68,0.5)" : "rgba(255,255,255,0.15)"}`,
-            background: bs.liveAudioMuted ? "rgba(239,68,68,0.12)" : "rgba(255,255,255,0.05)",
-            color: bs.liveAudioMuted ? "#f87171" : "rgba(255,255,255,0.6)",
-            transition: "all 0.18s ease",
-          }}
-        >
-          {bs.liveAudioMuted ? "🔇" : "🔊"} {bs.liveAudioMuted ? "Stream Audio: Muted" : "Stream Audio: On"}
-        </button>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <ToggleButton
           active={bs.breakActive}
-          accent="#f59e0b"
+          accent={accent}
           countdownSecs={countdowns["break"]}
           onCancel={() => cancelGoLive("break")}
           onActivate={() => goLive("break", {
@@ -782,8 +574,197 @@ function BreakPanel({
           })}
           onDeactivate={() => stopOverlay({ breakActive: false })}
         />
-        <LiveBadge label={`${bs.breakStyle} break screen`} active={bs.breakActive} accent="#f59e0b" />
       </div>
+
+      {/* ── Video Source ─────────────────────────────────────────────── */}
+      <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "8px 14px 7px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.09em" }}>🎬 Video Source</span>
+          {preloadStatus === "loading" && (
+            <span style={{ fontSize: 9, color: "#93c5fd", display: "flex", alignItems: "center", gap: 4 }}>
+              <span style={{ animation: "cr-spin 1s linear infinite", display: "inline-block" }}>⟳</span> Pre-loading…
+            </span>
+          )}
+          {preloadStatus === "ready"  && <span style={{ fontSize: 9, fontWeight: 700, color: "#34d399" }}>✓ Ready instantly</span>}
+          {preloadStatus === "error"  && <span style={{ fontSize: 9, color: "#fbbf24" }}>⚠ Resolves on Go Live</span>}
+        </div>
+        <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              type="text"
+              value={bs.breakVideoUrl}
+              onChange={(e) => update({ breakVideoUrl: e.target.value })}
+              placeholder="Paste YouTube or video URL…"
+              style={{
+                flex: 1, padding: "8px 11px", borderRadius: 8, fontSize: 11,
+                background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)",
+                color: "#fff", outline: "none",
+              }}
+            />
+            <input ref={fileInputRef} type="file" accept="video/*" style={{ display: "none" }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) { handleUpload(f); e.target.value = ""; } }} />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              style={{
+                padding: "0 12px", borderRadius: 8, fontSize: 11, fontWeight: 700, flexShrink: 0,
+                cursor: uploading ? "not-allowed" : "pointer",
+                border: `1px solid rgba(245,158,11,0.35)`,
+                background: "rgba(245,158,11,0.08)", color: "#fbbf24",
+                opacity: uploading ? 0.5 : 1,
+              }}
+            >{uploading ? "⏳ Uploading…" : "📁 Upload"}</button>
+          </div>
+
+          {/* Preview */}
+          {bs.breakVideoUrl && (() => {
+            const ytMatch = bs.breakVideoUrl.match(/(?:v=|youtu\.be\/|\/shorts\/|\/embed\/|\/live\/)([a-zA-Z0-9_-]{11})/);
+            return ytMatch?.[1] ? (
+              <div style={{ borderRadius: 8, overflow: "hidden", background: "#000" }}>
+                <iframe
+                  key={bs.breakVideoUrl}
+                  src={`https://www.youtube.com/embed/${ytMatch[1]}?autoplay=0&controls=1`}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  style={{ width: "100%", height: 160, border: "none", display: "block" }}
+                />
+              </div>
+            ) : /youtube\.com|youtu\.be/.test(bs.breakVideoUrl) ? (
+              <div style={{ padding: "10px 12px", borderRadius: 8, background: "rgba(245,158,11,0.07)", border: "1px solid rgba(245,158,11,0.2)", fontSize: 10, color: "#fcd34d" }}>
+                YouTube link saved — yt-dlp extracts it when break goes live.
+              </div>
+            ) : (
+              <div style={{ borderRadius: 8, overflow: "hidden", background: "#000", border: "1px solid rgba(245,158,11,0.15)" }}>
+                <video key={bs.breakVideoUrl} src={bs.breakVideoUrl} controls loop
+                  style={{ width: "100%", maxHeight: 150, display: "block" }} />
+              </div>
+            );
+          })()}
+
+          {bs.breakVideoUrl && (
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button onClick={() => update({ breakVideoUrl: "" })}
+                style={{ background: "none", border: "none", fontSize: 10, color: "rgba(255,255,255,0.28)", cursor: "pointer" }}>
+                ✕ Remove video
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Style & Message ───────────────────────────────────────────── */}
+      <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "8px 14px 7px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.09em" }}>🎨 Style & Message</span>
+        </div>
+        <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 9 }}>
+          <TextInput value={bs.breakText} onChange={(v) => localUpdate({ breakText: v })} placeholder="Break message text…" />
+          <StylePills styles={BREAK_STYLES} current={bs.breakStyle} accent={accent} onSelect={(s) => localUpdate({ breakStyle: s })} />
+        </div>
+      </div>
+
+      {/* ── Background Mode ───────────────────────────────────────────── */}
+      <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "8px 14px 7px", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.09em" }}>📺 Background Mode</span>
+        </div>
+        <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 9 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+            {([
+              { mode: "fullscreen"  as const, icon: "⬛", label: "Full Screen", hint: "Video fills frame" },
+              { mode: "live-bg"     as const, icon: "📹", label: "Live BG",     hint: "Stream in bars" },
+              { mode: "gradient-bg" as const, icon: "🎨", label: "Gradient BG", hint: "Colour in bars" },
+            ] as const).map(({ mode, icon, label, hint }) => (
+              <button
+                key={mode}
+                onClick={() => update({ breakVideoMode: mode })}
+                style={{
+                  padding: "10px 4px", borderRadius: 10, fontSize: 10, fontWeight: 700, cursor: "pointer",
+                  border: `1px solid ${bs.breakVideoMode === mode ? accent : "rgba(255,255,255,0.08)"}`,
+                  background: bs.breakVideoMode === mode ? "rgba(245,158,11,0.14)" : "rgba(255,255,255,0.03)",
+                  color: bs.breakVideoMode === mode ? "#fcd34d" : "rgba(255,255,255,0.4)",
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                  transition: "all 0.18s",
+                }}
+              >
+                <span style={{ fontSize: 18 }}>{icon}</span>
+                <span>{label}</span>
+                <span style={{ fontSize: 8, fontWeight: 400, color: bs.breakVideoMode === mode ? "rgba(252,211,77,0.6)" : "rgba(255,255,255,0.25)" }}>{hint}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Gradient colour pickers (only when gradient-bg) */}
+          {bs.breakVideoMode === "gradient-bg" && (
+            <div style={{ display: "flex", gap: 10, alignItems: "center", paddingTop: 4, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+              {(["bgGradient1", "bgGradient2"] as const).map((field, i) => (
+                <div key={field} style={{ flex: 1 }}>
+                  <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                    BG Colour {i + 1}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <input type="color" value={(bs as any)[field]}
+                      onChange={(e) => localUpdate({ [field]: e.target.value } as any)}
+                      style={{ width: 36, height: 28, borderRadius: 6, border: "1px solid rgba(255,255,255,0.2)", cursor: "pointer", padding: 2 }} />
+                    <span style={{ fontSize: 10, fontFamily: "monospace", color: "rgba(255,255,255,0.35)" }}>{(bs as any)[field]}</span>
+                  </div>
+                </div>
+              ))}
+              <div style={{
+                width: 44, height: 26, borderRadius: 6, flexShrink: 0,
+                background: `linear-gradient(135deg, ${bs.bgGradient1}, ${bs.bgGradient2})`,
+                border: "1px solid rgba(255,255,255,0.12)",
+              }} />
+            </div>
+          )}
+
+          {/* Video pan — only when a video URL is set */}
+          {bs.breakVideoUrl && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 7, paddingTop: 4, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+              <span style={{ fontSize: 10, color: "rgba(255,255,255,0.28)", textTransform: "uppercase", letterSpacing: "0.07em" }}>Video Pan</span>
+              {(["X", "Y"] as const).map((axis) => {
+                const field = axis === "X" ? "breakVideoPanX" : "breakVideoPanY";
+                return (
+                  <div key={axis} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", width: 10, flexShrink: 0 }}>{axis}</span>
+                    <input type="range" min={0} max={100} value={bs[field] ?? 50}
+                      onChange={(e) => update({ [field]: Number(e.target.value) } as any)}
+                      style={{ flex: 1, accentColor: accent }} />
+                    <span style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", width: 28, textAlign: "right", fontFamily: "monospace", flexShrink: 0 }}>
+                      {bs[field] ?? 50}%
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Audio Controls ────────────────────────────────────────────── */}
+      <div style={{ display: "flex", gap: 7 }}>
+        {([
+          { label: "Video Audio", key: "breakVideoMuted" as const, onIcon: "🎥", title: "Mute/unmute break video audio in browser preview" },
+          { label: "Stream Audio", key: "liveAudioMuted" as const, onIcon: "📡", title: "Mute/unmute live stream audio in RTMP output" },
+        ] as const).map(({ label, key, onIcon, title }) => (
+          <button
+            key={key} title={title}
+            onClick={() => update({ [key]: !bs[key] } as any)}
+            style={{
+              flex: 1, padding: "8px 6px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer",
+              border: `1px solid ${bs[key] ? "rgba(239,68,68,0.4)" : "rgba(255,255,255,0.1)"}`,
+              background: bs[key] ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.03)",
+              color: bs[key] ? "#f87171" : "rgba(255,255,255,0.45)",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              transition: "all 0.18s",
+            }}
+          >
+            <span style={{ fontSize: 14 }}>{bs[key] ? "🔇" : onIcon}</span>
+            {label}: <strong>{bs[key] ? "Muted" : "On"}</strong>
+          </button>
+        ))}
+      </div>
+
     </div>
   );
 }
@@ -1132,7 +1113,6 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
   const getMusicAudio = useCallback((): HTMLAudioElement => {
     if (!musicAudioRef.current) {
       const el = new Audio();
-      el.crossOrigin = "anonymous";
       el.preload = "metadata";
       el.onerror = () => {
         const code = el.error?.code;
