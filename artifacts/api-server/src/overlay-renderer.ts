@@ -701,6 +701,18 @@ export class OverlayRenderer {
       this.state.featuredComment = null;
     }
 
+    // ── BG gradient bars — rendered in UI pipe so they appear ON TOP of the video ──
+    // The bg pipe (pipe:3) renders the same bars but sits behind the video in the
+    // FFmpeg composite.  Rendering them here as well guarantees they are visible
+    // regardless of whether the video fills the whole frame.
+    if (!this.state.breakActive) {
+      const bgTarget = this.state.bgGradientActive ? (this.state.bgGradientOpacity ?? 1) : 0;
+      this.alphas.bgGrad = this.stepAlpha(this.alphas.bgGrad, bgTarget);
+      if (this.alphas.bgGrad > 0.005) {
+        this.withPanelAlpha(this.alphas.bgGrad, () => this.drawBackground());
+      }
+    }
+
     const { state } = this;
     this.withPanelAlpha(this.alphas.ad        * nonBreak, () => this.withScaleAt(state.adPosition, state.mobileAdPosition, state.adScale ?? 100, () => this.drawAd()));
     this.withPanelAlpha(this.alphas.news      * nonBreak, () => this.withScaleAt(state.newsPosition, state.mobileNewsPosition, state.newsScale ?? 100, () => this.drawNews(t)));

@@ -329,6 +329,7 @@ export function updateStreamOverlays(patch: Partial<OverlayState>) {
   const prevBreakVideoUrl = currentOverlayState.breakVideoUrl ?? "";
   const prevBreakVideoPanX = currentOverlayState.breakVideoPanX ?? 50;
   const prevBreakVideoPanY = currentOverlayState.breakVideoPanY ?? 50;
+  const prevBreakVideoMode = currentOverlayState.breakVideoMode ?? "fullscreen";
   const prevLiveAudioMuted = currentOverlayState.liveAudioMuted;
 
   currentOverlayState = { ...currentOverlayState, ...patch };
@@ -337,6 +338,7 @@ export function updateStreamOverlays(patch: Partial<OverlayState>) {
   const nowBreakVideoUrl = currentOverlayState.breakVideoUrl ?? "";
   const nowBreakVideoPanX = currentOverlayState.breakVideoPanX ?? 50;
   const nowBreakVideoPanY = currentOverlayState.breakVideoPanY ?? 50;
+  const nowBreakVideoMode = currentOverlayState.breakVideoMode ?? "fullscreen";
 
   // ── Break video decoder — ZERO main-FFmpeg restart ─────────────────────────
   // A lightweight secondary FFmpeg decodes break video frames and writes RGBA to
@@ -348,11 +350,16 @@ export function updateStreamOverlays(patch: Partial<OverlayState>) {
   const panChanged = nowBreakActive && !!nowBreakVideoUrl && (
     nowBreakVideoPanX !== prevBreakVideoPanX || nowBreakVideoPanY !== prevBreakVideoPanY
   );
+  // Changing background mode (fullscreen / live-bg / gradient-bg) while break
+  // is active requires a decoder restart because the vf filter string differs.
+  const modeChanged = nowBreakActive && !!nowBreakVideoUrl &&
+    nowBreakVideoMode !== prevBreakVideoMode;
 
   const needsDecoderStart =
     (breakJustStarted && !!nowBreakVideoUrl) ||
     (urlChanged && !!nowBreakVideoUrl) ||
-    panChanged;
+    panChanged ||
+    modeChanged;
 
   if (needsDecoderStart) {
     const streamIds = [...activeStreams.keys()];
