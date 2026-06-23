@@ -458,16 +458,19 @@ function buildFFmpegArgs(
   const scaleH = isVertical ? (isHDQuality ? 1280 : 854) : (isHDQuality ? 720 : 480);
 
   // ── Bitrate ladder ────────────────────────────────────────────────────────
-  let bitrate = "1200k";
-  let maxrate = "1500k";
-  let bufsize = "1200k";
+  // YouTube requires a minimum of 2500 kbps for 720p30 to avoid "poor stream"
+  // warnings in YouTube Studio. bufsize = 2× bitrate per YouTube's CBR guidance
+  // so the encoder can absorb burst complexity without starving the ingest server.
+  let bitrate = "2500k";
+  let maxrate = "3000k";
+  let bufsize = "5000k";
 
   if (stream.quality === "best") {
-    bitrate = "1500k"; maxrate = "1800k"; bufsize = "1500k";
+    bitrate = "4000k"; maxrate = "4500k"; bufsize = "8000k";
   } else if (stream.quality === "720p") {
-    bitrate = "1200k"; maxrate = "1500k"; bufsize = "1200k";
+    bitrate = "2500k"; maxrate = "3000k"; bufsize = "5000k";
   } else {
-    bitrate = "800k"; maxrate = "1000k"; bufsize = "800k";
+    bitrate = "1500k"; maxrate = "1800k"; bufsize = "3000k";
   }
 
   // Browser camera (__browser__) reads from stdin (pipe:0).
