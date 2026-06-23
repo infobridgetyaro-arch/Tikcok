@@ -706,7 +706,7 @@ function buildFFmpegArgs(
       `[2:a][_vol]amultiply[_srcFin]`,
       micClean,
       `[_srcFin][_mic]amix=inputs=2:dropout_transition=2:normalize=0[_rawA]`,
-      `[_rawA]aresample=async=1000,arealtime[_audio]`,
+      `[_rawA]aresample=async=1000[_audio]`,
     ].join(";");
   } else {
     // Live source (TikTok / YouTube / X Space / RTSP / browser camera) has audio.
@@ -719,7 +719,7 @@ function buildFFmpegArgs(
       `[_srcRaw][_vol]amultiply[_srcFin]`,
       micClean,
       `[_srcFin][_mic]amix=inputs=2:dropout_transition=10:normalize=0[_rawA]`,
-      `[_rawA]aresample=async=1000,arealtime[_audio]`,
+      `[_rawA]aresample=async=1000[_audio]`,
     ].join(";");
   }
 
@@ -731,7 +731,7 @@ function buildFFmpegArgs(
       `[3:v]format=rgba,scale=${scaleW}:${scaleH}[_bg]`,
       `[1:v][_bg]overlay=0:0:format=auto[_base]`,
       `[4:v]scale=${scaleW}:${scaleH}[_ui]`,
-      `[_base][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p,realtime[_final]`,
+      `[_base][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[_final]`,
       audioFilter,
     ].join(";");
   } else {
@@ -767,7 +767,7 @@ function buildFFmpegArgs(
       // eof_action=repeat: freeze last video frame during brief reconnect gaps.
       `[_base][_src]overlay=0:0:format=auto:eof_action=repeat[_composed]`,
       `[4:v]scale=${scaleW}:${scaleH}[_ui]`,
-      `[_composed][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p,realtime[_final]`,
+      `[_composed][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[_final]`,
       audioFilter,
     ].join(";");
   }
@@ -1552,12 +1552,34 @@ function handleProcessExit(streamId: string, code: number | null) {
   try { proc.ffmpegProcess?.kill("SIGKILL"); } catch {}
 
   // stopStream() removes from activeStreams BEFORE killing FFmpeg, so reaching
-  // here means a true unexpected exit (crash, source drop, TLS error).
-  // Do NOT auto-reconnect — show error and let the user decide to restart.
+  // here means a true unexpected exit (crash, source drop, network error).
+  // If the user manually stopped the stream, honour that — do NOT reconnect.
+  // Otherwise auto-reconnect so external cuts recover without user intervention.
   const reason = code !== null ? `exit code ${code}` : "signal";
-  sendLog(streamId, `[ffmpeg] Process ended unexpectedly (${reason}) — click Restart to reconnect.`);
-  clearCameraLink(streamId);
-  sendStatus(streamId, "error");
+
+  if (manuallyStopped.has(streamId)) {
+    clearCameraLink(streamId);
+    sendStatus(streamId, "idle");
+    return;
+  }
+
+  if (storage.getStream(streamId)) {
+    sendLog(streamId, `[ffmpeg] Stream cut unexpectedly (${reason}) — reconnecting in 3s...`);
+    sendStatus(streamId, "reconnecting");
+    setTimeout(() => {
+      if (manuallyStopped.has(streamId)) return;
+      if (storage.getStream(streamId)) {
+        startStream(streamId).catch((e: any) => {
+          sendLog(streamId, `[ffmpeg] Reconnect failed: ${e.message}`);
+          sendStatus(streamId, "error");
+        });
+      }
+    }, 3000);
+  } else {
+    clearCameraLink(streamId);
+    sendLog(streamId, `[ffmpeg] Process ended (${reason}).`);
+    sendStatus(streamId, "error");
+  }
 }
 
 export function stopStream(streamId: string) {
