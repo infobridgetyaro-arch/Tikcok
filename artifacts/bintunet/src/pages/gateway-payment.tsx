@@ -196,19 +196,42 @@ function CardPreview({ card, flipped }: { card: CardState; flipped: boolean }) {
 /* ── Card brand badges ───────────────────────────────────────────────────── */
 function CardBrands() {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-      <span style={{ fontSize: 11, color: "#9ca3af", fontWeight: 600, marginRight: 2 }}>We accept:</span>
-      <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "3px 10px" }}>
-        <span style={{ fontSize: 13, fontWeight: 900, fontStyle: "italic", color: "#1a1f71", fontFamily: "Georgia, serif" }}>VISA</span>
-      </div>
-      <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "3px 8px", display: "flex", alignItems: "center" }}>
-        <div style={{ position: "relative", width: 28, height: 17, display: "flex", alignItems: "center" }}>
-          <div style={{ width: 17, height: 17, borderRadius: "50%", background: "#eb001b", position: "absolute", left: 0 }} />
-          <div style={{ width: 17, height: 17, borderRadius: "50%", background: "#f79e1b", position: "absolute", left: 10 }} />
+    <div style={{ marginBottom: 18 }}>
+      {/* Security row */}
+      <div style={{
+        background: "linear-gradient(135deg, #f0fdf4 0%, #f8faff 100%)",
+        border: "1px solid #d1fae5",
+        borderRadius: 12, padding: "10px 14px",
+        display: "flex", alignItems: "center", gap: 10, marginBottom: 14,
+      }}>
+        <div style={{ width: 30, height: 30, borderRadius: 8, background: "#dcfce7", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="m9 12 2 2 4-4"/>
+          </svg>
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#166534" }}>Secured Payment</div>
+          <div style={{ fontSize: 10, color: "#4ade80", marginTop: 1 }}>256-bit SSL · PCI DSS Compliant · Paystack Encrypted</div>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {/* Visa badge */}
+          <div style={{ background: "#1a1f71", borderRadius: 6, padding: "4px 10px", display: "flex", alignItems: "center" }}>
+            <span style={{ fontSize: 11, fontWeight: 900, fontStyle: "italic", color: "#fff", fontFamily: "Georgia, serif", letterSpacing: 0.5 }}>VISA</span>
+          </div>
+          {/* Mastercard */}
+          <div style={{ background: "#1c1c1e", borderRadius: 6, padding: "4px 8px", display: "flex", alignItems: "center" }}>
+            <div style={{ position: "relative", width: 26, height: 16, display: "flex", alignItems: "center" }}>
+              <div style={{ width: 16, height: 16, borderRadius: "50%", background: "#eb001b", position: "absolute", left: 0 }} />
+              <div style={{ width: 16, height: 16, borderRadius: "50%", background: "#f79e1b", position: "absolute", left: 9, opacity: 0.9 }} />
+            </div>
+          </div>
         </div>
       </div>
-      <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "3px 10px" }}>
-        <span style={{ fontSize: 11, fontWeight: 900, color: "#2563eb", letterSpacing: 0.5 }}>AMEX</span>
+      {/* Field group label */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2.2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        <span style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" }}>Card Details</span>
       </div>
     </div>
   );
@@ -630,15 +653,31 @@ export default function GatewayPaymentPage() {
             <CardBrands />
             <div style={IW}>
               <label style={IL}>Card Number</label>
-              <input
-                type="text" inputMode="numeric"
-                value={card.number}
-                onChange={e => setCard({ ...card, number: formatCardNumber(e.target.value) })}
-                onFocus={() => setCardFlipped(false)}
-                placeholder="1234  5678  9012  3456"
-                maxLength={19}
-                style={{ ...IF, letterSpacing: 3, fontFamily: "'Courier New', monospace", fontSize: 16 }}
-              />
+              <div style={{ position: "relative" }}>
+                <input
+                  type="text" inputMode="numeric"
+                  value={card.number}
+                  onChange={e => setCard({ ...card, number: formatCardNumber(e.target.value) })}
+                  onFocus={e => { setCardFlipped(false); (e.target as HTMLInputElement).style.borderColor = GREEN; (e.target as HTMLInputElement).style.boxShadow = `0 0 0 3px rgba(34,197,94,0.12)`; }}
+                  onBlur={e => { (e.target as HTMLInputElement).style.borderColor = "#e5e7eb"; (e.target as HTMLInputElement).style.boxShadow = "none"; }}
+                  placeholder="1234  5678  9012  3456"
+                  maxLength={19}
+                  style={{ ...IF, letterSpacing: 3, fontFamily: "'Courier New', monospace", fontSize: 16, width: "100%", boxSizing: "border-box", paddingRight: 48 }}
+                />
+                <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)" }}>
+                  {(() => {
+                    const n = card.number.replace(/\s/g, "");
+                    if (/^4/.test(n)) return <span style={{ fontSize: 12, fontWeight: 900, fontStyle: "italic", color: "#1a1f71", fontFamily: "Georgia, serif" }}>VISA</span>;
+                    if (/^5[1-5]/.test(n) || /^2[2-7]/.test(n)) return (
+                      <div style={{ position: "relative", width: 26, height: 16 }}>
+                        <div style={{ width: 16, height: 16, borderRadius: "50%", background: "#eb001b", position: "absolute", left: 0 }} />
+                        <div style={{ width: 16, height: 16, borderRadius: "50%", background: "#f79e1b", position: "absolute", left: 9, opacity: 0.85 }} />
+                      </div>
+                    );
+                    return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" strokeWidth="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>;
+                  })()}
+                </div>
+              </div>
             </div>
             <div style={{ display: "flex", gap: 12, marginBottom: 14 }}>
               <div style={{ ...IW, flex: 1, marginBottom: 0 }}>
@@ -647,21 +686,25 @@ export default function GatewayPaymentPage() {
                   type="text" inputMode="numeric"
                   value={card.expiry}
                   onChange={e => setCard({ ...card, expiry: formatExpiry(e.target.value) })}
-                  onFocus={() => setCardFlipped(false)}
+                  onFocus={e => { setCardFlipped(false); (e.target as HTMLInputElement).style.borderColor = GREEN; (e.target as HTMLInputElement).style.boxShadow = `0 0 0 3px rgba(34,197,94,0.12)`; }}
+                  onBlur={e => { (e.target as HTMLInputElement).style.borderColor = "#e5e7eb"; (e.target as HTMLInputElement).style.boxShadow = "none"; }}
                   placeholder="MM/YY"
                   maxLength={5}
                   style={{ ...IF, textAlign: "center", letterSpacing: 2, fontWeight: 700 }}
                 />
               </div>
               <div style={{ ...IW, flex: 1, marginBottom: 0 }}>
-                <label style={IL}>CVV</label>
+                <label style={{ ...IL, display: "flex", alignItems: "center", gap: 4 }}>
+                  CVV
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2.2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+                </label>
                 <input
                   ref={cvvRef}
                   type="password" inputMode="numeric"
                   value={card.cvv}
                   onChange={e => setCard({ ...card, cvv: e.target.value.replace(/\D/g, "").slice(0, 4) })}
-                  onFocus={() => setCardFlipped(true)}
-                  onBlur={() => setCardFlipped(false)}
+                  onFocus={e => { setCardFlipped(true); (e.target as HTMLInputElement).style.borderColor = "#818cf8"; (e.target as HTMLInputElement).style.boxShadow = `0 0 0 3px rgba(129,140,248,0.12)`; }}
+                  onBlur={e => { setCardFlipped(false); (e.target as HTMLInputElement).style.borderColor = "#e5e7eb"; (e.target as HTMLInputElement).style.boxShadow = "none"; }}
                   placeholder="•••"
                   maxLength={4}
                   style={{ ...IF, textAlign: "center", letterSpacing: 4, fontWeight: 700 }}
@@ -674,7 +717,8 @@ export default function GatewayPaymentPage() {
                 type="text"
                 value={card.name}
                 onChange={e => setCard({ ...card, name: e.target.value.toUpperCase() })}
-                onFocus={() => setCardFlipped(false)}
+                onFocus={e => { setCardFlipped(false); (e.target as HTMLInputElement).style.borderColor = GREEN; (e.target as HTMLInputElement).style.boxShadow = `0 0 0 3px rgba(34,197,94,0.12)`; }}
+                onBlur={e => { (e.target as HTMLInputElement).style.borderColor = "#e5e7eb"; (e.target as HTMLInputElement).style.boxShadow = "none"; }}
                 placeholder="JOHN DOE"
                 style={{ ...IF, letterSpacing: 1, fontWeight: 600 }}
               />

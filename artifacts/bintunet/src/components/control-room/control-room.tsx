@@ -927,7 +927,11 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
         );
       }
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: { ideal: 30, max: 30 } } as MediaTrackConstraints,
+        video: {
+          frameRate: { ideal: 30, max: 30 },
+          // @ts-ignore — Chrome 111+ hint to pre-select Entire Screen in picker
+          displaySurface: "monitor",
+        } as MediaTrackConstraints,
         audio: false,
         // @ts-ignore — Chrome hint to pre-select Entire Screen
         preferCurrentTab: false,
@@ -2332,8 +2336,11 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                 placeholder="🎉 Just hit 100K subscribers!"
               />
               <button
-                onClick={() => update({ subAlertActive: true, subAlertMessage: bs.subAlertMessage })}
-                disabled={!bs.subAlertMessage.trim()}
+                onClick={() => {
+                  update({ subAlertActive: true, subAlertMessage: bs.subAlertMessage });
+                  setTimeout(() => localUpdate({ subAlertActive: false }), 6500);
+                }}
+                disabled={!bs.subAlertMessage.trim() || bs.subAlertActive}
                 style={{
                   alignSelf: "flex-start", padding: "6px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer",
                   border: "1px solid #f97316", background: "rgba(249,115,22,0.15)", color: "#fed7aa",
@@ -3309,6 +3316,57 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
           {activeTab === "music" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
 
+              {/* ── Broadcast status banner ── */}
+              <div
+                onClick={() => {
+                  if (musicBroadcastActive) { stopMusicBroadcast(); }
+                  else { setMusicBroadcast(true); startMusicBroadcast().catch(() => {}); }
+                }}
+                style={{
+                  margin: "0 0 10px",
+                  borderRadius: 14, padding: "12px 16px",
+                  display: "flex", alignItems: "center", gap: 12,
+                  cursor: "pointer",
+                  background: musicBroadcastActive
+                    ? "linear-gradient(90deg, rgba(236,72,153,0.18) 0%, rgba(168,85,247,0.14) 100%)"
+                    : "rgba(251,191,36,0.08)",
+                  border: musicBroadcastActive
+                    ? "1px solid rgba(244,114,182,0.4)"
+                    : "1px solid rgba(251,191,36,0.35)",
+                  transition: "all 0.25s ease",
+                }}
+              >
+                <div style={{
+                  width: 36, height: 36, borderRadius: "50%", flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  background: musicBroadcastActive ? "rgba(244,114,182,0.2)" : "rgba(251,191,36,0.15)",
+                  border: musicBroadcastActive ? "1.5px solid rgba(244,114,182,0.5)" : "1.5px solid rgba(251,191,36,0.4)",
+                }}>
+                  <RadioIcon size={16} color={musicBroadcastActive ? "#f472b6" : "#fbbf24"} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: musicBroadcastActive ? "#fce7f3" : "#fde68a", letterSpacing: "-0.01em" }}>
+                    {musicBroadcastActive ? "● Music is LIVE on your stream" : "⚠ Music not in stream — tap to go live"}
+                  </div>
+                  <div style={{ fontSize: 10, color: musicBroadcastActive ? "rgba(252,231,243,0.6)" : "rgba(253,230,138,0.6)", marginTop: 2 }}>
+                    {musicBroadcastActive ? "Audience can hear the music right now" : "Listeners cannot hear the music yet"}
+                  </div>
+                </div>
+                <div style={{
+                  width: 44, height: 26, borderRadius: 13, flexShrink: 0,
+                  background: musicBroadcastActive ? "linear-gradient(90deg, #ec4899, #a855f7)" : "rgba(251,191,36,0.25)",
+                  border: musicBroadcastActive ? "none" : "1px solid rgba(251,191,36,0.45)",
+                  position: "relative", transition: "all 0.22s ease",
+                  boxShadow: musicBroadcastActive ? "0 2px 12px rgba(236,72,153,0.5)" : "none",
+                }}>
+                  <div style={{
+                    position: "absolute", top: 3, left: musicBroadcastActive ? 21 : 3,
+                    width: 20, height: 20, borderRadius: "50%", background: "#fff",
+                    transition: "left 0.22s ease", boxShadow: "0 1px 4px rgba(0,0,0,0.4)",
+                  }} />
+                </div>
+              </div>
+
               {/* Hidden file input */}
               <input
                 ref={musicFileInputRef}
@@ -3465,43 +3523,10 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                     <span style={{ fontSize: 11, color: "#f9a8d4", fontWeight: 700, width: 32, textAlign: "right", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{musicVolume}%</span>
                   </div>
 
-                  {/* Mix to broadcast toggle */}
-                  <div style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
-                    padding: "10px 12px", borderRadius: 12,
-                    background: musicBroadcastActive ? "rgba(244,114,182,0.09)" : "rgba(255,255,255,0.03)",
-                    border: `1px solid ${musicBroadcastActive ? "rgba(244,114,182,0.28)" : "rgba(255,255,255,0.07)"}`,
-                    transition: "all 0.25s",
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <RadioIcon size={14} color={musicBroadcastActive ? "#f472b6" : "rgba(255,255,255,0.3)"} />
-                      <div>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: musicBroadcastActive ? "#fce7f3" : "rgba(255,255,255,0.7)" }}>
-                          Mix to broadcast
-                        </div>
-                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 1 }}>
-                          {musicBroadcastActive ? "Routing music into RTMP stream" : "Send music into your RTMP stream"}
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        if (musicBroadcastActive) { stopMusicBroadcast(); }
-                        else { setMusicBroadcast(true); startMusicBroadcast().catch(() => {}); }
-                      }}
-                      style={{
-                        width: 44, height: 26, borderRadius: 13, cursor: "pointer", position: "relative",
-                        background: musicBroadcastActive ? "linear-gradient(90deg, #ec4899, #a855f7)" : "rgba(255,255,255,0.1)",
-                        border: "none", transition: "all 0.22s ease", flexShrink: 0,
-                        boxShadow: musicBroadcastActive ? "0 2px 12px rgba(236,72,153,0.5)" : "none",
-                      }}
-                    >
-                      <div style={{
-                        position: "absolute", top: 3, left: musicBroadcastActive ? 21 : 3,
-                        width: 20, height: 20, borderRadius: "50%", background: "#fff",
-                        transition: "left 0.22s ease", boxShadow: "0 1px 4px rgba(0,0,0,0.4)",
-                      }} />
-                    </button>
+                  {/* Volume label */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <Volume2 size={11} color="rgba(255,255,255,0.3)" />
+                    <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>Volume affects stream output</span>
                   </div>
                 </div>
               </div>

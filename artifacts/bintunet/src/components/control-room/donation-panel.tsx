@@ -80,7 +80,14 @@ export function DonationPanel({
         fetch("/api/gateway/health", { credentials: "include" }),
         fetch("/api/gateway/donations", { credentials: "include" }),
       ]);
-      if (urlRes.ok)    setGatewayInfo(await urlRes.json() as GatewayInfo);
+      if (urlRes.ok) {
+        const info = await urlRes.json() as GatewayInfo;
+        if (!info.gatewayUrl && typeof window !== "undefined") {
+          info.gatewayUrl = `${window.location.origin}/gateway-payment`;
+          info.configured = true;
+        }
+        setGatewayInfo(info);
+      }
       if (healthRes.ok) setHealth(await healthRes.json() as HealthInfo);
       if (donRes.ok) {
         const d = await donRes.json() as { donations: DonationRecord[] };

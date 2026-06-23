@@ -32,6 +32,7 @@ export interface OverlayState {
   newsStyle: string;     // "Ticker" | "Breaking" | "Lower Third" | "Spotlight" | "Crawl" | "Pop-up" | "Scroll Banner"
   newsAnimation: string; // "None" | "Fade" | "→" | "←" | "↓" | "↙" | "↗" | "Typewriter" | "Pop-in" | "Letter Fade" | "Bounce" | "Reveal"
   newsPosition: OverlayPosition;
+  newsLogo: string;  // base64 data URL for channel logo (optional; replaces "● LIVE" badge)
 
   // ── Ads ──────────────────────────────────────────────────────────────────
   adActive: boolean;
@@ -158,6 +159,7 @@ export function defaultOverlayState(): OverlayState {
     newsStyle: "Ticker",
     newsAnimation: "Fade",
     newsPosition: { x: 0, y: 95 },
+    newsLogo: "",
     adActive: false,
     adText: "Big Sale — 50% Off Today Only!",
     adSub: "Use code LIVE at checkout.",
@@ -301,6 +303,10 @@ export class OverlayRenderer {
   private screenShareImg: import("@napi-rs/canvas").Image | null = null;
   private screenShareDecoding = false;
 
+  // Channel logo image cache for news ticker
+  private newsLogoImg: import("@napi-rs/canvas").Image | null = null;
+  private newsLogoSrc: string = "";
+
   private _panelAlpha = 1;
 
   // News animation tracking
@@ -342,6 +348,18 @@ export class OverlayRenderer {
     // Restart sub alert timer when newly activated
     if (patch.subAlertActive === true && !this.state.subAlertActive) {
       this.subAlertStartT = this.elapsed();
+    }
+    // Reload channel logo image when the src changes
+    if (patch.newsLogo !== undefined && patch.newsLogo !== this.newsLogoSrc) {
+      this.newsLogoSrc = patch.newsLogo;
+      this.newsLogoImg = null;
+      if (patch.newsLogo) {
+        const raw = patch.newsLogo.replace(/^data:[^;]+;base64,/, "");
+        const buf = Buffer.from(raw, "base64");
+        (loadImage as (src: Buffer) => Promise<import("@napi-rs/canvas").Image>)(buf)
+          .then((img) => { if (this.newsLogoSrc === patch.newsLogo) this.newsLogoImg = img; })
+          .catch(() => { this.newsLogoImg = null; });
+      }
     }
     Object.assign(this.state, patch);
   }
@@ -2142,12 +2160,29 @@ export class OverlayRenderer {
     // LIVE badge (red block)
     ctx.fillStyle = accentColor;
     ctx.fillRect(0, y + 2, badgeW, bh - 2);
-    // Badge text
-    ctx.fillStyle = "#fff";
-    ctx.font = `bold ${Math.round(bh * 0.31)}px sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("● LIVE", badgeW / 2, y + bh / 2 + 1);
+    // Badge — logo image if loaded, else "● LIVE" text
+    if (this.newsLogoImg) {
+      const img = this.newsLogoImg;
+      const pad = Math.round(bh * 0.12);
+      const maxH = bh - pad * 2;
+      const scale = Math.min(maxH / img.height, (badgeW - pad * 2) / img.width);
+      const dw = Math.round(img.width * scale);
+      const dh = Math.round(img.height * scale);
+      const dx = Math.round((badgeW - dw) / 2);
+      const dy = y + 2 + Math.round((bh - 2 - dh) / 2);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, y + 2, badgeW, bh - 2);
+      ctx.clip();
+      ctx.drawImage(img, dx, dy, dw, dh);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = "#fff";
+      ctx.font = `bold ${Math.round(bh * 0.31)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("● LIVE", badgeW / 2, y + bh / 2 + 1);
+    }
     // Thin separator
     ctx.fillStyle = "rgba(255,255,255,0.2)";
     ctx.fillRect(badgeW, y + bh * 0.12, 1, bh * 0.76);

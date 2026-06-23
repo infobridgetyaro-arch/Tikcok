@@ -796,7 +796,8 @@ function buildFFmpegArgs(
     "-bufsize", bufsize,
     "-profile:v", "high",
     "-level", "4.0",
-    "-bf", "2",
+    "-bf", "0",
+    "-x264-params", "nal-hrd=cbr:force-cfr=1",
     "-pix_fmt", "yuv420p",
     "-g", String(fps * 2),
     "-keyint_min", String(fps * 2),
@@ -808,7 +809,7 @@ function buildFFmpegArgs(
 
   args.push(
     "-c:a", "aac",
-    "-b:a", "128k",
+    "-b:a", "160k",
     "-ar", "44100",
     "-ac", "2",
   );
