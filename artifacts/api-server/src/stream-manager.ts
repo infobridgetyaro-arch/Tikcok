@@ -262,6 +262,11 @@ function getCachedUrl(streamId: string): CachedUrl | null {
 }
 
 const activeStreams = new Map<string, StreamProcess>();
+
+// Tracks streams explicitly stopped by the user. Every auto-restart timer
+// checks this before calling startStream so that a pending reconnect timer
+// that fires after the user clicked Stop can never leak back to YouTube.
+const manuallyStopped = new Set<string>();
 const wsClients = new Set<WebSocket>();
 
 let currentOverlayState: OverlayState = defaultOverlayState();
@@ -1127,6 +1132,10 @@ function cleanupStreamProc(streamId: string, proc: StreamProcess) {
 
 
 export async function startStream(streamId: string, reuseUrl = false, keepStatus = false) {
+  // Clear the manual-stop guard so auto-restart timers work again after an
+  // explicit restart (API /start or hardKillAndRestart called from the UI).
+  manuallyStopped.delete(streamId);
+
   const stream = storage.getStream(streamId);
   if (!stream) throw new Error("Stream not found");
 
@@ -1582,6 +1591,9 @@ function hardKillAndRestart(streamId: string, delayMs: number, forceNewUrl = fal
   if (!keepStatus) sendStatus(streamId, "reconnecting");
 
   setTimeout(() => {
+    // If the user clicked Stop while this timer was pending, abort — don't
+    // send any more data to YouTube/Facebook.
+    if (manuallyStopped.has(streamId)) return;
     if (storage.getStream(streamId)) {
       startStream(streamId, !forceNewUrl /* reuseUrl */, keepStatus).catch((e: any) => {
         sendLog(streamId, `Fast-restart failed: ${e.message}`);
@@ -1608,11 +1620,15 @@ function handleProcessExit(streamId: string, code: number | null) {
     sendLog(streamId, `[ffmpeg] Process ended unexpectedly (${reason}) — reconnecting in ${delay / 1000}s...`);
     sendStatus(streamId, "reconnecting");
     setTimeout(() => {
+      // Race-condition guard: FFmpeg may have exited at the same instant the
+      // user clicked Stop. If so, do not reconnect — honour the stop intent.
+      if (manuallyStopped.has(streamId)) return;
       if (storage.getStream(streamId)) {
         startStream(streamId, !proc.urlExpired).catch((e: any) => {
           sendLog(streamId, `[ffmpeg] Reconnect failed: ${e.message} — retrying in 10s...`);
           sendStatus(streamId, "reconnecting");
           setTimeout(() => {
+            if (manuallyStopped.has(streamId)) return;
             if (storage.getStream(streamId)) {
               startStream(streamId, true).catch(() => sendStatus(streamId, "error"));
             }
@@ -1633,6 +1649,11 @@ export function stopStream(streamId: string) {
 
   sendLog(streamId, "Stopping stream...");
   proc.autoRestart = false;
+  // Mark as manually stopped BEFORE any async/timer operations so that any
+  // pending hardKillAndRestart or handleProcessExit timers see the flag and
+  // abort — this is what prevents YouTube from staying in "preparing stream"
+  // after the user clicks Stop.
+  manuallyStopped.add(streamId);
   clearCameraLink(streamId);
   cleanupStreamProc(streamId, proc);
   // Remove from activeStreams NOW so handleProcessExit doesn't fire when FFmpeg
