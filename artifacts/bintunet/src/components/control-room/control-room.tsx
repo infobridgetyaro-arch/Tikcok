@@ -14,6 +14,7 @@ import { AIPanel } from "./ai-panel";
 import { DonationPanel, type DonationRecord } from "./donation-panel";
 import { GiftPopup, type GiftEvent } from "./gift-popup";
 import { useWebSocket } from "@/hooks/use-websocket";
+import { toast } from "sonner";
 
 interface ChatMessage {
   id: string;
@@ -1461,6 +1462,30 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
       setPayerName(m.payerName ?? "Someone");
     });
     return () => { u1(); u2(); };
+  }, [subscribe]);
+
+  // Stream health monitor — toast when FFmpeg goes silent mid-stream
+  useEffect(() => {
+    const unhealthy = new Set<string>();
+    return subscribe("stream_health", (msg) => {
+      const { streamId, data } = msg as { streamId: string; data: { status: string; message?: string } };
+      if (!streamId) return;
+      if (data.status === "degraded" && !unhealthy.has(streamId)) {
+        unhealthy.add(streamId);
+        toast.warning(`Stream warning`, {
+          description: data.message ?? "FFmpeg output stalled — may auto-restart soon",
+          duration: 8000,
+          id: `health-${streamId}`,
+        });
+      } else if (data.status === "healthy" && unhealthy.has(streamId)) {
+        unhealthy.delete(streamId);
+        toast.success(`Stream recovered`, {
+          description: "FFmpeg output resumed — stream is healthy",
+          duration: 4000,
+          id: `health-${streamId}`,
+        });
+      }
+    });
   }, [subscribe]);
 
   // Tick all active countdowns every second

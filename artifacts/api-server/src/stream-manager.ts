@@ -916,6 +916,8 @@ async function getXSpaceAudioUrl(spaceUrl: string): Promise<string> {
 // while still fast enough to catch a dead source before the YouTube platform
 // buffer fully drains (~60 s).
 const STALL_TIMEOUT_MS = 30_000;
+const HEALTH_WARN_MS = 15_000; // warn before stall watchdog fires
+
 
 function makeStallWatchdog(
   streamId: string,
@@ -1288,8 +1290,34 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
     let lastProgressLog = 0;
     let lastFrameCount = 0;
     let stallWatchdog: NodeJS.Timeout | null = null;
+    let lastOutputAt = Date.now();
+    let healthWarned = false;
+    let healthMonitor: NodeJS.Timeout | null = null;
+
+    const startHealthMonitor = () => {
+      healthMonitor = setInterval(() => {
+        const silentMs = Date.now() - lastOutputAt;
+        const proc = activeStreams.get(streamId);
+        if (!proc || proc.ffmpegProcess !== ffmpegProc) {
+          if (healthMonitor) { clearInterval(healthMonitor); healthMonitor = null; }
+          return;
+        }
+        if (silentMs >= HEALTH_WARN_MS && !healthWarned) {
+          healthWarned = true;
+          broadcastStream(streamId, "stream_health", {
+            status: "degraded",
+            silentSeconds: Math.round(silentMs / 1000),
+            message: `No FFmpeg output for ${Math.round(silentMs / 1000)}s — stream may be stalling`,
+          });
+        } else if (silentMs < HEALTH_WARN_MS && healthWarned) {
+          healthWarned = false;
+          broadcastStream(streamId, "stream_health", { status: "healthy" });
+        }
+      }, 5000);
+    };
 
     ffmpegProc.stderr?.on("data", (errData: Buffer) => {
+      lastOutputAt = Date.now();
       const lines = errData.toString().split("\n").filter(Boolean);
       lines.forEach((line) => {
         const trimmed = line.trim();
@@ -1374,6 +1402,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
               },
             );
             if (liveProc) liveProc.stallWatchdog = stallWatchdog;
+            startHealthMonitor();
           }
 
           const now = Date.now();
@@ -1477,6 +1506,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
 
     ffmpegProc.on("error", (err) => {
       if (stallWatchdog) clearInterval(stallWatchdog);
+      if (healthMonitor) { clearInterval(healthMonitor); healthMonitor = null; }
       bgRenderer.stop();
       uiRenderer.stop();
       micPipe.stop();
@@ -1493,6 +1523,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
 
     ffmpegProc.on("exit", (code, signal) => {
       if (stallWatchdog) clearInterval(stallWatchdog);
+      if (healthMonitor) { clearInterval(healthMonitor); healthMonitor = null; }
       bgRenderer.stop();
       uiRenderer.stop();
       micPipe.stop();
