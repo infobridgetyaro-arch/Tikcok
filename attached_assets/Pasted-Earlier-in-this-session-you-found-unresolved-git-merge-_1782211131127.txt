@@ -1,0 +1,19 @@
+Earlier in this session you found unresolved git merge conflict markers in two files:
+
+- artifacts/api-server/src/bintunet-routes.ts — conflict spans lines 1594 (<<<<<<< HEAD) to 1635 (=======) to 1884 (>>>>>>> 19b122fd6ce18926233c5ba49e1d5a5f66c8b4a6)
+- artifacts/control-room/src/components/control-room/control-room.tsx — conflict spans lines 2353 (<<<<<<< HEAD) to 2492 (=======) to 2550 (>>>>>>> 19b122fd6ce18926233c5ba49e1d5a5f66c8b4a6)
+
+Your analysis found:
+- HEAD branch = donation-gateway.ts system, registered via registerDonationGateway(app), exposing /api/gateway/charge, /api/gateway/verify, /api/webhook/paystack, /api/gateway/health, /api/gateway/url, /api/gateway/donations. This is what donation-panel.tsx and gateway-payment.tsx actually call.
+- Other branch (19b122f) = a separate Paystack QR payment/superchat flow with its own routes: /api/paystack/init, /api/paystack/scan, /api/paystack/paid, /api/paystack/webhook, /api/paystack/status, /api/paystack/reset. This is called from control-room.tsx around lines 838-866 (payStatus, payStreamId, payTitle, payAmount, initiatePayment, generatePaymentQr, resetPayment), which sits outside the conflict block and depends on routes from the non-HEAD side.
+- In control-room.tsx, the conflicted "QR" tab JSX has HEAD's content as a generic donation-link QR generator (redundant with the separate "Donate" tab's DonationPanel), versus the non-HEAD content, which is the dedicated Paystack superchat payment UI (stream picker, title, amount input, status pill, QR display, thank-you card, reset button) — and the code immediately after the conflict (line 2551 onward, closing divs etc.) syntactically continues the non-HEAD branch, not HEAD's.
+- Your conclusion: resolve both conflicts by discarding HEAD's content and keeping the non-HEAD (19b122f) Paystack flow, since it's what the surrounding code and frontend calls actually depend on — while confirming the separate /api/gateway/* system and registerDonationGateway() call stay intact elsewhere, since donation-panel.tsx and gateway-payment.tsx still depend on it.
+
+Please now do the following, fully and explicitly:
+
+1. Resolve bintunet-routes.ts: remove the conflict markers and HEAD's block, keep the non-HEAD /api/paystack/* route block. Show the full resolved code for that region.
+2. Resolve control-room.tsx: remove the conflict markers and HEAD's block, keep the non-HEAD Paystack payment JSX, and verify it joins cleanly with the code at line 2551 onward (matching divs/tags, no orphaned JSX).
+3. Trace every place each resolved route/component is referenced elsewhere in the codebase (frontend fetch calls, route registration in the main server file, any other component importing/calling these), and list each file + line affected by this resolution.
+4. Verify registerDonationGateway() and the /api/gateway/* routes are still registered and untouched after resolution — show where that registration call lives now.
+5. Re-run a full repo grep for ^<<<<<<<|^=======|^>>>>>>> across .ts/.tsx files to confirm no other unresolved conflicts remain anywhere in the repo.
+6. Summarize, in a short list, every file changed and every file affected (even if not directly edited) by this conflict resolution.
