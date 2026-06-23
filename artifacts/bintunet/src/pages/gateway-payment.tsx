@@ -14,31 +14,33 @@ type Method = "mpesa" | "card";
 interface CardState { number: string; expiry: string; cvv: string; name: string }
 interface ReceiptData { amount: string; method: Method; masked: string; reference: string }
 
-const GREEN = "#22c55e";
-const DARK  = "#0f172a";
+const GREEN      = "#22c55e";
+const MPESA_GREEN = "#00a651";
+const DARK       = "#0f172a";
 
+/* ── Shared sheet / input styles ────────────────────────────────────────── */
 const SHEET: React.CSSProperties = {
   position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10000,
-  background: "#fff", borderRadius: "22px 22px 0 0",
-  padding: "20px 20px 32px", transition: "transform 0.38s cubic-bezier(.32,1.1,.58,1)",
+  background: "#fff", borderRadius: "24px 24px 0 0",
+  padding: "20px 20px 36px", transition: "transform 0.38s cubic-bezier(.32,1.1,.58,1)",
   maxHeight: "94vh", overflowY: "auto",
-  boxShadow: "0 -8px 40px rgba(0,0,0,0.18)",
+  boxShadow: "0 -12px 60px rgba(0,0,0,0.22)",
 };
 const IW: React.CSSProperties = { display: "flex", flexDirection: "column", marginBottom: 14 };
-const IL: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 };
+const IL: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: "#6b7280", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
 const IF: React.CSSProperties = {
-  padding: "11px 14px", borderRadius: 10, border: "1.5px solid #d1d5db",
+  padding: "13px 16px", borderRadius: 12, border: "1.5px solid #e5e7eb",
   fontSize: 15, outline: "none", background: "#f9fafb", color: "#111827",
-  transition: "border-color 0.2s",
+  transition: "border-color 0.2s, box-shadow 0.2s",
 };
 const BTN: React.CSSProperties = {
-  width: "100%", padding: "14px", borderRadius: 100, fontSize: 15, fontWeight: 700,
+  width: "100%", padding: "15px", borderRadius: 100, fontSize: 15, fontWeight: 700,
   cursor: "pointer", border: "none", background: GREEN, color: "#fff", marginBottom: 12,
-  transition: "background 0.2s",
+  transition: "background 0.2s, transform 0.1s",
 };
 const DRAG = (
-  <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
-    <div style={{ width: 42, height: 4, borderRadius: 99, background: "#e5e7eb" }} />
+  <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}>
+    <div style={{ width: 44, height: 4, borderRadius: 99, background: "#e5e7eb" }} />
   </div>
 );
 
@@ -54,19 +56,19 @@ function fmtCountdown(s: number) {
   return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
-function HeartIcon() {
+function HeartIcon({ size = 20 }: { size?: number }) {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill={GREEN} stroke="none">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={GREEN} stroke="none">
       <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
     </svg>
   );
 }
 
-/* ── Animated Credit Card Preview ─────────────────────────────────────── */
+/* ── Animated Credit Card ────────────────────────────────────────────────── */
 function CardPreview({ card, flipped }: { card: CardState; flipped: boolean }) {
   const num = card.number.replace(/\s/g, "").padEnd(16, "·");
   const groups = [num.slice(0,4), num.slice(4,8), num.slice(8,12), num.slice(12,16)];
-  const displayNum = groups.join(" ");
+  const displayNum = groups.join("  ");
   const displayName = card.name.trim() || "CARDHOLDER NAME";
   const displayExpiry = card.expiry || "MM/YY";
 
@@ -79,142 +81,167 @@ function CardPreview({ card, flipped }: { card: CardState; flipped: boolean }) {
   })();
 
   return (
-    <div style={{ perspective: 1000, width: "100%", marginBottom: 20 }}>
+    <div style={{ perspective: 1000, width: "100%", marginBottom: 6 }}>
       <div style={{
-        position: "relative", width: "100%", paddingBottom: "56.25%",
+        position: "relative", width: "100%", paddingBottom: "58%",
         transformStyle: "preserve-3d",
-        transition: "transform 0.6s cubic-bezier(0.4,0.2,0.2,1)",
+        transition: "transform 0.65s cubic-bezier(0.4,0.2,0.2,1)",
         transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)",
       }}>
-        {/* Front */}
+        {/* ── Front ── */}
         <div style={{
           position: "absolute", inset: 0, backfaceVisibility: "hidden",
-          borderRadius: 16, overflow: "hidden",
-          background: "linear-gradient(135deg, #1a1f36 0%, #0d1b2a 40%, #1a2f1a 100%)",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.35), 0 4px 20px rgba(0,0,0,0.2)",
-          padding: "20px 24px",
+          borderRadius: 18, overflow: "hidden",
+          background: "linear-gradient(135deg, #1e2a5e 0%, #0d1b3e 45%, #162a1c 100%)",
+          boxShadow: "0 24px 64px rgba(0,0,0,0.40), 0 4px 16px rgba(0,0,0,0.25)",
+          padding: "22px 26px",
           display: "flex", flexDirection: "column", justifyContent: "space-between",
         }}>
-          {/* Shimmer overlay */}
-          <div style={{
-            position: "absolute", inset: 0, borderRadius: 16,
-            background: "linear-gradient(135deg, rgba(255,255,255,0.06) 0%, transparent 50%, rgba(255,255,255,0.03) 100%)",
-            pointerEvents: "none",
-          }} />
-          {/* Chip + Logo row */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              {/* EMV chip */}
-              <div style={{
-                width: 38, height: 28, borderRadius: 5,
-                background: "linear-gradient(135deg, #d4af37 0%, #f5d060 40%, #c8a227 100%)",
-                boxShadow: "inset 0 1px 2px rgba(255,255,255,0.5), 0 2px 4px rgba(0,0,0,0.3)",
-                display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
-                gap: 2, padding: 5,
-              }}>
-                {[0,1,2,3].map(i => (
-                  <div key={i} style={{ borderRadius: 2, background: "rgba(0,0,0,0.18)" }} />
-                ))}
-              </div>
+          <div style={{ position: "absolute", inset: 0, borderRadius: 18,
+            background: "linear-gradient(120deg, rgba(255,255,255,0.07) 0%, transparent 55%, rgba(255,255,255,0.04) 100%)",
+            pointerEvents: "none" }} />
+          {/* Decorative circles */}
+          <div style={{ position: "absolute", top: -40, right: -40, width: 160, height: 160, borderRadius: "50%", background: "rgba(255,255,255,0.04)", pointerEvents: "none" }} />
+          <div style={{ position: "absolute", bottom: -30, left: -30, width: 120, height: 120, borderRadius: "50%", background: "rgba(255,255,255,0.03)", pointerEvents: "none" }} />
+
+          {/* Chip + Brand */}
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+            <div style={{
+              width: 40, height: 30, borderRadius: 6,
+              background: "linear-gradient(135deg, #d4af37 0%, #f7e57c 45%, #c8a227 100%)",
+              boxShadow: "inset 0 1px 2px rgba(255,255,255,0.6), 0 2px 5px rgba(0,0,0,0.35)",
+              display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
+              gap: 3, padding: 6,
+            }}>
+              {[0,1,2,3].map(i => <div key={i} style={{ borderRadius: 2, background: "rgba(0,0,0,0.2)" }} />)}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              {/* Contactless icon */}
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.6 }}>
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" fill="rgba(255,255,255,0.08)" />
-                <path d="M7 12c0-2.76 2.24-5 5-5" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5" strokeLinecap="round" />
-                <path d="M10 12c0-1.1.9-2 2-2" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5" strokeLinecap="round" />
-                <path d="M4 12c0-4.42 3.58-8 8-8" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" strokeLinecap="round" />
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.5 }}>
+                <path d="M7 12c0-2.76 2.24-5 5-5" stroke="rgba(255,255,255,0.7)" strokeWidth="1.5" strokeLinecap="round" />
+                <path d="M10 12c0-1.1.9-2 2-2" stroke="rgba(255,255,255,0.7)" strokeWidth="1.5" strokeLinecap="round" />
+                <path d="M4 12c0-4.42 3.58-8 8-8" stroke="rgba(255,255,255,0.4)" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
-              {/* Card brand logo */}
-              {cardType === "visa" && (
-                <span style={{ fontSize: 18, fontWeight: 900, fontStyle: "italic", color: "#fff", letterSpacing: 1, fontFamily: "Georgia, serif" }}>VISA</span>
-              )}
+              {cardType === "visa" && <span style={{ fontSize: 20, fontWeight: 900, fontStyle: "italic", color: "#fff", fontFamily: "Georgia, serif", letterSpacing: 1 }}>VISA</span>}
               {cardType === "mastercard" && (
-                <div style={{ display: "flex", position: "relative", width: 36, height: 24 }}>
+                <div style={{ position: "relative", width: 38, height: 24 }}>
                   <div style={{ width: 24, height: 24, borderRadius: "50%", background: "#eb001b", position: "absolute", left: 0 }} />
-                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: "#f79e1b", position: "absolute", left: 12, mixBlendMode: "screen" }} />
+                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: "#f79e1b", position: "absolute", left: 14, mixBlendMode: "screen" }} />
                 </div>
               )}
-              {cardType === "amex" && (
-                <span style={{ fontSize: 14, fontWeight: 900, color: "#60a5fa", letterSpacing: 1 }}>AMEX</span>
-              )}
-              {!cardType && (
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", fontWeight: 600 }}>CARD</span>
-              )}
+              {cardType === "amex" && <span style={{ fontSize: 14, fontWeight: 900, color: "#60a5fa", letterSpacing: 1 }}>AMEX</span>}
+              {!cardType && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", fontWeight: 600 }}>CARD</span>}
             </div>
           </div>
-          {/* Card number */}
-          <div style={{ fontFamily: "'Courier New', monospace", fontSize: 19, fontWeight: 700, color: "#fff", letterSpacing: 3, textShadow: "0 1px 4px rgba(0,0,0,0.5)" }}>
+
+          {/* Number */}
+          <div style={{ fontFamily: "'Courier New', monospace", fontSize: 20, fontWeight: 700, color: "#fff", letterSpacing: 4, textShadow: "0 2px 6px rgba(0,0,0,0.5)", marginTop: 10 }}>
             {displayNum}
           </div>
-          {/* Name + Expiry row */}
+
+          {/* Name + Expiry */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-            <div>
-              <div style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 3 }}>Card Holder</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", letterSpacing: 1, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div style={{ flex: 1, minWidth: 0, marginRight: 16 }}>
+              <div style={{ fontSize: 8, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 4 }}>Card Holder</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", letterSpacing: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {displayName}
               </div>
             </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 3 }}>Expires</div>
+            <div style={{ textAlign: "right", flexShrink: 0 }}>
+              <div style={{ fontSize: 8, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 4 }}>Expires</div>
               <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", letterSpacing: 2 }}>{displayExpiry}</div>
             </div>
           </div>
         </div>
 
-        {/* Back */}
+        {/* ── Back ── */}
         <div style={{
           position: "absolute", inset: 0, backfaceVisibility: "hidden",
-          transform: "rotateY(180deg)",
-          borderRadius: 16, overflow: "hidden",
-          background: "linear-gradient(135deg, #1a1f36 0%, #0d1b2a 100%)",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
+          transform: "rotateY(180deg)", borderRadius: 18, overflow: "hidden",
+          background: "linear-gradient(135deg, #1e2a5e 0%, #0d1b3e 100%)",
+          boxShadow: "0 24px 64px rgba(0,0,0,0.40)",
           display: "flex", flexDirection: "column", justifyContent: "center",
         }}>
-          {/* Magnetic strip */}
-          <div style={{ width: "100%", height: 40, background: "#111", marginBottom: 16 }} />
-          {/* CVV strip */}
-          <div style={{ padding: "0 24px", display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ flex: 1, height: 36, background: "#fff", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 12 }}>
-              <span style={{ color: "#111", fontFamily: "monospace", fontSize: 15, fontWeight: 700, letterSpacing: 4 }}>
+          <div style={{ width: "100%", height: 44, background: "#0a0f1e", marginBottom: 20 }} />
+          <div style={{ padding: "0 26px", display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ flex: 1, height: 38, background: "repeating-linear-gradient(90deg, #fff 0, #f5f5f5 1px, #fff 2px)", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 14 }}>
+              <span style={{ color: "#111", fontFamily: "monospace", fontSize: 16, fontWeight: 700, letterSpacing: 5 }}>
                 {card.cvv ? card.cvv.replace(/./g, "•") : "•••"}
               </span>
             </div>
-            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600, whiteSpace: "nowrap" }}>CVV</span>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 2 }}>CVV</div>
+              {cardType === "visa" && <span style={{ fontSize: 14, fontWeight: 900, fontStyle: "italic", color: "#fff", fontFamily: "Georgia, serif" }}>VISA</span>}
+              {cardType === "mastercard" && (
+                <div style={{ position: "relative", width: 32, height: 20 }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#eb001b", position: "absolute", left: 0 }} />
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#f79e1b", position: "absolute", left: 12, mixBlendMode: "screen" }} />
+                </div>
+              )}
+            </div>
           </div>
-          <div style={{ padding: "16px 24px 0", display: "flex", justifyContent: "flex-end" }}>
-            {cardType === "visa" && <span style={{ fontSize: 16, fontWeight: 900, fontStyle: "italic", color: "#fff", fontFamily: "Georgia, serif" }}>VISA</span>}
-            {cardType === "mastercard" && (
-              <div style={{ display: "flex", position: "relative", width: 36, height: 24 }}>
-                <div style={{ width: 24, height: 24, borderRadius: "50%", background: "#eb001b", position: "absolute", left: 0 }} />
-                <div style={{ width: 24, height: 24, borderRadius: "50%", background: "#f79e1b", position: "absolute", left: 12, mixBlendMode: "screen" }} />
-              </div>
-            )}
+          <div style={{ padding: "16px 26px 0", fontSize: 10, color: "rgba(255,255,255,0.25)", textAlign: "center" }}>
+            Tap CVV field above to reveal
           </div>
         </div>
+      </div>
+      {/* Flip hint */}
+      <div style={{ textAlign: "center", marginTop: 8, marginBottom: 16, fontSize: 11, color: "#9ca3af", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+        Focus the CVV field to flip card
       </div>
     </div>
   );
 }
 
-/* ── Card brand icons row ─────────────────────────────────────────────── */
+/* ── Card brand badges ───────────────────────────────────────────────────── */
 function CardBrands() {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 14 }}>
-      {/* VISA */}
-      <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "4px 10px", display: "flex", alignItems: "center" }}>
-        <span style={{ fontSize: 14, fontWeight: 900, fontStyle: "italic", color: "#1a1f71", fontFamily: "Georgia, serif", letterSpacing: 1 }}>VISA</span>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+      <span style={{ fontSize: 11, color: "#9ca3af", fontWeight: 600, marginRight: 2 }}>We accept:</span>
+      <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "3px 10px" }}>
+        <span style={{ fontSize: 13, fontWeight: 900, fontStyle: "italic", color: "#1a1f71", fontFamily: "Georgia, serif" }}>VISA</span>
       </div>
-      {/* Mastercard */}
-      <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "4px 10px", display: "flex", alignItems: "center", gap: 3 }}>
-        <div style={{ position: "relative", width: 30, height: 18, display: "flex", alignItems: "center" }}>
-          <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#eb001b", position: "absolute", left: 0 }} />
-          <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#f79e1b", position: "absolute", left: 10 }} />
+      <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "3px 8px", display: "flex", alignItems: "center" }}>
+        <div style={{ position: "relative", width: 28, height: 17, display: "flex", alignItems: "center" }}>
+          <div style={{ width: 17, height: 17, borderRadius: "50%", background: "#eb001b", position: "absolute", left: 0 }} />
+          <div style={{ width: 17, height: 17, borderRadius: "50%", background: "#f79e1b", position: "absolute", left: 10 }} />
         </div>
       </div>
-      {/* Amex */}
-      <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "4px 10px", display: "flex", alignItems: "center" }}>
-        <span style={{ fontSize: 12, fontWeight: 900, color: "#2563eb", letterSpacing: 1 }}>AMEX</span>
+      <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "3px 10px" }}>
+        <span style={{ fontSize: 11, fontWeight: 900, color: "#2563eb", letterSpacing: 0.5 }}>AMEX</span>
+      </div>
+    </div>
+  );
+}
+
+/* ── M-Pesa branding header ─────────────────────────────────────────────── */
+function MpesaBanner() {
+  return (
+    <div style={{
+      background: "linear-gradient(135deg, #00a651 0%, #007a3a 100%)",
+      borderRadius: 16, padding: "16px 20px", marginBottom: 20,
+      display: "flex", alignItems: "center", gap: 14,
+      boxShadow: "0 4px 20px rgba(0,166,81,0.25)",
+    }}>
+      {/* M-Pesa icon */}
+      <div style={{
+        width: 48, height: 48, borderRadius: 12, background: "rgba(255,255,255,0.18)",
+        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+        border: "1px solid rgba(255,255,255,0.25)",
+      }}>
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="5" y="2" width="14" height="20" rx="2"/>
+          <circle cx="12" cy="17" r="1.2" fill="#fff" stroke="none"/>
+          <path d="M9 7h6"/>
+          <path d="M9 10h4"/>
+        </svg>
+      </div>
+      <div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: "#fff", letterSpacing: "-0.01em" }}>M-Pesa Payment</div>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.8)", marginTop: 2 }}>An STK push will be sent to your phone</div>
+      </div>
+      <div style={{ marginLeft: "auto", background: "rgba(255,255,255,0.2)", borderRadius: 8, padding: "4px 10px" }}>
+        <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", letterSpacing: "0.05em" }}>INSTANT</span>
       </div>
     </div>
   );
@@ -242,7 +269,6 @@ export default function GatewayPaymentPage() {
   const [redirectUrl, setRedirectUrl] = useState("");
   const [iframeLoading, setIframeLoading] = useState(true);
   const [copied, setCopied]       = useState(false);
-  const [streamName, setStreamName] = useState("BintuNet Live");
   const [healthy, setHealthy]     = useState<boolean | null>(null);
   const cvvRef = useRef<HTMLInputElement>(null);
 
@@ -307,7 +333,7 @@ export default function GatewayPaymentPage() {
 
   const processMpesa = useCallback(async () => {
     const amt = parseFloat(amount);
-    if (!amount || isNaN(amt) || amt < 10) { showError("Enter a valid amount (minimum KES 10)."); return; }
+    if (!amount || isNaN(amt) || amt < 1) { showError("Enter a valid amount (minimum KES 1)."); return; }
     if (!phone) { showError("Enter your M-Pesa phone number."); return; }
     setCountdown(120); setStatusTitle("Sending STK Push…"); setStatusDesc("An M-Pesa prompt is being sent to your phone. Enter your PIN to confirm.");
     setView("status");
@@ -324,7 +350,7 @@ export default function GatewayPaymentPage() {
 
   const processCard = useCallback(async () => {
     const amt = parseFloat(amount);
-    if (!amount || isNaN(amt) || amt < 10) { showError("Enter a valid amount (minimum KES 10)."); return; }
+    if (!amount || isNaN(amt) || amt < 1) { showError("Enter a valid amount (minimum KES 1)."); return; }
     const cleanCard = card.number.replace(/\s/g, "");
     if (cleanCard.length < 13) { showError("Enter a valid card number."); return; }
     if (!card.expiry || !card.cvv || !card.name) { showError("All card fields are required."); return; }
@@ -349,11 +375,11 @@ export default function GatewayPaymentPage() {
       }
       if (s === "send_otp" || s === "send_pin" || s === "send_address" || s === "send_phone" || s === "send_birthday") {
         const labels: Record<string, [string, string, string]> = {
-          send_otp:      ["Enter OTP",           "Check your phone for the one-time password.", "submit_otp"],
-          send_pin:      ["Enter Card PIN",       "Enter your 4-digit card PIN to confirm.", "submit_pin"],
-          send_address:  ["Enter Billing Address","Enter your billing address.", "submit_address"],
-          send_phone:    ["Enter Phone Number",   "Enter the phone number registered with your card.", "submit_phone"],
-          send_birthday: ["Enter Date of Birth",  "Enter your birthday (YYYY-MM-DD).", "submit_birthday"],
+          send_otp:      ["Enter OTP",            "Check your phone for the one-time password.", "submit_otp"],
+          send_pin:      ["Enter Card PIN",        "Enter your 4-digit card PIN to confirm.", "submit_pin"],
+          send_address:  ["Enter Billing Address", "Enter your billing address.", "submit_address"],
+          send_phone:    ["Enter Phone Number",    "Enter the phone number registered with your card.", "submit_phone"],
+          send_birthday: ["Enter Date of Birth",   "Enter your birthday (YYYY-MM-DD).", "submit_birthday"],
         };
         const [label, hint, action] = labels[s] ?? ["Enter Code", "Check your phone.", "submit_otp"];
         setOtpLabel(label); setOtpHint(hint); setOtpAction(action); setOtpCode(""); setView("otp"); return;
@@ -385,74 +411,121 @@ export default function GatewayPaymentPage() {
   }, [otpCode, otpAction, reference, amount, method, phone, card, showError]);
 
   const closeAll = () => { setIsOpen(false); setView("checkout"); setOtpCode(""); setReference(""); setCardFlipped(false); };
-  const goBack = () => { setView("checkout"); setOtpCode(""); setReference(""); setCardFlipped(false); };
-  const copyRef = () => { if (receipt?.reference) { navigator.clipboard.writeText(receipt.reference); setCopied(true); setTimeout(() => setCopied(false), 2000); } };
+  const goBack   = () => { setView("checkout"); setOtpCode(""); setReference(""); setCardFlipped(false); };
+  const copyRef  = () => {
+    if (receipt?.reference) {
+      navigator.clipboard.writeText(receipt.reference);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   return (
-    <div style={{ minHeight: "100vh", background: `linear-gradient(160deg, ${DARK} 0%, #0d1f0f 60%, #1a2e1a 100%)`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "'Inter', system-ui, sans-serif", position: "relative", overflow: "hidden" }}>
-      <div style={{ position: "absolute", top: "10%", right: "-10%", width: 350, height: 350, borderRadius: "50%", background: "radial-gradient(circle, rgba(34,197,94,0.12) 0%, transparent 70%)", filter: "blur(60px)", pointerEvents: "none" }} />
-      <div style={{ position: "absolute", bottom: "5%", left: "-10%", width: 300, height: 300, borderRadius: "50%", background: "radial-gradient(circle, rgba(34,197,94,0.07) 0%, transparent 70%)", filter: "blur(50px)", pointerEvents: "none" }} />
+    <div style={{
+      minHeight: "100vh",
+      background: `linear-gradient(160deg, ${DARK} 0%, #0d1f0f 60%, #1a2e1a 100%)`,
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      padding: 24, fontFamily: "'Inter', system-ui, sans-serif",
+      position: "relative", overflow: "hidden",
+    }}>
+      {/* Background glows */}
+      <div style={{ position: "absolute", top: "8%", right: "-12%", width: 380, height: 380, borderRadius: "50%", background: "radial-gradient(circle, rgba(34,197,94,0.13) 0%, transparent 70%)", filter: "blur(60px)", pointerEvents: "none" }} />
+      <div style={{ position: "absolute", bottom: "4%", left: "-12%", width: 320, height: 320, borderRadius: "50%", background: "radial-gradient(circle, rgba(34,197,94,0.08) 0%, transparent 70%)", filter: "blur(50px)", pointerEvents: "none" }} />
 
+      {/* Hero content */}
       <div style={{ textAlign: "center", maxWidth: 380, position: "relative", zIndex: 1 }}>
-        <div style={{ width: 72, height: 72, background: "rgba(34,197,94,0.15)", border: "2px solid rgba(34,197,94,0.3)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
-          <HeartIcon />
+        <div style={{
+          width: 76, height: 76,
+          background: "rgba(34,197,94,0.15)", border: "2px solid rgba(34,197,94,0.3)",
+          borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+          margin: "0 auto 20px",
+        }}>
+          <HeartIcon size={28} />
         </div>
-        <h1 style={{ margin: "0 0 8px", fontSize: 28, fontWeight: 800, color: "#fff", letterSpacing: "-0.02em" }}>Support the Stream</h1>
-        <p style={{ margin: "0 0 32px", fontSize: 14, color: "rgba(255,255,255,0.55)", lineHeight: 1.6 }}>
-          Send a donation via M-Pesa or card. It shows up live on the stream!
+        <h1 style={{ margin: "0 0 8px", fontSize: 30, fontWeight: 800, color: "#fff", letterSpacing: "-0.02em" }}>
+          Support the Stream
+        </h1>
+        <p style={{ margin: "0 0 28px", fontSize: 14, color: "rgba(255,255,255,0.5)", lineHeight: 1.7 }}>
+          Send a donation via M-Pesa or card.<br/>It shows up live on the stream!
         </p>
 
         {healthy !== null && (
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 14px", borderRadius: 99, background: healthy ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)", border: `1px solid ${healthy ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`, marginBottom: 28 }}>
-            <div style={{ width: 6, height: 6, borderRadius: "50%", background: healthy ? GREEN : "#ef4444", animation: "pulse 1.5s infinite" }} />
-            <span style={{ fontSize: 11, fontWeight: 700, color: healthy ? GREEN : "#ef4444" }}>{healthy ? "LIVE — Accepting Donations" : "Gateway Unavailable"}</span>
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 7,
+            padding: "6px 16px", borderRadius: 99, marginBottom: 28,
+            background: healthy ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)",
+            border: `1px solid ${healthy ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`,
+          }}>
+            <div style={{
+              width: 7, height: 7, borderRadius: "50%",
+              background: healthy ? GREEN : "#ef4444",
+              animation: "pulse 1.5s infinite",
+            }} />
+            <span style={{ fontSize: 12, fontWeight: 700, color: healthy ? GREEN : "#ef4444" }}>
+              {healthy ? "LIVE — Accepting Donations" : "Gateway Unavailable"}
+            </span>
           </div>
         )}
 
         <button
           onClick={() => { setIsOpen(true); setView("checkout"); }}
-          style={{ ...BTN, fontSize: 16, padding: "16px 32px", borderRadius: 100, display: "inline-flex", alignItems: "center", gap: 10, justifyContent: "center", boxShadow: `0 4px 24px rgba(34,197,94,0.35)` }}
+          style={{
+            ...BTN, fontSize: 16, padding: "17px 36px", borderRadius: 100,
+            display: "inline-flex", alignItems: "center", gap: 10, justifyContent: "center",
+            boxShadow: `0 6px 28px rgba(34,197,94,0.4)`,
+          }}
         >
           <HeartIcon />
           Donate Now
         </button>
 
-        <p style={{ margin: "16px 0 0", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>
+        <p style={{ margin: "18px 0 0", fontSize: 12, color: "rgba(255,255,255,0.25)" }}>
           Powered by Paystack · Secured by 256-bit SSL
         </p>
       </div>
 
+      {/* Backdrop */}
       {isOpen && (
-        <div onClick={closeAll} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", zIndex: 9999 }} />
+        <div onClick={closeAll} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)", zIndex: 9999 }} />
       )}
 
-      {/* ── CHECKOUT sheet ──────────────────────────────────────────────────── */}
+      {/* ── CHECKOUT sheet ───────────────────────────────────────────────────── */}
       <div style={{ ...SHEET, transform: `translateY(${vis("checkout") && isOpen ? "0%" : "110%"})`, zIndex: 10000 }}>
         {DRAG}
-        <h3 style={{ margin: "0 0 4px", fontSize: 22, fontWeight: 800, color: "#111827" }}>
-          💚 Make a Donation
-        </h3>
-        <p style={{ fontSize: 13, color: "#6b7280", margin: "0 0 20px" }}>All payments processed securely via Paystack</p>
+
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: "#f0fdf4", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <HeartIcon size={18} />
+          </div>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#111827" }}>Make a Donation</h3>
+            <p style={{ margin: 0, fontSize: 12, color: "#9ca3af" }}>All payments processed securely via Paystack</p>
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div style={{ height: 1, background: "#f3f4f6", margin: "16px 0" }} />
 
         {/* Method tabs */}
-        <div style={{ display: "flex", gap: 0, marginBottom: 20, background: "#f3f4f6", borderRadius: 12, padding: 4 }}>
+        <div style={{ display: "flex", gap: 0, marginBottom: 20, background: "#f3f4f6", borderRadius: 14, padding: 4 }}>
           {(["mpesa", "card"] as Method[]).map(m => (
             <button
               key={m}
               onClick={() => { setMethod(m); setCardFlipped(false); }}
               style={{
-                flex: 1, padding: "11px 0", border: "none", cursor: "pointer",
-                borderRadius: 9, fontSize: 14, fontWeight: 700,
+                flex: 1, padding: "12px 0", border: "none", cursor: "pointer",
+                borderRadius: 11, fontSize: 14, fontWeight: 700,
                 transition: "all 0.22s cubic-bezier(0.34,1.56,0.64,1)",
                 background: method === m ? "#fff" : "transparent",
-                color: method === m ? "#111827" : "#9ca3af",
-                boxShadow: method === m ? "0 2px 10px rgba(0,0,0,0.12)" : "none",
+                color: method === m ? (m === "mpesa" ? MPESA_GREEN : "#111827") : "#9ca3af",
+                boxShadow: method === m ? "0 2px 12px rgba(0,0,0,0.10)" : "none",
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
               }}
             >
               {m === "mpesa" ? (
                 <>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="5" y="2" width="14" height="20" rx="2"/>
                     <circle cx="12" cy="17" r="1"/>
                     <path d="M9 7h6"/>
@@ -461,55 +534,100 @@ export default function GatewayPaymentPage() {
                 </>
               ) : (
                 <>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="1" y="4" width="22" height="16" rx="2"/>
                     <line x1="1" y1="10" x2="23" y2="10"/>
                   </svg>
-                  Credit / Debit Card
+                  Card
                 </>
               )}
             </button>
           ))}
         </div>
 
-        {/* Animated card preview (card mode only) */}
+        {/* Card preview (card mode) */}
         {method === "card" && (
           <CardPreview card={card} flipped={cardFlipped} />
         )}
 
+        {/* M-Pesa banner */}
+        {method === "mpesa" && <MpesaBanner />}
+
         {/* Donor name */}
         <div style={IW}>
-          <label style={IL}>Your Name (optional)</label>
-          <input value={donorName} onChange={e => setDonorName(e.target.value)} placeholder="e.g. John" style={IF} />
+          <label style={IL}>Your Name <span style={{ color: "#d1d5db", fontWeight: 400, textTransform: "none" }}>(optional)</span></label>
+          <input
+            value={donorName}
+            onChange={e => setDonorName(e.target.value)}
+            placeholder="e.g. John Kamau"
+            style={IF}
+          />
         </div>
 
         {/* Amount */}
         <div style={IW}>
           <label style={IL}>Amount (KES)</label>
-          <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="e.g. 500" style={IF} min={10} />
+          <div style={{ position: "relative" }}>
+            <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", fontSize: 14, fontWeight: 700, color: "#9ca3af" }}>KES</span>
+            <input
+              type="number"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              placeholder="0"
+              style={{ ...IF, paddingLeft: 52, width: "100%", boxSizing: "border-box", fontSize: 18, fontWeight: 700 }}
+              min={1}
+            />
+          </div>
         </div>
 
         {/* Quick amounts */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-          {[50, 100, 200, 500, 1000].map(a => (
-            <button key={a} onClick={() => setAmount(String(a))} style={{ padding: "6px 14px", borderRadius: 99, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${amount === String(a) ? GREEN : "#e5e7eb"}`, background: amount === String(a) ? `rgba(34,197,94,0.08)` : "#f9fafb", color: amount === String(a) ? "#16a34a" : "#374151", transition: "all 0.15s" }}>
-              KES {a}
+        <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
+          {[10, 50, 100, 500, 1000].map(a => (
+            <button
+              key={a}
+              onClick={() => setAmount(String(a))}
+              style={{
+                padding: "7px 15px", borderRadius: 99, fontSize: 12, fontWeight: 700,
+                cursor: "pointer",
+                border: `1.5px solid ${amount === String(a) ? GREEN : "#e5e7eb"}`,
+                background: amount === String(a) ? "rgba(34,197,94,0.08)" : "#f9fafb",
+                color: amount === String(a) ? "#16a34a" : "#6b7280",
+                transition: "all 0.15s",
+              }}
+            >
+              {a}
             </button>
           ))}
         </div>
 
-        {/* M-Pesa fields */}
+        {/* ── M-Pesa fields ── */}
         {method === "mpesa" && (
           <div style={IW}>
             <label style={IL}>M-Pesa Number</label>
-            <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="07XXXXXXXX" style={IF} />
-            <span style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>An STK push will be sent to this number</span>
+            <div style={{ position: "relative" }}>
+              <span style={{
+                position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
+                fontSize: 14, fontWeight: 700, color: MPESA_GREEN,
+              }}>+254</span>
+              <input
+                type="tel"
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
+                placeholder="07XXXXXXXX"
+                style={{ ...IF, paddingLeft: 56, width: "100%", boxSizing: "border-box" }}
+              />
+            </div>
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", background: "#f0fdf4", borderRadius: 8, border: "1px solid #bbf7d0" }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={MPESA_GREEN} strokeWidth="2.2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.5" fill={MPESA_GREEN} stroke={MPESA_GREEN} strokeWidth="2"/></svg>
+              <span style={{ fontSize: 11, color: "#166534", fontWeight: 500 }}>Enter your Safaricom number — you'll get a PIN prompt on your phone</span>
+            </div>
           </div>
         )}
 
-        {/* Card fields */}
+        {/* ── Card fields ── */}
         {method === "card" && (
           <>
+            <CardBrands />
             <div style={IW}>
               <label style={IL}>Card Number</label>
               <input
@@ -517,8 +635,9 @@ export default function GatewayPaymentPage() {
                 value={card.number}
                 onChange={e => setCard({ ...card, number: formatCardNumber(e.target.value) })}
                 onFocus={() => setCardFlipped(false)}
-                placeholder="1234 5678 9012 3456" maxLength={19}
-                style={{ ...IF, letterSpacing: 2, fontFamily: "monospace" }}
+                placeholder="1234  5678  9012  3456"
+                maxLength={19}
+                style={{ ...IF, letterSpacing: 3, fontFamily: "'Courier New', monospace", fontSize: 16 }}
               />
             </div>
             <div style={{ display: "flex", gap: 12, marginBottom: 14 }}>
@@ -529,8 +648,9 @@ export default function GatewayPaymentPage() {
                   value={card.expiry}
                   onChange={e => setCard({ ...card, expiry: formatExpiry(e.target.value) })}
                   onFocus={() => setCardFlipped(false)}
-                  placeholder="MM/YY" maxLength={5}
-                  style={IF}
+                  placeholder="MM/YY"
+                  maxLength={5}
+                  style={{ ...IF, textAlign: "center", letterSpacing: 2, fontWeight: 700 }}
                 />
               </div>
               <div style={{ ...IW, flex: 1, marginBottom: 0 }}>
@@ -542,8 +662,9 @@ export default function GatewayPaymentPage() {
                   onChange={e => setCard({ ...card, cvv: e.target.value.replace(/\D/g, "").slice(0, 4) })}
                   onFocus={() => setCardFlipped(true)}
                   onBlur={() => setCardFlipped(false)}
-                  placeholder="•••" maxLength={4}
-                  style={IF}
+                  placeholder="•••"
+                  maxLength={4}
+                  style={{ ...IF, textAlign: "center", letterSpacing: 4, fontWeight: 700 }}
                 />
               </div>
             </div>
@@ -555,29 +676,35 @@ export default function GatewayPaymentPage() {
                 onChange={e => setCard({ ...card, name: e.target.value.toUpperCase() })}
                 onFocus={() => setCardFlipped(false)}
                 placeholder="JOHN DOE"
-                style={IF}
+                style={{ ...IF, letterSpacing: 1, fontWeight: 600 }}
               />
             </div>
-            <CardBrands />
           </>
         )}
 
+        {/* Pay button */}
         <button
           onClick={method === "mpesa" ? processMpesa : processCard}
-          style={{ ...BTN, boxShadow: `0 4px 20px rgba(34,197,94,0.3)`, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+          style={{
+            ...BTN,
+            background: method === "mpesa" ? `linear-gradient(135deg, ${MPESA_GREEN} 0%, #007a3a 100%)` : `linear-gradient(135deg, ${GREEN} 0%, #16a34a 100%)`,
+            boxShadow: method === "mpesa" ? "0 6px 24px rgba(0,166,81,0.35)" : "0 6px 24px rgba(34,197,94,0.35)",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 9,
+            fontSize: 16,
+          }}
         >
           {method === "mpesa" ? (
             <>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="5" y="2" width="14" height="20" rx="2"/>
                 <circle cx="12" cy="17" r="1"/>
                 <path d="M9 7h6"/>
               </svg>
-              Pay via M-Pesa
+              Pay KES {amount || "0"} via M-Pesa
             </>
           ) : (
             <>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
               </svg>
               Pay KES {amount || "0"} Securely
@@ -585,46 +712,60 @@ export default function GatewayPaymentPage() {
           )}
         </button>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "center", color: "#9ca3af", fontSize: 11 }}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "center", color: "#9ca3af", fontSize: 11, marginTop: 4 }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={GREEN} strokeWidth="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           256-bit SSL · Secured by Paystack
         </div>
       </div>
 
-      {/* ── STATUS sheet ─────────────────────────────────────────────────────── */}
+      {/* ── STATUS sheet ──────────────────────────────────────────────────────── */}
       <div style={{ ...SHEET, transform: `translateY(${vis("status") && isOpen ? "0%" : "110%"})`, zIndex: 10001 }}>
         {DRAG}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "10px 0" }}>
-          <div style={{ width: 88, height: 88, borderRadius: "50%", background: "#f0fdf4", border: `4px solid #e0f2e9`, borderTopColor: GREEN, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20, animation: "spin 1.2s linear infinite" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "16px 0" }}>
+          <div style={{
+            width: 90, height: 90, borderRadius: "50%",
+            background: "#f0fdf4", border: `4px solid #dcfce7`,
+            borderTopColor: GREEN,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            marginBottom: 22, animation: "spin 1.2s linear infinite",
+          }}>
             <span style={{ fontFamily: "monospace", fontSize: 22, fontWeight: 700, color: "#111827" }}>{fmtCountdown(countdown)}</span>
           </div>
           <h3 style={{ margin: "0 0 8px", fontSize: 22, fontWeight: 800, color: "#111827" }}>{statusTitle}</h3>
-          <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>{statusDesc}</p>
+          <p style={{ fontSize: 13, color: "#6b7280", margin: 0, lineHeight: 1.6 }}>{statusDesc}</p>
         </div>
       </div>
 
-      {/* ── OTP sheet ────────────────────────────────────────────────────────── */}
+      {/* ── OTP sheet ─────────────────────────────────────────────────────────── */}
       <div style={{ ...SHEET, transform: `translateY(${vis("otp") && isOpen ? "0%" : "110%"})`, zIndex: 10002 }}>
         {DRAG}
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
-          <div style={{ width: 52, height: 52, background: "#f0fdf4", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={GREEN} strokeWidth="2.2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          <div style={{ width: 56, height: 56, background: "#f0fdf4", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={GREEN} strokeWidth="2.2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
           </div>
         </div>
         <h3 style={{ margin: "0 0 6px", fontSize: 20, fontWeight: 800, color: "#111827", textAlign: "center" }}>{otpLabel}</h3>
-        <p style={{ fontSize: 13, color: "#6b7280", margin: "0 0 20px", textAlign: "center", lineHeight: 1.5 }}>{otpHint}</p>
-        <div style={{ ...IW }}>
-          <input type="text" inputMode="numeric" value={otpCode} onChange={e => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 8))} placeholder="••••••" maxLength={8} autoFocus style={{ ...IF, textAlign: "center", fontSize: 26, letterSpacing: 8, fontWeight: 700 }} />
+        <p style={{ fontSize: 13, color: "#6b7280", margin: "0 0 22px", textAlign: "center", lineHeight: 1.6 }}>{otpHint}</p>
+        <div style={IW}>
+          <input
+            type="text" inputMode="numeric"
+            value={otpCode}
+            onChange={e => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
+            placeholder="••••••"
+            maxLength={8}
+            autoFocus
+            style={{ ...IF, textAlign: "center", fontSize: 28, letterSpacing: 10, fontWeight: 700 }}
+          />
         </div>
         <button onClick={submitOtp} disabled={!otpCode.trim()} style={{ ...BTN, background: otpCode.trim() ? GREEN : "#d1fae5", color: otpCode.trim() ? "#fff" : "#6b7280", cursor: otpCode.trim() ? "pointer" : "default" }}>Confirm</button>
         <button onClick={goBack} style={{ ...BTN, background: "transparent", color: "#6b7280", border: "1.5px solid #e5e7eb" }}>Cancel</button>
       </div>
 
-      {/* ── 3DS sheet ────────────────────────────────────────────────────────── */}
+      {/* ── 3DS sheet ─────────────────────────────────────────────────────────── */}
       <div style={{ ...SHEET, transform: `translateY(${vis("threeds") && isOpen ? "0%" : "110%"})`, zIndex: 10003, padding: 0, display: "flex", flexDirection: "column", maxHeight: "92vh" }}>
         <div style={{ padding: "14px 20px 12px", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 32, height: 32, background: "#f0fdf4", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: 34, height: 34, background: "#f0fdf4", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={GREEN} strokeWidth="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
             </div>
             <div>
@@ -645,20 +786,22 @@ export default function GatewayPaymentPage() {
         </div>
       </div>
 
-      {/* ── RECEIPT sheet ────────────────────────────────────────────────────── */}
+      {/* ── RECEIPT sheet ─────────────────────────────────────────────────────── */}
       <div style={{ ...SHEET, transform: `translateY(${vis("receipt") && isOpen ? "0%" : "110%"})`, zIndex: 10001 }}>
         {DRAG}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 24 }}>
-          <div style={{ width: 68, height: 68, background: "#f0fdf4", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
-            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke={GREEN} strokeWidth="2.8"><polyline points="20 6 9 17 4 12"/></svg>
+          <div style={{ width: 72, height: 72, background: "#f0fdf4", borderRadius: "50%", border: "3px solid #bbf7d0", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={GREEN} strokeWidth="2.8"><polyline points="20 6 9 17 4 12"/></svg>
           </div>
-          <h3 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#111827" }}>💚 Thank You!</h3>
-          <p style={{ fontSize: 13, color: "#6b7280", margin: "4px 0 0", textAlign: "center" }}>Your donation was processed successfully and is now showing on stream!</p>
+          <h3 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#111827" }}>Thank You! 💚</h3>
+          <p style={{ fontSize: 13, color: "#6b7280", margin: "6px 0 0", textAlign: "center", lineHeight: 1.6 }}>
+            Your donation is live on stream right now!
+          </p>
         </div>
-        <div style={{ background: "#f9fafb", border: "1.5px solid #e5e7eb", borderRadius: 16, padding: "18px 20px", marginBottom: 18 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, paddingBottom: 14, borderBottom: "1px dashed #e5e7eb" }}>
-            <span style={{ fontSize: 12, color: "#6b7280" }}>Amount Donated</span>
-            <span style={{ fontSize: 22, fontWeight: 800, color: "#111827" }}>{receipt?.amount}</span>
+        <div style={{ background: "#f9fafb", border: "1.5px solid #e5e7eb", borderRadius: 18, padding: "20px 22px", marginBottom: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, paddingBottom: 16, borderBottom: "1px dashed #e5e7eb" }}>
+            <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 600 }}>Amount Donated</span>
+            <span style={{ fontSize: 24, fontWeight: 800, color: "#111827" }}>{receipt?.amount}</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
             <span style={{ fontSize: 12, color: "#6b7280" }}>Method</span>
@@ -666,15 +809,17 @@ export default function GatewayPaymentPage() {
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: 12, color: "#6b7280" }}>Status</span>
-            <span style={{ background: "#f0fdf4", color: "#16a34a", fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20 }}>CONFIRMED ✓</span>
+            <span style={{ background: "#f0fdf4", color: "#16a34a", fontSize: 11, fontWeight: 700, padding: "3px 12px", borderRadius: 20, border: "1px solid #bbf7d0" }}>CONFIRMED ✓</span>
           </div>
         </div>
         {receipt?.reference && (
           <div style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>Transaction Reference</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: 12, padding: "12px 14px" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Transaction Reference</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: 12, padding: "12px 16px" }}>
               <span style={{ flex: 1, fontFamily: "monospace", fontSize: 13, fontWeight: 700, color: "#166534", wordBreak: "break-all" }}>{receipt.reference}</span>
-              <button onClick={copyRef} style={{ flexShrink: 0, padding: "6px 12px", background: copied ? GREEN : "#111827", color: "#fff", border: "none", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{copied ? "Copied!" : "Copy"}</button>
+              <button onClick={copyRef} style={{ flexShrink: 0, padding: "6px 14px", background: copied ? GREEN : "#111827", color: "#fff", border: "none", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer", transition: "background 0.2s" }}>
+                {copied ? "Copied!" : "Copy"}
+              </button>
             </div>
           </div>
         )}
@@ -684,18 +829,19 @@ export default function GatewayPaymentPage() {
       {/* ── ERROR sheet ───────────────────────────────────────────────────────── */}
       <div style={{ ...SHEET, transform: `translateY(${vis("error") && isOpen ? "0%" : "110%"})`, background: "#fffbfb", borderTop: "4px solid #ef4444", zIndex: 10002 }}>
         {DRAG}
-        <div style={{ width: 48, height: 48, background: "#fef2f2", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", color: "#ef4444", marginBottom: 14 }}>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div style={{ width: 52, height: 52, background: "#fef2f2", borderRadius: "50%", border: "2px solid #fecaca", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         </div>
         <h3 style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 800, color: "#111827" }}>Payment Failed</h3>
-        <p style={{ fontSize: 13, color: "#6b7280", margin: "0 0 20px" }}>{errorMsg}</p>
+        <p style={{ fontSize: 13, color: "#6b7280", margin: "0 0 22px", lineHeight: 1.6 }}>{errorMsg}</p>
         <button onClick={goBack} style={{ ...BTN }}>Try Again</button>
         <button onClick={closeAll} style={{ ...BTN, background: "transparent", color: "#6b7280", border: "1.5px solid #e5e7eb" }}>Close</button>
       </div>
 
       <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes spin  { to { transform: rotate(360deg); } }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        input:focus { border-color: #22c55e !important; box-shadow: 0 0 0 3px rgba(34,197,94,0.12) !important; }
       `}</style>
     </div>
   );

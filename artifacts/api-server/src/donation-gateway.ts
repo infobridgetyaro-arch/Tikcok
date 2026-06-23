@@ -143,16 +143,11 @@ export function setDonationCallback(cb: DonationCallback): void {
 }
 
 // ── Health check ──────────────────────────────────────────────────────────────
+// No self-ping — that was unreliable in Replit's proxied environment.
+// Gateway is healthy when a Paystack key is configured AND a URL is derivable.
 
-export async function isGatewayHealthy(): Promise<boolean> {
-  const url = getGatewayPaymentUrl();
-  if (!url) return false;
-  try {
-    const res = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(5000) });
-    return res.ok || res.status === 200 || res.status === 304 || res.status === 405;
-  } catch {
-    return false;
-  }
+export function isGatewayHealthy(): boolean {
+  return !!paystackKey() && !!getGatewayPaymentUrl();
 }
 
 // ── Internal donation emit ────────────────────────────────────────────────────
@@ -296,7 +291,7 @@ export function registerDonationGateway(app: Express): void {
 
   // ── GET /api/gateway/health ──────────────────────────────────────────────
   app.get("/api/gateway/health", async (_req: Request, res: Response): Promise<void> => {
-    const healthy = await isGatewayHealthy();
+    const healthy = isGatewayHealthy();
     res.json({
       status: healthy ? "ok" : "unreachable",
       gatewayUrl: getGatewayPaymentUrl(),
