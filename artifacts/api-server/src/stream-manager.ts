@@ -730,12 +730,16 @@ function buildFFmpegArgs(
     //     (e.g. portrait 9:16 source in a landscape 16:9 frame)
     // Result: left & right edges always touch the frame edge; gradient from
     // pipe:3 shows through the transparent top/bottom bars.
+    // IMPORTANT: format=yuva420p must come FIRST so that the pad filter can
+    // write alpha=0 (transparent) pixels into the bar areas.  Placing it at
+    // the end means pad runs on yuv420p (no alpha) and the filter graph
+    // deadlocks — FFmpeg hangs, never exits, and handleProcessExit never fires.
     const videoSrcFilter = [
-      `[0:v]scale=${scaleW}:-2`,
-      `pad=${scaleW}:'if(lte(ih,${scaleH}),${scaleH},ih)':0:'if(lte(ih,${scaleH}),(${scaleH}-ih)/2,0)':color=0x00000000`,
+      `[0:v]format=yuva420p`,
+      `scale=${scaleW}:-2`,
+      `pad=${scaleW}:'if(lte(ih,${scaleH}),${scaleH},ih)':0:'if(lte(ih,${scaleH}),(${scaleH}-ih)/2,0)':color=black@0`,
       `crop=${scaleW}:${scaleH}:0:'if(gte(ih,${scaleH}),(ih-${scaleH})/2,0)'`,
-      `setsar=1`,
-      `format=yuva420p[_src]`,
+      `setsar=1[_src]`,
     ].join(",");
 
     filterGraph = [
