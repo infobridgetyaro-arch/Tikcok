@@ -14,7 +14,7 @@ PORT = "8080"
 NODE_ENV = "development"
 
 [services.development]
-run = "pnpm install --prefer-offline && pnpm --filter @workspace/api-server run dev"
+run = "fuser -k 8080/tcp 2>/dev/null || true; pnpm --filter @workspace/api-server run dev"
 
 [services.production]
 
