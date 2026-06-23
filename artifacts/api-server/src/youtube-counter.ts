@@ -2,6 +2,25 @@ import { storage } from "./storage";
 import { broadcastStream, updateStreamOverlays } from "./stream-manager";
 import { logger } from "./lib/logger";
 
+// Accept either env var name — .env.example documents YOUTUBE_API_KEY, but
+// some deployments set GOOGLE_API_KEY (the underlying Google Cloud console
+// key name). Supporting both avoids a silent "chat never shows up" failure
+// caused purely by a naming mismatch between docs and code.
+function getYouTubeApiKey(): string {
+  return process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY || "";
+}
+
+let warnedNoApiKey = false;
+function warnMissingApiKeyOnce(): void {
+  if (warnedNoApiKey) return;
+  warnedNoApiKey = true;
+  logger.warn(
+    "YOUTUBE_API_KEY is not set — live chat burn-in, viewer count, and subscriber " +
+    "count will not work. Add YOUTUBE_API_KEY to your environment secrets " +
+    "(console.cloud.google.com → APIs → YouTube Data API v3)."
+  );
+}
+
 interface ChannelStats {
   subs: string | null;
   viewers: string | null;
@@ -48,10 +67,13 @@ function formatCount(num: number): string {
 }
 
 async function fetchChannelStats(channelId: string): Promise<ChannelStats> {
-  const apiKey = process.env.GOOGLE_API_KEY;
+  const apiKey = getYouTubeApiKey();
   const prev = statsCache.get(channelId);
 
-  if (!apiKey) return { subs: null, viewers: null, liveChatId: null, lastFetch: Date.now() };
+  if (!apiKey) {
+    warnMissingApiKeyOnce();
+    return { subs: null, viewers: null, liveChatId: null, lastFetch: Date.now() };
+  }
 
   let subs: string | null = prev?.subs ?? null;
   let viewers: string | null = prev?.viewers ?? null;
@@ -109,8 +131,11 @@ async function fetchChannelStats(channelId: string): Promise<ChannelStats> {
 }
 
 export async function fetchLiveChat(streamId: string, chatId: string): Promise<ChatMessage[]> {
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) return [];
+  const apiKey = getYouTubeApiKey();
+  if (!apiKey) {
+    warnMissingApiKeyOnce();
+    return [];
+  }
 
   // Return cached result if fresh enough — avoids pile-up when the control
   // room panel and the polling interval fire close together.
@@ -240,6 +265,7 @@ export function startLiveCountPolling() {
               chatBurnMessages: messages.slice(-10).map((m) => ({
                 name: m.authorName,
                 text: m.text,
+                photo: m.authorPhoto || undefined,
                 color: m.isModerator ? "#34d399" : m.isMember ? "#a78bfa" : undefined,
                 ts: new Date(m.publishedAt).getTime(),
               })),
