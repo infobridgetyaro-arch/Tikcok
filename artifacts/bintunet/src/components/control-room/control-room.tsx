@@ -873,6 +873,53 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
 
   useEffect(() => { void fetchQrGatewayUrl(); }, [fetchQrGatewayUrl]);
 
+  // ── Paystack superchat payment state ─────────────────────────────────────
+  type PayStatus = "idle" | "loading" | "active" | "scanned" | "paid" | "error";
+  const [payStreamId, setPayStreamId] = useState("");
+  const [payTitle,    setPayTitle]    = useState("Super Chat");
+  const [payAmount,   setPayAmount]   = useState("");
+  const [payStatus,   setPayStatus]   = useState<PayStatus>("idle");
+  const [payQrUrl,    setPayQrUrl]    = useState("");
+  const [payerName,   setPayerName]   = useState("");
+  const [payError,    setPayError]    = useState("");
+
+  const initiatePayment = useCallback(async () => {
+    if (!payStreamId || !payAmount) return;
+    setPayStatus("loading");
+    setPayError("");
+    try {
+      const r = await fetch("/api/paystack/init", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ streamId: payStreamId, title: payTitle || "Super Chat", amount: parseFloat(payAmount) }),
+      });
+      const d = await r.json() as { scanUrl?: string; error?: string };
+      if (!r.ok || !d.scanUrl) {
+        setPayStatus("error");
+        setPayError(d.error ?? "Failed to create payment");
+        return;
+      }
+      setPayQrUrl(d.scanUrl);
+      setPayStatus("active");
+    } catch {
+      setPayStatus("error");
+      setPayError("Network error — try again");
+    }
+  }, [payStreamId, payTitle, payAmount]);
+
+  const resetPayment = useCallback(async () => {
+    if (payStreamId) {
+      await fetch(`/api/paystack/reset?streamId=${encodeURIComponent(payStreamId)}`, {
+        method: "DELETE", credentials: "include",
+      }).catch(() => {});
+    }
+    setPayStatus("idle");
+    setPayQrUrl("");
+    setPayerName("");
+    setPayError("");
+  }, [payStreamId]);
+
   // ── Screen Share WebSocket ───────────────────────────────────────────────
   const [screenActive, setScreenActive] = useState(false);
   const [screenConnecting, setScreenConnecting] = useState(false);
@@ -1415,6 +1462,19 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
     const u2 = subscribe("qr_thank_you", (msg) => {
       const m = msg as unknown as { name: string; ts: number };
       setBs(prev => ({ ...prev, qrThankYouName: m.name, qrThankYouTs: m.ts }));
+    });
+    return () => { u1(); u2(); };
+  }, [subscribe]);
+
+  // Paystack WS events
+  useEffect(() => {
+    const u1 = subscribe("paystack_scan", () => {
+      setPayStatus(prev => prev === "active" ? "scanned" : prev);
+    });
+    const u2 = subscribe("paystack_paid", (msg) => {
+      const m = msg as unknown as { payerName?: string };
+      setPayStatus(prev => (prev === "active" || prev === "scanned") ? "paid" : prev);
+      setPayerName(m.payerName ?? "Someone");
     });
     return () => { u1(); u2(); };
   }, [subscribe]);
@@ -2827,6 +2887,176 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                     >{anim.label}</button>
                   ))}
                 </div>
+              </div>
+
+              {/* ── Paystack Superchat Payment ─────────────────────────── */}
+              <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "4px 0" }} />
+
+              <div style={{
+                padding: "12px 14px", borderRadius: 12,
+                background: "linear-gradient(135deg, rgba(0,200,120,0.12) 0%, rgba(0,160,100,0.06) 100%)",
+                border: "1px solid rgba(0,200,120,0.28)",
+                display: "flex", alignItems: "center", gap: 10,
+              }}>
+                <span style={{ fontSize: 18 }}>💳</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 900, color: "#4ade80", letterSpacing: "0.03em" }}>Paystack Direct Payment</div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>Generate a one-time QR — viewer scans → pays → stream notified</div>
+                </div>
+              </div>
+
+              {/* Stream picker */}
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 5 }}>Stream</div>
+                <select
+                  value={payStreamId}
+                  onChange={(e) => { setPayStreamId(e.target.value); void resetPayment(); }}
+                  disabled={payStatus === "loading" || payStatus === "active" || payStatus === "scanned"}
+                  style={{
+                    width: "100%", padding: "7px 10px", borderRadius: 8, fontSize: 11, fontWeight: 600,
+                    background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)",
+                    color: "#fff", cursor: "pointer", outline: "none",
+                  }}
+                >
+                  <option value="">— pick a stream —</option>
+                  {streams.filter((s: Stream) => s.status === "running" || s.status === "idle").map((s: Stream) => {
+                    const label = s.sourceType === "tiktok" ? `@${s.tiktokUsername}`
+                      : s.sourceType === "youtube" ? (s.youtubeSourceUrl || "YouTube")
+                      : s.cameraDevice || `Stream ${s.id.slice(0, 6)}`;
+                    return <option key={s.id} value={s.id}>{label}</option>;
+                  })}
+                </select>
+              </div>
+
+              {/* Title + Amount */}
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 5 }}>Title</div>
+                  <input
+                    type="text"
+                    value={payTitle}
+                    onChange={(e) => setPayTitle(e.target.value)}
+                    placeholder="Super Chat"
+                    disabled={payStatus === "loading" || payStatus === "active" || payStatus === "scanned"}
+                    style={{
+                      width: "100%", padding: "7px 10px", borderRadius: 8, fontSize: 11,
+                      background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)",
+                      color: "#fff", outline: "none", boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+                <div style={{ width: 90 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 5 }}>Amount</div>
+                  <input
+                    type="number"
+                    value={payAmount}
+                    onChange={(e) => setPayAmount(e.target.value)}
+                    placeholder="0"
+                    min="1"
+                    disabled={payStatus === "loading" || payStatus === "active" || payStatus === "scanned"}
+                    style={{
+                      width: "100%", padding: "7px 10px", borderRadius: 8, fontSize: 11,
+                      background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)",
+                      color: "#fff", outline: "none", boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Status pill */}
+              {payStatus !== "idle" && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {(["active","scanned","paid"] as const).map(s => {
+                    const active = payStatus === s || (s === "active" && (payStatus === "scanned" || payStatus === "paid")) || (s === "scanned" && payStatus === "paid");
+                    const isCurrent = payStatus === s;
+                    const labels = { active: "⏳ Waiting", scanned: "👁 Scanned", paid: "✅ Paid" };
+                    const colors = { active: "#ffd600", scanned: "#06b6d4", paid: "#4ade80" };
+                    return (
+                      <div key={s} style={{
+                        flex: 1, padding: "5px 6px", borderRadius: 8, textAlign: "center", fontSize: 10, fontWeight: 700,
+                        border: `1px solid ${active ? colors[s] + "66" : "rgba(255,255,255,0.10)"}`,
+                        background: isCurrent ? colors[s] + "22" : (active ? colors[s] + "11" : "transparent"),
+                        color: active ? colors[s] : "rgba(255,255,255,0.25)",
+                        transition: "all 0.2s",
+                      }}>{labels[s]}</div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Error */}
+              {payStatus === "error" && payError && (
+                <div style={{ padding: "8px 12px", borderRadius: 8, background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.25)", fontSize: 11, color: "#fca5a5" }}>
+                  ⚠ {payError}
+                </div>
+              )}
+
+              {/* QR display when active/scanned */}
+              {(payStatus === "active" || payStatus === "scanned") && payQrUrl && (
+                <div style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
+                  <div style={{
+                    padding: 10, borderRadius: 12, background: "#fff",
+                    boxShadow: `0 0 0 3px ${payStatus === "scanned" ? "#06b6d4" : "#4ade80"}, 0 6px 24px rgba(0,0,0,0.6)`,
+                    transition: "box-shadow 0.3s",
+                  }}>
+                    <img
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(payQrUrl)}&margin=1&color=1a1a1a&bgcolor=ffffff&ecc=M`}
+                      alt="Payment QR"
+                      style={{ width: 140, height: 140, display: "block" }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Thank-you card */}
+              {payStatus === "paid" && (
+                <div style={{
+                  padding: "16px", borderRadius: 12, textAlign: "center",
+                  background: "linear-gradient(135deg, rgba(74,222,128,0.18), rgba(34,197,94,0.10))",
+                  border: "1px solid rgba(74,222,128,0.4)",
+                }}>
+                  <div style={{ fontSize: 24, marginBottom: 6 }}>🎉</div>
+                  <div style={{ fontSize: 14, fontWeight: 900, color: "#4ade80" }}>Payment received!</div>
+                  {payerName && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", marginTop: 4 }}>Thank you, <strong style={{ color: "#fff" }}>{payerName}</strong>!</div>}
+                </div>
+              )}
+
+              {/* Generate / Reset buttons */}
+              <div style={{ display: "flex", gap: 8 }}>
+                {(payStatus === "idle" || payStatus === "error") && (
+                  <button
+                    disabled={!payStreamId || !payAmount}
+                    onClick={() => void initiatePayment()}
+                    style={{
+                      flex: 1, padding: "10px", borderRadius: 10, fontSize: 12, fontWeight: 800, cursor: "pointer",
+                      border: "1px solid rgba(74,222,128,0.5)",
+                      background: (!payStreamId || !payAmount) ? "rgba(255,255,255,0.04)" : "linear-gradient(135deg, rgba(74,222,128,0.25), rgba(34,197,94,0.18))",
+                      color: (!payStreamId || !payAmount) ? "rgba(255,255,255,0.3)" : "#4ade80",
+                      opacity: (!payStreamId || !payAmount) ? 0.5 : 1,
+                      transition: "all 0.2s",
+                    }}
+                  >
+                    💳 Generate Payment QR
+                  </button>
+                )}
+                {payStatus === "loading" && (
+                  <div style={{ flex: 1, padding: "10px", borderRadius: 10, textAlign: "center", fontSize: 12, color: "#4ade80", background: "rgba(74,222,128,0.08)", border: "1px solid rgba(74,222,128,0.2)" }}>
+                    <RefreshCw size={13} style={{ display: "inline", animation: "cr-spin 1s linear infinite", marginRight: 6 }} />
+                    Creating…
+                  </div>
+                )}
+                {(payStatus === "active" || payStatus === "scanned" || payStatus === "paid") && (
+                  <button
+                    onClick={() => void resetPayment()}
+                    style={{
+                      flex: 1, padding: "10px", borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                      border: "1px solid rgba(239,68,68,0.35)", background: "rgba(239,68,68,0.08)", color: "#f87171",
+                      transition: "all 0.2s",
+                    }}
+                  >
+                    🔄 Reset / New Payment
+                  </button>
+                )}
               </div>
 
             </div>
