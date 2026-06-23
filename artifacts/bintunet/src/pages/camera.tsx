@@ -116,6 +116,8 @@ export default function CameraPage() {
   const statsPollRef = useRef<NodeJS.Timeout | null>(null);
   const isStreamingRef = useRef(false);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const [captureMode, setCaptureMode] = useState<"camera" | "screen">("camera");
+  const captureModeRef = useRef<"camera" | "screen">("camera");
 
   const isStreaming = streamStatus === "streaming";
   const isConnecting = streamStatus === "connecting";

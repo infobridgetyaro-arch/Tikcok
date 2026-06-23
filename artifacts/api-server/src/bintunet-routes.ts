@@ -127,6 +127,7 @@ interface BroadcastState {
   donationAlertActive: boolean;
   donationTicker: Array<{ name: string; amount: string; amountKes: number; color: string; ts: number; giftId?: string }>;
   giftDisplayMode: "auto" | "minimal" | "standard" | "hype";
+  newsLogo: string;
 }
 
 let broadcastState: BroadcastState = {
@@ -210,6 +211,7 @@ let broadcastState: BroadcastState = {
   donationAlertActive: true,
   donationTicker: [],
   giftDisplayMode: "auto",
+  newsLogo: "",
 };
 
 const uploadDir = path.join(process.cwd(), "uploads");
@@ -885,6 +887,7 @@ export async function registerBintunetRoutes(
       donationTicker:         broadcastState.donationTicker,
       giftDisplayMode:        broadcastState.giftDisplayMode,
       giftQueue:              getGiftQueue(),
+      newsLogo:               broadcastState.newsLogo,
     });
     res.json(broadcastState);
   });

@@ -55,6 +55,8 @@ interface BroadcastState {
   qrGlowIntensity: number;
   qrBorderStyle: string;
   qrAnimation: string;
+  subAlertActive: boolean;
+  subAlertMessage: string;
 }
 
 interface ChatMessage {
@@ -92,6 +94,8 @@ function useBroadcastWS() {
   const [stats, setStats] = useState<StreamStats>({ subs: null, viewers: null });
   const [scanFlash, setScanFlash] = useState<number | null>(null);
   const [giftPopup, setGiftPopup] = useState<{ name: string; ts: number } | null>(null);
+  const [subAlertKey, setSubAlertKey] = useState(0);
+  const prevSubAlertActiveRef = useRef(false);
   const seenIds = useRef<Set<string>>(new Set());
   const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const giftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
