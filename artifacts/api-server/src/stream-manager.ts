@@ -1355,8 +1355,10 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
               streamId,
               () => lastFrameCount,
               () => {
-                sendLog(streamId, `[watchdog] No new frames — stream may be frozen. Click Restart to recover.`);
-                sendStatus(streamId, "error");
+                sendLog(streamId, `[watchdog] No new frames detected — reconnecting to recover...`);
+                urlCache.delete(streamId);
+                const proc = activeStreams.get(streamId);
+                if (proc?.ffmpegProcess === ffmpegProc) hardKillAndRestart(streamId, 1000);
               },
             );
             if (liveProc) liveProc.stallWatchdog = stallWatchdog;
@@ -1388,22 +1390,37 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
           // CDN doesn't require cookies — this only fires on genuine URL expiry.
           // Always refresh the URL and restart; never permanently kill the stream.
           urlCache.delete(streamId);
-          sendLog(streamId, `[youtube] CDN URL expired (${trimmed.includes("404") ? "404" : "403"}) — click Restart to fetch a fresh URL.`);
-          sendStatus(streamId, "error");
+          {
+            const proc = activeStreams.get(streamId);
+            if (proc && !proc.urlExpired) {
+              proc.urlExpired = true;
+              sendLog(streamId, `[youtube] CDN URL expired (${trimmed.includes("404") ? "404" : "403"}) — fetching fresh URL and reconnecting...`);
+              if (proc.ffmpegProcess === ffmpegProc) hardKillAndRestart(streamId, 300, true);
+            }
+          }
           return;
         }
 
         if (trimmed.includes("HTTP error 429") || trimmed.includes("429 Too Many Requests")) {
           urlCache.delete(streamId);
-          sendLog(streamId, `[youtube] Rate-limited (429) — click Restart to reconnect.`);
-          sendLog(streamId, `[tip] Upload cookies.txt in Settings → YouTube Cookies to prevent 429s.`);
-          sendStatus(streamId, "error");
+          {
+            const proc = activeStreams.get(streamId);
+            if (proc && !proc.urlExpired) {
+              proc.urlExpired = true;
+              sendLog(streamId, `[youtube] Rate-limited (429) — backing off 15s then reconnecting with fresh URL...`);
+              sendLog(streamId, `[tip] Upload cookies.txt in Settings → YouTube Cookies to prevent 429s.`);
+              if (proc.ffmpegProcess === ffmpegProc) hardKillAndRestart(streamId, 15_000, true);
+            }
+          }
           return;
         }
 
         if (trimmed.includes("Too many failure for output")) {
-          sendLog(streamId, `[ffmpeg] RTMP output permanently dropped — click Restart to reconnect.`);
-          sendStatus(streamId, "error");
+          sendLog(streamId, `[ffmpeg] RTMP output permanently dropped — reconnecting in 2s...`);
+          {
+            const proc = activeStreams.get(streamId);
+            if (proc?.ffmpegProcess === ffmpegProc) hardKillAndRestart(streamId, 2000);
+          }
           return;
         }
 
@@ -1424,8 +1441,11 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
           trimmed.includes("Connection timed out") ||
           trimmed.includes("Operation timed out")
         ) {
-          sendLog(streamId, `[ffmpeg] RTMP connection timed out — click Restart to reconnect.`);
-          sendStatus(streamId, "error");
+          sendLog(streamId, `[ffmpeg] RTMP connection timed out — reconnecting in 3s...`);
+          {
+            const proc = activeStreams.get(streamId);
+            if (proc?.ffmpegProcess === ffmpegProc) hardKillAndRestart(streamId, 3000);
+          }
           return;
         }
 
@@ -1477,10 +1497,10 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
     const startupTimeout = inputUrl === "__browser__" ? 90000 : 60000;
     const watchdog = setTimeout(() => {
       if (!gotFrames) {
-        sendLog(streamId, `Timeout: No frames encoded after ${startupTimeout / 1000}s — stream failed to start. Check source and click Restart.`);
+        sendLog(streamId, `Timeout: No frames encoded after ${startupTimeout / 1000}s — retrying with fresh URL...`);
         const liveProc = activeStreams.get(streamId);
         if (liveProc?.ffmpegProcess === ffmpegProc) {
-          sendStatus(streamId, "error");
+          hardKillAndRestart(streamId, 5000, true /* forceNewUrl */);
         }
       }
     }, startupTimeout);
@@ -1621,6 +1641,8 @@ export function stopStream(streamId: string) {
 
 export function restartStream(streamId: string) {
   sendLog(streamId, "Restarting stream (manual)...");
+  // Clear the manual-stop guard so the restart is never blocked by a previous Stop.
+  manuallyStopped.delete(streamId);
   // hardKillAndRestart handles: cleanup → SIGKILL → "reconnecting" status →
   // delayed startStream with cached URL.  This avoids the old stopStream() path
   // which left the proc in activeStreams, causing handleProcessExit to delete
