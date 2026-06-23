@@ -744,15 +744,15 @@ function buildFFmpegArgs(
 
     filterGraph = [
       videoSrcFilter,
-      // Gradient pipe — sits behind the video as a solid background.
+      // Step 1: gradient pipe scales to fill the frame.
       `[3:v]format=rgba,scale=${scaleW}:${scaleH}[_bg]`,
-      // Black base + gradient on top → [_base]
+      // Step 2: black fallback base + gradient on top → solid coloured background.
       `[1:v][_bg]overlay=0:0:format=auto[_base]`,
-      // Video (full-frame RGBA, transparent bars) over gradient.
-      // Transparent bars let the gradient colour show through;
-      // opaque video pixels cover the gradient only where the video is.
-      // eof_action=repeat: freeze last video frame when source drops (instead of
-      // black) — keeps the stream looking alive during brief reconnect gaps.
+      // Step 3: video (yuva420p — transparent bars where no video pixels exist)
+      // laid on top of the gradient background.
+      // • Where the video is opaque → gradient hidden (video covers it completely).
+      // • Where bars exist (alpha=0 transparent pixels) → gradient shows through.
+      // eof_action=repeat: freeze last video frame during brief reconnect gaps.
       `[_base][_src]overlay=0:0:format=auto:eof_action=repeat[_composed]`,
       `[4:v]scale=${scaleW}:${scaleH}[_ui]`,
       `[_composed][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[_final]`,
