@@ -541,7 +541,6 @@ function buildFFmpegArgs(
       ...(cookieHeader ? [cookieHeader.trimEnd()] : []),
     ];
     args.push(
-      "-re",
       "-headers", ytHeaderLines.join("\r\n") + "\r\n",
       "-reconnect", "1",
       "-reconnect_streamed", "1",
@@ -556,9 +555,7 @@ function buildFFmpegArgs(
   } else if (sourceType === "xspace") {
     // X Space: yt-dlp extracts the HLS audio URL; FFmpeg reads audio-only.
     // No video track — the filter graph uses lavfi black + gradient as video.
-    // -re: read at native framerate so FFmpeg doesn't race ahead of real-time.
     args.push(
-      "-re",
       "-reconnect", "1",
       "-reconnect_streamed", "1",
       "-reconnect_on_network_error", "1",
@@ -584,10 +581,7 @@ function buildFFmpegArgs(
     // max_reload: keep re-fetching the HLS playlist indefinitely (live edge).
     // reconnect_delay_max 30: back off up to 30s between retries (not hammering).
     // rw_timeout 20s: allow more time on slow connections before declaring failure.
-    // -re: read at native framerate so FFmpeg doesn't race through buffered HLS
-    //      segments faster than real-time (prevents YouTube "too fast" errors).
     args.push(
-      "-re",
       "-reconnect", "1",
       "-reconnect_streamed", "1",
       "-reconnect_on_network_error", "1",
@@ -707,7 +701,7 @@ function buildFFmpegArgs(
       `[2:a][_vol]amultiply[_srcFin]`,
       micClean,
       `[_srcFin][_mic]amix=inputs=2:dropout_transition=2:normalize=0[_rawA]`,
-      `[_rawA]aresample=async=1000[_audio]`,
+      `[_rawA]aresample=async=1000,arealtime[_audio]`,
     ].join(";");
   } else {
     // Live source (TikTok / YouTube / X Space / RTSP / browser camera) has audio.
@@ -720,7 +714,7 @@ function buildFFmpegArgs(
       `[_srcRaw][_vol]amultiply[_srcFin]`,
       micClean,
       `[_srcFin][_mic]amix=inputs=2:dropout_transition=10:normalize=0[_rawA]`,
-      `[_rawA]aresample=async=1000[_audio]`,
+      `[_rawA]aresample=async=1000,arealtime[_audio]`,
     ].join(";");
   }
 
@@ -732,7 +726,7 @@ function buildFFmpegArgs(
       `[3:v]format=rgba,scale=${scaleW}:${scaleH}[_bg]`,
       `[1:v][_bg]overlay=0:0:format=auto[_base]`,
       `[4:v]scale=${scaleW}:${scaleH}[_ui]`,
-      `[_base][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[_final]`,
+      `[_base][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p,realtime[_final]`,
       audioFilter,
     ].join(";");
   } else {
@@ -768,7 +762,7 @@ function buildFFmpegArgs(
       // eof_action=repeat: freeze last video frame during brief reconnect gaps.
       `[_base][_src]overlay=0:0:format=auto:eof_action=repeat[_composed]`,
       `[4:v]scale=${scaleW}:${scaleH}[_ui]`,
-      `[_composed][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[_final]`,
+      `[_composed][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p,realtime[_final]`,
       audioFilter,
     ].join(";");
   }
@@ -901,9 +895,10 @@ async function getXSpaceAudioUrl(spaceUrl: string): Promise<string> {
 }
 
 // ── Frame-stall watchdog ──────────────────────────────────────────────────────
-// 15 s: fast enough to catch a dead TikTok source before the YouTube platform
-// buffer drains (~20-30 s), while loose enough to survive brief HLS segment gaps.
-const STALL_TIMEOUT_MS = 15_000;
+// 30 s: tolerant enough to survive HLS segment gaps and brief network hiccups,
+// while still fast enough to catch a dead source before the YouTube platform
+// buffer fully drains (~60 s).
+const STALL_TIMEOUT_MS = 30_000;
 
 function makeStallWatchdog(
   streamId: string,
