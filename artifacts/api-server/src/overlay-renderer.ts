@@ -406,7 +406,12 @@ export class OverlayRenderer {
       const tickStart = Date.now();
       try {
         // Use external frame (break video) when available; otherwise render canvas.
-        const buf = this.externalFrame !== null ? this.externalFrame : this.renderFrame();
+        // Exception: gradient-bg mode composites the external frame WITH gradient bars
+        // via canvas so we must call renderFrame() — it handles this case internally.
+        const needsCanvas =
+          this.externalFrame === null ||
+          (this.state.breakVideoMode ?? "fullscreen") === "gradient-bg";
+        const buf = needsCanvas ? this.renderFrame() : this.externalFrame!;
         // write() returns false when the OS pipe buffer to FFmpeg is full (backpressure).
         // We wait for drain but with a hard timeout: if drain hasn't fired within
         // drainTimeoutMs we drop this frame and resume — keeping the stall watchdog fed.
