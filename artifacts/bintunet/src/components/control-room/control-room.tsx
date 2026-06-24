@@ -932,11 +932,14 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           frameRate: { ideal: 30, max: 30 },
-          // @ts-ignore — Chrome 111+ hint to pre-select Entire Screen in picker
-          displaySurface: "monitor",
+          // NOTE: do NOT set displaySurface here — passing it as a video constraint
+          // filters the picker on Chrome/Edge to only show the matching surface type,
+          // which blocks users from picking native app windows. Let the browser show
+          // all surface types (Entire Screen, Window, Tab) and accept whatever the
+          // user picks.
         } as MediaTrackConstraints,
         audio: false,
-        // @ts-ignore — Chrome hint to pre-select Entire Screen
+        // @ts-ignore — suppress self-tab from appearing in picker
         preferCurrentTab: false,
         selfBrowserSurface: "exclude",
       });
@@ -3324,8 +3327,14 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                       </div>
                     )}
 
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", lineHeight: 1.5 }}>
-                      Clicking Start opens the browser's screen picker — select <strong style={{ color: "rgba(255,255,255,0.5)" }}>Entire Screen</strong> then click Share. Screen share automatically appears in your stream and stops when you close the share.
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", lineHeight: 1.6 }}>
+                      Clicking Start opens your browser's share picker — you'll see three tabs: <strong style={{ color: "rgba(255,255,255,0.5)" }}>Entire Screen</strong>, <strong style={{ color: "rgba(255,255,255,0.5)" }}>Window</strong>, and <strong style={{ color: "rgba(255,255,255,0.5)" }}>Tab</strong>.
+                    </div>
+                    <div style={{ marginTop: 8, padding: "9px 12px", borderRadius: 8, background: "rgba(129,140,248,0.07)", border: "1px solid rgba(129,140,248,0.18)", fontSize: 11, color: "rgba(200,200,255,0.55)", lineHeight: 1.6 }}>
+                      <strong style={{ color: "rgba(165,180,252,0.8)" }}>App windows not appearing?</strong><br />
+                      • <strong>Windows:</strong> Run Chrome as Administrator, or open Chrome settings → Privacy → Screen capture<br />
+                      • <strong>macOS:</strong> System Settings → Privacy &amp; Security → Screen &amp; System Audio Recording → enable Chrome<br />
+                      • <strong>Linux (Wayland):</strong> App windows are blocked by Wayland — share the <em>Entire Screen</em> instead and move your app into view
                     </div>
                   </div>
 
