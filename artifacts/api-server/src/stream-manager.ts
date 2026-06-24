@@ -554,6 +554,7 @@ function buildFFmpegArgs(
       "-reconnect", "1",
       "-reconnect_streamed", "1",
       "-reconnect_on_network_error", "1",
+      "-reconnect_at_eof", "1",
       "-reconnect_delay_max", "5",
       "-tls_verify", "0",
       "-rw_timeout", "10000000",
@@ -816,8 +817,16 @@ function buildFFmpegArgs(
   );
 
   // ── RTMP output(s) — always tee for resilience ───────────────────────────
+  // rw_timeout=20s: YouTube ingest can be slow to accept connections; 5s was
+  // too short and caused outputs to be classified as failed prematurely.
+  // onfail=ignore is intentionally NOT used here — once an output is dropped
+  // by the tee muxer with onfail=ignore it is permanently gone and never
+  // reconnects, causing YouTube "not receiving data" errors. We instead detect
+  // the failure via the stderr "Ignoring failure for output" message and do a
+  // clean hardKillAndRestart so the full RTMP session is re-established.
+  args.push("-avoid_negative_ts", "make_zero");
   const teeOutputs = outputs
-    .map((o) => `[f=flv:flvflags=no_duration_filesize:rtmp_live=1:rw_timeout=5000000:onfail=ignore]${o}`)
+    .map((o) => `[f=flv:flvflags=no_duration_filesize:rtmp_live=1:rw_timeout=20000000]${o}`)
     .join("|");
   args.push("-f", "tee", teeOutputs);
 
@@ -1359,10 +1368,10 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
             // YouTube/Facebook platform buffer (~10-30 s).
             // This eliminates the 50-60 s black-screen gap that used to happen
             // when TikTok URLs expired mid-stream.
-            // YouTube uses streamlink pipe — streamlink manages URL rotation
-            // internally, so no FFmpeg restart is needed. Only TikTok needs
-            // the proactive pre-fetch (its HLS URLs expire after ~10-15 min).
-            if (sourceType !== "camera" && sourceType !== "youtube" && sourceType !== "upload") {
+            // YouTube HLS CDN URLs (googlevideo.com) can also expire mid-stream
+            // (~6 hour TTL, but can be shorter). Include youtube in the proactive
+            // pre-fetch so a fresh URL is always cached before expiry.
+            if (sourceType !== "camera" && sourceType !== "upload") {
               const schedulePrefetch = (intervalMs: number) => {
                 const timer = setTimeout(async () => {
                   const currentProc = activeStreams.get(streamId);
@@ -1493,10 +1502,16 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
           trimmed.includes("Error writing trailer") ||
           trimmed.includes("Broken pipe")
         ) {
-          // onfail=ignore in the tee muxer handles transient RTMP errors.
-          // Logging only — do NOT restart: a restart causes a real RTMP cut,
-          // whereas onfail=ignore auto-recovers without breaking the stream.
-          sendLog(streamId, `[ffmpeg] RTMP hiccup (auto-recovering via onfail=ignore)...`);
+          // An RTMP output has failed. Without onfail=ignore the tee muxer will
+          // propagate the error and FFmpeg exits (handled by handleProcessExit).
+          // With onfail=ignore the output is permanently dropped — it will never
+          // reconnect, causing YouTube "not receiving data" warnings indefinitely.
+          // Instead: trigger a clean restart so the full RTMP session is re-established.
+          const proc = activeStreams.get(streamId);
+          if (proc?.ffmpegProcess === ffmpegProc) {
+            sendLog(streamId, `[ffmpeg] RTMP output failed — reconnecting in 2s...`);
+            hardKillAndRestart(streamId, 2000);
+          }
           return;
         }
 
