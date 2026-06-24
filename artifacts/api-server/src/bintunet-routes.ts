@@ -128,6 +128,7 @@ interface BroadcastState {
   donationTicker: Array<{ name: string; amount: string; amountKes: number; color: string; ts: number; giftId?: string }>;
   giftDisplayMode: "auto" | "minimal" | "standard" | "hype";
   newsLogo: string;
+  thankYouStyle: string;
 }
 
 let broadcastState: BroadcastState = {
@@ -212,6 +213,7 @@ let broadcastState: BroadcastState = {
   donationTicker: [],
   giftDisplayMode: "auto",
   newsLogo: "",
+  thankYouStyle: "Classic",
 };
 
 const uploadDir = path.join(process.cwd(), "uploads");
@@ -888,6 +890,7 @@ export async function registerBintunetRoutes(
       giftDisplayMode:        broadcastState.giftDisplayMode,
       giftQueue:              getGiftQueue(),
       newsLogo:               broadcastState.newsLogo,
+      thankYouStyle:          broadcastState.thankYouStyle,
     });
     res.json(broadcastState);
   });
@@ -1577,6 +1580,7 @@ export async function registerBintunetRoutes(
                 screenShareRadius: broadcastState.screenShareRadius,
                 donationTickerActive: broadcastState.donationTickerActive,
                 donationAlertActive:  broadcastState.donationAlertActive,
+                thankYouStyle:        broadcastState.thankYouStyle,
                 donationTicker:       broadcastState.donationTicker,
                 giftDisplayMode:      broadcastState.giftDisplayMode,
                 giftQueue:            getGiftQueue(),

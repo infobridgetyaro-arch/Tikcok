@@ -51,7 +51,7 @@ const MAX_CHART_SAMPLES = 60;
 // room chat panel and the polling interval overlap.
 interface ChatCache { messages: ChatMessage[]; fetchedAt: number }
 const chatResultCache = new Map<string, ChatCache>();
-const CHAT_CACHE_TTL = 12_000; // return cached results for 12 s
+const CHAT_CACHE_TTL = 2_500; // return cached results for 2.5 s (3-second poll interval)
 
 let pollingInterval: NodeJS.Timeout | null = null;
 let chatInterval: NodeJS.Timeout | null = null;
@@ -280,7 +280,7 @@ export function startLiveCountPolling() {
     }
   };
 
-  chatInterval = setInterval(pollChat, 15_000);
+  chatInterval = setInterval(pollChat, 3_000);
 }
 
 export function stopLiveCountPolling() {

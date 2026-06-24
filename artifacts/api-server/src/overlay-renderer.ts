@@ -12,6 +12,7 @@ export interface ChatBurnMessage {
   name: string;
   text: string;
   color?: string;
+  photo?: string;
   ts: number;
 }
 
@@ -123,6 +124,7 @@ export interface OverlayState {
   qrThankYouActive: boolean;
   qrThankYouName: string;
   qrThankYouTs: number;
+  thankYouStyle: string;
 
   // ── Audio mute controls ───────────────────────────────────────────────────
   liveAudioMuted: boolean;   // mute the live source audio in the RTMP stream
@@ -225,6 +227,7 @@ export function defaultOverlayState(): OverlayState {
     qrThankYouActive: false,
     qrThankYouName: "",
     qrThankYouTs: 0,
+    thankYouStyle: "Classic",
     screenShareActive: false,
     screenShareMode: "presenter",
     screenShareX: 60,
@@ -307,6 +310,9 @@ export class OverlayRenderer {
   private newsLogoImg: import("@napi-rs/canvas").Image | null = null;
   private newsLogoSrc: string = "";
 
+  // Avatar image cache for chat burn (profile pictures from YouTube)
+  private avatarCache = new Map<string, import("@napi-rs/canvas").Image | null>();
+
   private _panelAlpha = 1;
 
   // News animation tracking
@@ -359,6 +365,23 @@ export class OverlayRenderer {
         (loadImage as (src: Buffer) => Promise<import("@napi-rs/canvas").Image>)(buf)
           .then((img) => { if (this.newsLogoSrc === patch.newsLogo) this.newsLogoImg = img; })
           .catch(() => { this.newsLogoImg = null; });
+      }
+    }
+    // Prefetch avatar images when chat messages arrive
+    if (patch.chatBurnMessages) {
+      for (const msg of patch.chatBurnMessages) {
+        const url = msg.photo;
+        if (url && !this.avatarCache.has(url)) {
+          this.avatarCache.set(url, null); // mark as loading
+          (loadImage as (src: string) => Promise<import("@napi-rs/canvas").Image>)(url)
+            .then((img) => { this.avatarCache.set(url, img); })
+            .catch(() => { this.avatarCache.delete(url); });
+        }
+      }
+      // Evict old entries when cache grows too large
+      if (this.avatarCache.size > 120) {
+        const toDelete = Array.from(this.avatarCache.keys()).slice(0, 40);
+        for (const k of toDelete) this.avatarCache.delete(k);
       }
     }
     Object.assign(this.state, patch);
@@ -1705,56 +1728,93 @@ export class OverlayRenderer {
 
   private drawBubbleChat() {
     const { ctx, W, H, state } = this;
-    const msgs = state.chatBurnMessages.slice(-4);
+    const msgs = state.chatBurnMessages.slice(-5);
     if (!msgs.length) return;
     const effPos = this.pos(state.chatBurnPosition, state.mobileChatBurnPosition);
     const bx = this.px(effPos.x, W);
     const by = this.px(effPos.y, H);
-    const rowH = Math.round(H * 0.062);
-    const gap = Math.round(H * 0.01);
+    const rowH = Math.round(H * 0.064);
+    const gap = Math.round(H * 0.009);
     const cardW = Math.round(W * 0.46);
-    const radius = Math.round(rowH * 0.38);
-    const avatarR = Math.round(rowH * 0.29);
-    const padH = Math.round(rowH * 0.2);
-    const avatarX = bx + padH + avatarR;
-    const textX = avatarX + avatarR + Math.round(rowH * 0.15);
-    const fontSize = Math.round(rowH * 0.31);
-    const nameFontSize = Math.round(rowH * 0.27);
+    const radius = Math.round(rowH * 0.32);
+    const avatarR = Math.round(rowH * 0.30);
+    const accentBarW = Math.round(rowH * 0.065);
+    const padLeft = accentBarW + Math.round(rowH * 0.25);
+    const avatarX = bx + padLeft + avatarR;
+    const textX = avatarX + avatarR + Math.round(rowH * 0.18);
+    const fontSize = Math.round(rowH * 0.295);
+    const nameFontSize = Math.round(rowH * 0.28);
     ctx.textBaseline = "middle";
     msgs.forEach((msg, i) => {
       const my = by + i * (rowH + gap);
       if (my + rowH > H) return;
-      const avatarColor = msg.color || "#cc0001";
+      const accentColor = msg.color || "#06b6d4";
       const cy = my + rowH / 2;
-      // Rounded card background
-      ctx.fillStyle = "rgba(8,10,22,0.88)";
+
+      // Card shadow
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.55)";
+      ctx.shadowBlur = 12;
+      ctx.shadowOffsetY = 3;
+      ctx.fillStyle = "rgba(10,13,28,0.92)";
       this.fillRR(bx, my, cardW, rowH, radius);
-      // Card border
-      ctx.strokeStyle = "rgba(255,255,255,0.10)";
+      ctx.restore();
+
+      // Subtle border
+      ctx.strokeStyle = "rgba(255,255,255,0.09)";
       ctx.lineWidth = 1;
       this.strokeRR(bx, my, cardW, rowH, radius);
-      // Avatar circle
-      ctx.fillStyle = avatarColor;
-      ctx.beginPath();
-      ctx.arc(avatarX, cy, avatarR, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#fff";
-      ctx.font = `bold ${Math.round(avatarR * 0.95)}px sans-serif`;
-      ctx.textAlign = "center";
-      ctx.fillText((msg.name[0] || "?").toUpperCase(), avatarX, cy);
-      // Username
-      ctx.font = `bold ${nameFontSize}px sans-serif`;
+
+      // Left accent bar (StreamYard-style colour stripe)
+      ctx.fillStyle = accentColor;
+      this.fillRR(bx, my, accentBarW, rowH, radius);
+      // cover right half of accent bar with card colour to make it flush
+      ctx.fillStyle = "rgba(10,13,28,0.92)";
+      ctx.fillRect(bx + accentBarW / 2, my, accentBarW, rowH);
+
+      // Avatar — use cached profile photo, else coloured initial circle
+      const cachedImg = msg.photo ? this.avatarCache.get(msg.photo) : undefined;
+      if (cachedImg) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(avatarX, cy, avatarR, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(cachedImg, avatarX - avatarR, cy - avatarR, avatarR * 2, avatarR * 2);
+        ctx.restore();
+        // thin ring
+        ctx.beginPath();
+        ctx.arc(avatarX, cy, avatarR + 0.8, 0, Math.PI * 2);
+        ctx.strokeStyle = `${accentColor}88`;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      } else {
+        // Coloured initial circle fallback
+        ctx.fillStyle = accentColor;
+        ctx.beginPath();
+        ctx.arc(avatarX, cy, avatarR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#fff";
+        ctx.font = `bold ${Math.round(avatarR * 0.98)}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.fillText((msg.name[0] || "?").toUpperCase(), avatarX, cy);
+      }
+
+      // Username (bold, accent colour)
+      ctx.font = `700 ${nameFontSize}px sans-serif`;
       ctx.textAlign = "left";
-      ctx.fillStyle = avatarColor;
-      const displayName = msg.name.length > 14 ? msg.name.slice(0, 13) + "…" : msg.name;
-      ctx.fillText(displayName, textX, my + rowH * 0.31);
-      // Message text
+      ctx.fillStyle = accentColor;
+      const maxNameW = Math.round(cardW * 0.38);
+      let dName = msg.name;
+      while (dName.length > 2 && ctx.measureText(dName).width > maxNameW) dName = dName.slice(0, -2) + "…";
+      ctx.fillText(dName, textX, my + rowH * 0.30);
+
+      // Message text (light grey)
       ctx.font = `${fontSize}px sans-serif`;
-      ctx.fillStyle = "rgba(232,232,238,0.95)";
-      const available = cardW - (textX - bx) - padH;
+      ctx.fillStyle = "rgba(226,232,240,0.92)";
+      const available = cardW - (textX - bx) - Math.round(rowH * 0.2);
       let txt = msg.text;
       while (txt.length > 3 && ctx.measureText(txt).width > available) txt = txt.slice(0, -4) + "…";
-      ctx.fillText(txt, textX, my + rowH * 0.69);
+      ctx.fillText(txt, textX, my + rowH * 0.70);
     });
     ctx.textBaseline = "alphabetic";
   }
@@ -2687,7 +2747,7 @@ export class OverlayRenderer {
     const thankAge = (state.qrThankYouActive && state.qrThankYouTs)
       ? (Date.now() - state.qrThankYouTs) : Infinity;
     if (thankAge < THANK_DUR_MS && state.qrThankYouName) {
-      this.drawQRThankYou(cx, cy + bob, size, state.qrThankYouName, thankAge, THANK_DUR_MS);
+      this.drawQRThankYou(cx, cy + bob, size, state.qrThankYouName, thankAge, THANK_DUR_MS, state.thankYouStyle ?? "Classic");
       return;
     }
 
@@ -2779,10 +2839,9 @@ export class OverlayRenderer {
   private drawQRThankYou(
     cx: number, cy: number, size: number,
     name: string, ageMs: number, durMs: number,
+    style = "Classic",
   ): void {
     const { ctx } = this;
-
-    // Smooth fade-in then fade-out at the end
     const FADE_IN_MS  = 350;
     const FADE_OUT_MS = 800;
     const fadeIn  = Math.min(1, ageMs / FADE_IN_MS);
@@ -2791,81 +2850,220 @@ export class OverlayRenderer {
     const alpha  = fadeIn * fadeOut;
     const scaleV = 0.82 + 0.18 * this.easeElastic(Math.min(1, ageMs / 420));
 
-    const cardW   = Math.round(size * 1.5);
-    const cardH   = Math.round(size * 0.90);
-    const cornerR = Math.round(cardH * 0.09);
-
     ctx.save();
     ctx.globalAlpha = alpha * this._panelAlpha;
     ctx.translate(cx, cy);
     ctx.scale(scaleV, scaleV);
 
+    if (style === "Neon") {
+      this._drawThankYouNeon(size, name, ageMs);
+    } else if (style === "Gold") {
+      this._drawThankYouGold(size, name);
+    } else if (style === "Celebration") {
+      this._drawThankYouCelebration(size, name, ageMs);
+    } else {
+      this._drawThankYouClassic(size, name);
+    }
+
+    ctx.restore();
+  }
+
+  private _thankYouCard(cardW: number, cardH: number, cornerR: number, bgStyle: string) {
+    const { ctx } = this;
     const left = -Math.round(cardW / 2);
     const top  = -Math.round(cardH / 2);
-
-    // Shadow
-    ctx.shadowColor   = "rgba(0,0,0,0.55)";
-    ctx.shadowBlur    = 28;
-    ctx.shadowOffsetY = 10;
-
-    // Deep green card
-    ctx.fillStyle = "#021a07";
+    ctx.shadowColor   = "rgba(0,0,0,0.6)";
+    ctx.shadowBlur    = 32;
+    ctx.shadowOffsetY = 12;
+    ctx.fillStyle = bgStyle;
     this.fillRoundRect(left, top, cardW, cardH, cornerR);
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    return { left, top };
+  }
 
-    ctx.shadowColor = "transparent";
-    ctx.shadowBlur  = 0;
-    ctx.shadowOffsetY = 0;
+  private _drawThankYouClassic(size: number, name: string) {
+    const { ctx } = this;
+    const cardW = Math.round(size * 1.5);
+    const cardH = Math.round(size * 0.90);
+    const cornerR = Math.round(cardH * 0.09);
+    const { left, top } = this._thankYouCard(cardW, cardH, cornerR, "#021a07");
 
-    // Green top accent stripe
-    const stripeH = Math.round(cardH * 0.055);
+    // Top stripe
     ctx.fillStyle = "#22c55e";
-    this.fillTopRoundRect(left, top, cardW, stripeH, cornerR);
+    this.fillTopRoundRect(left, top, cardW, Math.round(cardH * 0.055), cornerR);
 
     // Checkmark circle
     const circleR = Math.round(cardH * 0.17);
     const circleY = top + Math.round(cardH * 0.30);
-    ctx.beginPath();
-    ctx.arc(0, circleY, circleR, 0, Math.PI * 2);
-    ctx.fillStyle = "#22c55e";
-    ctx.fill();
-
-    // Checkmark stroke
+    ctx.beginPath(); ctx.arc(0, circleY, circleR, 0, Math.PI * 2);
+    ctx.fillStyle = "#22c55e"; ctx.fill();
     const ck = circleR * 0.48;
-    ctx.strokeStyle  = "#fff";
-    ctx.lineWidth    = Math.max(2, circleR * 0.18);
-    ctx.lineCap      = "round";
-    ctx.lineJoin     = "round";
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = Math.max(2, circleR * 0.18);
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
     ctx.beginPath();
-    ctx.moveTo(-ck * 0.55, circleY);
-    ctx.lineTo(-ck * 0.08, circleY + ck * 0.58);
-    ctx.lineTo(ck * 0.62,  circleY - ck * 0.52);
+    ctx.moveTo(-ck * 0.55, circleY); ctx.lineTo(-ck * 0.08, circleY + ck * 0.58); ctx.lineTo(ck * 0.62, circleY - ck * 0.52);
     ctx.stroke();
 
-    // "Payment Received!" label
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
     const subFS = Math.round(cardH * 0.11);
-    ctx.fillStyle    = "#22c55e";
-    ctx.font         = `700 ${subFS}px sans-serif`;
-    ctx.textAlign    = "center";
-    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#22c55e"; ctx.font = `700 ${subFS}px sans-serif`;
     ctx.fillText("Payment Received!", 0, top + Math.round(cardH * 0.60));
-
-    // "Thank you, [Name]!" — main text
     const nameFS = Math.round(cardH * 0.16);
-    ctx.fillStyle = "#fff";
-    ctx.font      = `800 ${nameFS}px sans-serif`;
-    let displayName = name;
-    while (displayName.length > 4
-      && ctx.measureText(`Thank you, ${displayName}!`).width > cardW - 28) {
-      displayName = displayName.slice(0, -3) + "\u2026";
+    ctx.fillStyle = "#fff"; ctx.font = `800 ${nameFS}px sans-serif`;
+    let dn = name;
+    while (dn.length > 4 && ctx.measureText(`Thank you, ${dn}!`).width > cardW - 28) dn = dn.slice(0, -3) + "…";
+    ctx.fillText(`Thank you, ${dn}!`, 0, top + Math.round(cardH * 0.77));
+    ctx.font = `${Math.round(nameFS * 0.8)}px sans-serif`;
+    ctx.fillText("💚", 0, top + Math.round(cardH * 0.91));
+  }
+
+  private _drawThankYouNeon(size: number, name: string, ageMs: number) {
+    const { ctx } = this;
+    const cardW = Math.round(size * 1.6);
+    const cardH = Math.round(size * 0.92);
+    const cornerR = Math.round(cardH * 0.10);
+    const { left, top } = this._thankYouCard(cardW, cardH, cornerR, "#030a1a");
+
+    // Animated neon border (glow pulse)
+    const pulse = 0.6 + 0.4 * Math.sin(ageMs / 400);
+    ctx.shadowColor = `rgba(0,210,255,${0.7 * pulse})`;
+    ctx.shadowBlur = Math.round(18 * pulse);
+    ctx.strokeStyle = `rgba(0,210,255,${0.85 * pulse})`;
+    ctx.lineWidth = 2.5;
+    this.strokeRR(left, top, cardW, cardH, cornerR);
+    ctx.shadowBlur = 0; ctx.shadowColor = "transparent";
+
+    // Cyan lightning bolt icon
+    const iconY = top + Math.round(cardH * 0.28);
+    const iconFS = Math.round(cardH * 0.28);
+    ctx.font = `${iconFS}px sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("⚡", 0, iconY);
+
+    // "Payment Received!" in neon cyan
+    const subFS = Math.round(cardH * 0.11);
+    ctx.shadowColor = "rgba(0,210,255,0.8)"; ctx.shadowBlur = 8;
+    ctx.fillStyle = "#00d2ff"; ctx.font = `700 ${subFS}px sans-serif`;
+    ctx.fillText("PAYMENT RECEIVED", 0, top + Math.round(cardH * 0.58));
+    ctx.shadowBlur = 0; ctx.shadowColor = "transparent";
+
+    // Name text
+    const nameFS = Math.round(cardH * 0.155);
+    ctx.fillStyle = "#ffffff"; ctx.font = `800 ${nameFS}px sans-serif`;
+    let dn = name;
+    while (dn.length > 4 && ctx.measureText(`Thank you, ${dn}!`).width > cardW - 28) dn = dn.slice(0, -3) + "…";
+    ctx.fillText(`Thank you, ${dn}!`, 0, top + Math.round(cardH * 0.76));
+
+    // Bottom neon accent line
+    const lineY = top + Math.round(cardH * 0.91);
+    const grd = ctx.createLinearGradient(left, 0, left + cardW, 0);
+    grd.addColorStop(0, "transparent"); grd.addColorStop(0.5, "#00d2ff"); grd.addColorStop(1, "transparent");
+    ctx.fillStyle = grd;
+    ctx.fillRect(left + Math.round(cardW * 0.1), lineY, Math.round(cardW * 0.8), 2);
+  }
+
+  private _drawThankYouGold(size: number, name: string) {
+    const { ctx } = this;
+    const cardW = Math.round(size * 1.55);
+    const cardH = Math.round(size * 0.92);
+    const cornerR = Math.round(cardH * 0.09);
+    const { left, top } = this._thankYouCard(cardW, cardH, cornerR, "#0d0a00");
+
+    // Gold gradient overlay
+    const grd = ctx.createLinearGradient(left, top, left + cardW, top + cardH);
+    grd.addColorStop(0, "rgba(251,191,36,0.18)");
+    grd.addColorStop(0.5, "rgba(253,224,71,0.08)");
+    grd.addColorStop(1, "rgba(217,119,6,0.20)");
+    ctx.fillStyle = grd; this.fillRoundRect(left, top, cardW, cardH, cornerR);
+
+    // Gold border
+    ctx.strokeStyle = "rgba(251,191,36,0.65)"; ctx.lineWidth = 2;
+    this.strokeRR(left, top, cardW, cardH, cornerR);
+
+    // Trophy icon
+    const iconY = top + Math.round(cardH * 0.26);
+    ctx.font = `${Math.round(cardH * 0.30)}px sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("🏆", 0, iconY);
+
+    // "PAYMENT RECEIVED" in gold
+    const subFS = Math.round(cardH * 0.105);
+    ctx.shadowColor = "rgba(253,224,71,0.7)"; ctx.shadowBlur = 6;
+    ctx.fillStyle = "#fbbf24"; ctx.font = `700 ${subFS}px sans-serif`;
+    ctx.fillText("PAYMENT RECEIVED", 0, top + Math.round(cardH * 0.58));
+    ctx.shadowBlur = 0; ctx.shadowColor = "transparent";
+
+    // Name text
+    const nameFS = Math.round(cardH * 0.155);
+    ctx.fillStyle = "#fef3c7"; ctx.font = `800 ${nameFS}px sans-serif`;
+    let dn = name;
+    while (dn.length > 4 && ctx.measureText(`Thank you, ${dn}!`).width > cardW - 28) dn = dn.slice(0, -3) + "…";
+    ctx.fillText(`Thank you, ${dn}!`, 0, top + Math.round(cardH * 0.77));
+
+    // Stars row
+    ctx.font = `${Math.round(cardH * 0.10)}px sans-serif`;
+    ctx.fillText("✦  ✦  ✦", 0, top + Math.round(cardH * 0.91));
+  }
+
+  private _drawThankYouCelebration(size: number, name: string, ageMs: number) {
+    const { ctx } = this;
+    const cardW = Math.round(size * 1.6);
+    const cardH = Math.round(size * 0.95);
+    const cornerR = Math.round(cardH * 0.09);
+    const { left, top } = this._thankYouCard(cardW, cardH, cornerR, "#0d0118");
+
+    // Vivid gradient fill
+    const grd = ctx.createLinearGradient(left, top, left + cardW, top + cardH);
+    grd.addColorStop(0, "rgba(168,85,247,0.35)");
+    grd.addColorStop(0.5, "rgba(236,72,153,0.22)");
+    grd.addColorStop(1, "rgba(99,102,241,0.30)");
+    ctx.fillStyle = grd; this.fillRoundRect(left, top, cardW, cardH, cornerR);
+
+    // Gradient border
+    const borderGrd = ctx.createLinearGradient(left, top, left + cardW, top);
+    borderGrd.addColorStop(0, "#a855f7"); borderGrd.addColorStop(0.5, "#ec4899"); borderGrd.addColorStop(1, "#6366f1");
+    ctx.strokeStyle = borderGrd; ctx.lineWidth = 2.5;
+    this.strokeRR(left, top, cardW, cardH, cornerR);
+
+    // Sparkle particles (static based on known positions)
+    const sparks = [
+      { x: left + cardW * 0.1, y: top + cardH * 0.15, s: 0.8 },
+      { x: left + cardW * 0.88, y: top + cardH * 0.12, s: 1.0 },
+      { x: left + cardW * 0.05, y: top + cardH * 0.75, s: 0.7 },
+      { x: left + cardW * 0.93, y: top + cardH * 0.72, s: 0.9 },
+    ];
+    ctx.font = `${Math.round(cardH * 0.10)}px sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const twinkle = 0.5 + 0.5 * Math.sin(ageMs / 300);
+    for (const sp of sparks) {
+      ctx.globalAlpha = (0.5 + 0.5 * twinkle) * this._panelAlpha;
+      ctx.fillText("✦", sp.x, sp.y);
     }
-    ctx.fillText(`Thank you, ${displayName}!`, 0, top + Math.round(cardH * 0.77));
+    ctx.globalAlpha = this._panelAlpha;
 
-    // Heart pulse emoji
-    const heartFS = Math.round(nameFS * 0.8);
-    ctx.font      = `${heartFS}px sans-serif`;
-    ctx.fillText("\u{1F49A}", 0, top + Math.round(cardH * 0.91));
+    // Party popper icon
+    const iconY = top + Math.round(cardH * 0.25);
+    ctx.font = `${Math.round(cardH * 0.28)}px sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("🎉", 0, iconY);
 
-    ctx.restore();
+    // "THANK YOU" in vivid gradient text (approximate with bright pink)
+    const subFS = Math.round(cardH * 0.11);
+    ctx.shadowColor = "rgba(236,72,153,0.8)"; ctx.shadowBlur = 10;
+    ctx.fillStyle = "#f0abfc"; ctx.font = `700 ${subFS}px sans-serif`;
+    ctx.fillText("PAYMENT RECEIVED!", 0, top + Math.round(cardH * 0.57));
+    ctx.shadowBlur = 0; ctx.shadowColor = "transparent";
+
+    // Name text
+    const nameFS = Math.round(cardH * 0.155);
+    ctx.fillStyle = "#ffffff"; ctx.font = `800 ${nameFS}px sans-serif`;
+    let dn = name;
+    while (dn.length > 4 && ctx.measureText(`Thank you, ${dn}!`).width > cardW - 28) dn = dn.slice(0, -3) + "…";
+    ctx.fillText(`Thank you, ${dn}!`, 0, top + Math.round(cardH * 0.76));
+
+    // Confetti row
+    ctx.font = `${Math.round(cardH * 0.11)}px sans-serif`;
+    ctx.fillText("🎊  🎊  🎊", 0, top + Math.round(cardH * 0.91));
   }
 
   private drawFeaturedComment() {

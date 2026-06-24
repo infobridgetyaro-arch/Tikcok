@@ -132,6 +132,7 @@ interface BroadcastState {
   donationTickerActive: boolean;
   donationAlertActive: boolean;
   donationTicker: Array<{ name: string; amount: string; amountKes: number; color: string; ts: number }>;
+  thankYouStyle: string;
 }
 
 interface ControlRoomProps {
@@ -831,6 +832,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
     donationTickerActive: false,
     donationAlertActive: true,
     donationTicker: [],
+    thankYouStyle: "Classic",
   });
   const volDebRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const qrPosDebRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2376,27 +2378,52 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
               {/* ── SUB MILESTONE ALERT ── */}
               <SectionDivider label="Subscriber Alert" />
               <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, lineHeight: 1.5 }}>
-                Flash a 5-second alert banner on the stream for subscriber milestones.
+                Flash a timed alert banner on the stream for subscriber milestones.
               </div>
               <TextInput
                 value={bs.subAlertMessage}
                 onChange={(v) => localUpdate({ subAlertMessage: v })}
                 placeholder="🎉 Just hit 100K subscribers!"
               />
-              <button
-                onClick={() => {
-                  update({ subAlertActive: true, subAlertMessage: bs.subAlertMessage });
-                  setTimeout(() => localUpdate({ subAlertActive: false }), 6500);
-                }}
-                disabled={!bs.subAlertMessage.trim() || bs.subAlertActive}
-                style={{
-                  alignSelf: "flex-start", padding: "6px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer",
-                  border: "1px solid #f97316", background: "rgba(249,115,22,0.15)", color: "#fed7aa",
-                  opacity: bs.subAlertMessage.trim() ? 1 : 0.4, transition: "all 0.18s ease",
-                }}
-              >
-                🔔 Fire Alert Now
-              </button>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  onClick={() => {
+                    update({ subAlertActive: true, subAlertMessage: bs.subAlertMessage });
+                    setTimeout(() => {
+                      update({ subAlertActive: false });
+                      localUpdate({ subAlertActive: false });
+                    }, 5_000);
+                  }}
+                  disabled={!bs.subAlertMessage.trim() || bs.subAlertActive}
+                  style={{
+                    padding: "6px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: bs.subAlertActive || !bs.subAlertMessage.trim() ? "not-allowed" : "pointer",
+                    border: "1px solid #f97316", background: "rgba(249,115,22,0.15)", color: "#fed7aa",
+                    opacity: bs.subAlertMessage.trim() && !bs.subAlertActive ? 1 : 0.4, transition: "all 0.18s ease",
+                  }}
+                >
+                  🔔 Fire Alert Now
+                </button>
+                {bs.subAlertActive && (
+                  <button
+                    onClick={() => {
+                      update({ subAlertActive: false });
+                      localUpdate({ subAlertActive: false });
+                    }}
+                    style={{
+                      padding: "6px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                      border: "1px solid #ef4444", background: "rgba(239,68,68,0.18)", color: "#fca5a5",
+                      transition: "all 0.18s ease",
+                    }}
+                  >
+                    ⏹ Stop Alert
+                  </button>
+                )}
+                {bs.subAlertActive && (
+                  <span style={{ fontSize: 10, color: "#f97316", fontWeight: 700, animation: "cr-pulse 1.2s ease infinite" }}>
+                    ● LIVE
+                  </span>
+                )}
+              </div>
 
               {/* ── SUB CHART SPARKLINE ── */}
               <SectionDivider label="Subscriber Sparkline Chart" />
@@ -2860,6 +2887,36 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                   />
                 </div>
               ))}
+
+              {/* ── Thank You Card Style ── */}
+              <SectionDivider label="Thank You Card Style" />
+              <div style={{ color: "rgba(255,255,255,0.45)", fontSize: 11, lineHeight: 1.5 }}>
+                Design shown on stream after a successful payment.
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                {[
+                  { id: "Classic",     icon: "✅", label: "Classic",     desc: "Green checkmark card",      accent: "#22c55e" },
+                  { id: "Neon",        icon: "⚡", label: "Neon",        desc: "Glowing cyan borders",      accent: "#06b6d4" },
+                  { id: "Gold",        icon: "🏆", label: "Gold",        desc: "Dark gold trophy card",     accent: "#fbbf24" },
+                  { id: "Celebration", icon: "🎉", label: "Celebration", desc: "Vivid gradient + sparkles", accent: "#a855f7" },
+                ].map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => { localUpdate({ thankYouStyle: s.id }); update({ thankYouStyle: s.id }); }}
+                    style={{
+                      padding: "10px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700, cursor: "pointer",
+                      border: `1px solid ${bs.thankYouStyle === s.id ? s.accent : "rgba(255,255,255,0.10)"}`,
+                      background: bs.thankYouStyle === s.id ? `${s.accent}22` : "rgba(255,255,255,0.04)",
+                      color: bs.thankYouStyle === s.id ? s.accent : "rgba(255,255,255,0.45)",
+                      display: "flex", flexDirection: "column", alignItems: "center", gap: 4, transition: "all 0.15s",
+                    }}
+                  >
+                    <span style={{ fontSize: 18 }}>{s.icon}</span>
+                    <span>{s.label}</span>
+                    <span style={{ fontSize: 9, opacity: 0.7, fontWeight: 500 }}>{s.desc}</span>
+                  </button>
+                ))}
+              </div>
 
               {/* Glow intensity */}
               <div>
