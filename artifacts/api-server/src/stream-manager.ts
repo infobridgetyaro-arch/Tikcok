@@ -231,7 +231,8 @@ interface StreamProcess {
   watchdog?: NodeJS.Timeout;
   stallWatchdog?: NodeJS.Timeout;
   statsInterval?: NodeJS.Timeout; // polls CPU+RAM for the FFmpeg PID every 3s
-  prefetchTimer?: NodeJS.Timeout; // fires before URL expires — pre-fetches a fresh URL, then seamlessly restarts
+  prefetchTimer?: NodeJS.Timeout;      // fires before URL expires — pre-fetches a fresh URL, then seamlessly restarts
+  sessionRefreshTimer?: NodeJS.Timeout; // TikTok/xSpace: forced restart every SESSION_REFRESH_MS to prevent session expiry
   ytSourceProcess?: ChildProcess; // streamlink process piped to FFmpeg stdin for YouTube source
   inputUrl?: string;
   sourceType?: string;
@@ -917,6 +918,9 @@ async function getXSpaceAudioUrl(spaceUrl: string): Promise<string> {
 // buffer fully drains (~60 s).
 const STALL_TIMEOUT_MS = 30_000;
 const HEALTH_WARN_MS = 15_000; // warn before stall watchdog fires
+// TikTok/xSpace streamlink sessions expire after ~3 hours.  Force a proactive
+// restart before that so the stream never dies silently from session expiry.
+const SESSION_REFRESH_MS = 3 * 60 * 60 * 1000; // 3 hours
 
 
 function makeStallWatchdog(
@@ -1124,6 +1128,7 @@ function cleanupStreamProc(streamId: string, proc: StreamProcess) {
   if (proc.stallWatchdog) clearInterval(proc.stallWatchdog);
   if (proc.statsInterval) clearInterval(proc.statsInterval);
   if (proc.prefetchTimer) clearTimeout(proc.prefetchTimer);
+  if (proc.sessionRefreshTimer) clearTimeout(proc.sessionRefreshTimer);
   if (proc.ytSourceProcess) {
     try { proc.ytSourceProcess.kill("SIGKILL"); } catch {}
     proc.ytSourceProcess = undefined;
@@ -1386,6 +1391,23 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
               // First refresh at 8 minutes; subsequent ones happen via hardKillAndRestart
               // (which calls cleanupStreamProc → clears timer, then startStream sets a new one)
               schedulePrefetch(8 * 60 * 1000);
+            }
+
+            // ── Proactive session refresh for TikTok/xSpace (24/7) ──────────
+            // streamlink/yt-dlp sessions for TikTok and X Spaces expire after
+            // ~3 hours.  Rather than waiting for a stall, restart proactively
+            // just before expiry with a fresh URL so viewers never see a gap.
+            if (sourceType === "tiktok" || sourceType === "xspace") {
+              const sessionTimer = setTimeout(() => {
+                const currentProc = activeStreams.get(streamId);
+                if (!currentProc || currentProc.ffmpegProcess !== ffmpegProc) return;
+                if (manuallyStopped.has(streamId)) return;
+                sendLog(streamId, `[24/7] Session refresh — restarting with fresh source URL for uninterrupted streaming...`);
+                urlCache.delete(streamId);
+                hardKillAndRestart(streamId, 500, true /* forceNewUrl */);
+              }, SESSION_REFRESH_MS);
+              const proc24 = activeStreams.get(streamId);
+              if (proc24) proc24.sessionRefreshTimer = sessionTimer;
             }
 
             const camUrl = cameraLinks.get(streamId);

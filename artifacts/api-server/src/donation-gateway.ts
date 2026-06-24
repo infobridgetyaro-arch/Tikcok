@@ -147,7 +147,9 @@ export function setDonationCallback(cb: DonationCallback): void {
 // Gateway is healthy when a Paystack key is configured AND a URL is derivable.
 
 export function isGatewayHealthy(): boolean {
-  return !!paystackKey() && !!getGatewayPaymentUrl();
+  // Only check Paystack key — the gateway URL is always auto-derived from
+  // the incoming request host, so it is never null in practice.
+  return !!paystackKey();
 }
 
 // ── Internal donation emit ────────────────────────────────────────────────────
@@ -244,7 +246,11 @@ async function handleSuccessfulPayment(data: Record<string, unknown>): Promise<v
   const customFields = (metadata?.["custom_fields"] as Array<{ variable_name: string; value: string }>) ?? [];
   const donorField = customFields.find(f => f.variable_name === "donor_name");
   const customer = data["customer"] as Record<string, string> | undefined;
-  const name = donorField?.value || customer?.["first_name"] || "Anonymous";
+  // first_name + last_name are set on the charge for M-Pesa; full name is also on customer.name
+  const customerFullName = customer?.["name"] || (
+    [customer?.["first_name"], customer?.["last_name"]].filter(Boolean).join(" ")
+  );
+  const name = donorField?.value || customerFullName || "Anonymous";
   const message = (metadata?.["message"] as string) ?? "";
 
   await handleDonationEvent({ name, amountKes, currency, message, channel, reference, color: donationColor(amountKes) });
@@ -329,15 +335,23 @@ export function registerDonationGateway(app: Express): void {
       if (!formatted) { res.json({ status: false, message: "Invalid phone. Use 07XXXXXXXX or 01XXXXXXXX." }); return; }
       const email = `donor_${formatted.replace("+", "")}@bintunet.live`;
       try {
-        const data = await paystackPost("/charge", {
+        // Build a clean display name — "John" → email stays generic but
+      // Paystack will store the name on the customer record.
+      const displayName = (name || "").trim() || "Anonymous";
+      const nameParts = displayName.split(/\s+/);
+      const firstName = nameParts[0] ?? displayName;
+      const lastName  = nameParts.slice(1).join(" ") || "";
+      const data = await paystackPost("/charge", {
           email,
           amount: Math.round(parseFloat(amount) * 100),
           currency: "KES",
+          first_name: firstName,
+          last_name:  lastName || undefined,
           mobile_money: { phone: formatted, provider: "mpesa" },
           metadata: {
-            donor_name: name || "Anonymous",
+            donor_name: displayName,
             source: "bintunet-donation",
-            custom_fields: [{ display_name: "Donor Name", variable_name: "donor_name", value: name || "Anonymous" }],
+            custom_fields: [{ display_name: "Donor Name", variable_name: "donor_name", value: displayName }],
           },
         });
         if (data["status"] === true) {
