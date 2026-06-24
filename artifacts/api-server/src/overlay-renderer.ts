@@ -562,6 +562,33 @@ export class OverlayRenderer {
     return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
   }
 
+  /** Draw a filled rounded rectangle path (no fill/stroke — caller does that) */
+  private roundRect(x: number, y: number, w: number, h: number, r: number) {
+    const { ctx } = this;
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y,       x + w, y + r,     r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h,   x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x,      y + h,   x, y + h - r,    r);
+    ctx.lineTo(x,     y + r);
+    ctx.arcTo(x,      y,       x + r, y,         r);
+    ctx.closePath();
+  }
+
+  /** Clip to rounded rectangle region for the duration of `fn` */
+  private clipRoundRect(x: number, y: number, w: number, h: number, r: number, fn: () => void) {
+    const { ctx } = this;
+    ctx.save();
+    this.roundRect(x, y, w, h, r);
+    ctx.clip();
+    fn();
+    ctx.restore();
+  }
+
   private easeElastic(t: number): number {
     if (t === 0) return 0;
     if (t === 1) return 1;
@@ -2207,210 +2234,361 @@ export class OverlayRenderer {
 
   private drawTicker(t: number, yBase: number) {
     const { ctx, W, H, state } = this;
-    const bh = Math.max(34, Math.round(H * 0.058));
-    const badgeW = Math.round(W * (this.isVertical ? 0.22 : 0.12));
-    const y = yBase > 0 ? Math.min(H - bh, yBase) : H - bh;
-    const accentColor = state.newsBgColor || "#cc0001";
-    // Dark background bar
-    ctx.fillStyle = "rgba(8,8,10,0.96)";
-    ctx.fillRect(0, y, W, bh);
-    // Top edge accent line
-    ctx.fillStyle = accentColor;
-    ctx.fillRect(0, y, W, 2);
-    // LIVE badge (red block)
-    ctx.fillStyle = accentColor;
-    ctx.fillRect(0, y + 2, badgeW, bh - 2);
-    // Badge — logo image if loaded, else "● LIVE" text
+    const bh     = Math.max(38, Math.round(H * 0.062));
+    const r      = Math.round(bh * 0.36);          // corner radius
+    const pad    = Math.round(bh * 0.18);
+    const accent = state.newsBgColor || "#e5000a";
+
+    // Badge pill width
+    const badgeInner = this.newsLogoImg ? bh * 1.6 : bh * 2.1;
+    const badgeW     = Math.round(badgeInner + pad * 2);
+    const y          = yBase > 0 ? Math.min(H - bh - 6, yBase) : H - bh - 6;
+
+    // ── Full bar — dark glass ─────────────────────────────────────────────
+    const barX = 0;
+    this.roundRect(barX, y, W, bh, r);
+    ctx.fillStyle = "rgba(6,6,14,0.93)";
+    ctx.fill();
+
+    // Top accent stripe (clipped to bar shape)
+    this.clipRoundRect(barX, y, W, 3, 1, () => {
+      const g = ctx.createLinearGradient(0, 0, W, 0);
+      g.addColorStop(0, accent);
+      g.addColorStop(0.5, "#ffffff44");
+      g.addColorStop(1, "transparent");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, y, W, 3);
+    });
+
+    // ── Badge pill (left-anchored, full-height) ───────────────────────────
+    this.roundRect(barX, y, badgeW, bh, r);
+    ctx.fillStyle = accent;
+    ctx.fill();
+
     if (this.newsLogoImg) {
-      const img = this.newsLogoImg;
-      const pad = Math.round(bh * 0.12);
+      const img  = this.newsLogoImg;
       const maxH = bh - pad * 2;
-      const scale = Math.min(maxH / img.height, (badgeW - pad * 2) / img.width);
-      const dw = Math.round(img.width * scale);
-      const dh = Math.round(img.height * scale);
-      const dx = Math.round((badgeW - dw) / 2);
-      const dy = y + 2 + Math.round((bh - 2 - dh) / 2);
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(0, y + 2, badgeW, bh - 2);
-      ctx.clip();
-      ctx.drawImage(img, dx, dy, dw, dh);
-      ctx.restore();
+      const sc   = Math.min(maxH / img.height, (badgeW - pad * 2) / img.width);
+      const dw   = Math.round(img.width * sc);
+      const dh   = Math.round(img.height * sc);
+      this.clipRoundRect(barX, y, badgeW, bh, r, () => {
+        ctx.drawImage(img, Math.round((badgeW - dw) / 2), y + Math.round((bh - dh) / 2), dw, dh);
+      });
     } else {
       ctx.fillStyle = "#fff";
-      ctx.font = `bold ${Math.round(bh * 0.31)}px sans-serif`;
+      ctx.font      = `900 ${Math.round(bh * 0.32)}px sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
+      ctx.shadowColor  = "rgba(0,0,0,0.4)";
+      ctx.shadowBlur   = 4;
       ctx.fillText("● LIVE", badgeW / 2, y + bh / 2 + 1);
+      ctx.shadowBlur = 0;
     }
-    // Thin separator
-    ctx.fillStyle = "rgba(255,255,255,0.2)";
-    ctx.fillRect(badgeW, y + bh * 0.12, 1, bh * 0.76);
-    // Scrolling news text
-    const scrollFont = `${Math.round(bh * 0.3)}px sans-serif`;
-    ctx.font = scrollFont;
-    const sep = "     ◆     ";
-    const full = state.newsText + sep + state.newsText;
-    const tw = ctx.measureText(full).width;
-    const area = W - badgeW - 12;
-    const speed = W * 0.075;
-    const offset = (t * speed) % (tw || 1);
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(badgeW + 12, y + 2, area, bh - 2);
-    ctx.clip();
-    ctx.fillStyle = "rgba(238,238,238,0.96)";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-    for (let i = 0; i < 3; i++) ctx.fillText(full, badgeW + 12 - offset + i * (tw + 20), y + bh / 2 + 1);
-    ctx.restore();
+
+    // ── Separator ─────────────────────────────────────────────────────────
+    ctx.fillStyle = "rgba(255,255,255,0.15)";
+    ctx.fillRect(badgeW + 1, y + bh * 0.15, 1, bh * 0.70);
+
+    // ── Scrolling news text ───────────────────────────────────────────────
+    const fs    = Math.round(bh * 0.33);
+    const font  = `600 ${fs}px sans-serif`;
+    ctx.font    = font;
+    const sep   = "   ◆   ";
+    const full  = state.newsText + sep + state.newsText;
+    const tw    = ctx.measureText(full).width;
+    const areaX = badgeW + 16;
+    const areaW = W - areaX - 8;
+    const speed = W * 0.07;
+    const off   = (t * speed) % (tw || 1);
+
+    this.clipRoundRect(areaX, y + 2, areaW, bh - 4, r - 2, () => {
+      ctx.fillStyle    = "rgba(240,240,240,0.96)";
+      ctx.textAlign    = "left";
+      ctx.textBaseline = "middle";
+      for (let i = 0; i < 3; i++) {
+        ctx.fillText(full, areaX - off + i * (tw + 24), y + bh / 2 + 1);
+      }
+    });
   }
 
   private drawBreaking(yBase: number) {
     const { ctx, W, H, state } = this;
-    const bh = Math.max(48, Math.round(H * 0.072));
-    const y = yBase > 0 ? Math.min(H - bh, yBase) : H - bh;
-    const accentColor = state.newsBgColor || "#cc0001";
-    // Full-width dark bar
-    ctx.fillStyle = "rgba(8,8,10,0.97)";
-    ctx.fillRect(0, y, W, bh);
-    // Top red stripe
-    ctx.fillStyle = accentColor;
-    ctx.fillRect(0, y, W, 3);
-    // BREAKING badge — red block on the left
-    const badgeW = Math.round(W * (this.isVertical ? 0.28 : 0.14));
-    ctx.fillStyle = accentColor;
-    ctx.fillRect(0, y + 3, badgeW, bh - 3);
+    const bh     = Math.max(52, Math.round(H * 0.076));
+    const r      = Math.round(bh * 0.28);
+    const accent = state.newsBgColor || "#e5000a";
+
+    const badgeW  = Math.round(W * (this.isVertical ? 0.30 : 0.16));
+    const cardGap = 8;
+    const cardX   = cardGap;
+    const cardW   = W - cardGap * 2;
+    const y       = yBase > 0 ? Math.min(H - bh - 8, yBase) : H - bh - 8;
+
+    // ── Outer card with rounded corners ──────────────────────────────────
+    this.roundRect(cardX, y, cardW, bh, r);
+    ctx.fillStyle = "rgba(8,8,16,0.95)";
+    ctx.fill();
+
+    // Subtle outer glow stroke
+    this.roundRect(cardX, y, cardW, bh, r);
+    ctx.strokeStyle = `${accent}44`;
+    ctx.lineWidth   = 1.5;
+    ctx.stroke();
+
+    // ── Left accent badge (rounded on both sides) ─────────────────────────
+    const badgeX = cardX + 6;
+    const badgeH = bh - 12;
+    const badgeY = y + 6;
+    this.roundRect(badgeX, badgeY, badgeW, badgeH, Math.round(badgeH * 0.3));
+    const badgeG = ctx.createLinearGradient(badgeX, badgeY, badgeX, badgeY + badgeH);
+    badgeG.addColorStop(0, accent);
+    badgeG.addColorStop(1, `${accent}cc`);
+    ctx.fillStyle = badgeG;
+    ctx.fill();
+
     // Badge label
-    ctx.fillStyle = "#fff";
-    ctx.font = `bold ${Math.round(bh * 0.28)}px sans-serif`;
-    ctx.textAlign = "center";
+    const badgeLabel = (state.newsTitle || "BREAKING").toUpperCase().slice(0, 12);
+    ctx.fillStyle    = "#fff";
+    ctx.font         = `900 ${Math.round(badgeH * 0.30)}px sans-serif`;
+    ctx.textAlign    = "center";
     ctx.textBaseline = "middle";
-    const badgeLabel = (state.newsTitle || "BREAKING NEWS").toUpperCase().slice(0, 14);
-    ctx.fillText(badgeLabel, badgeW / 2, y + bh / 2 + 1);
-    // Main news text
-    const font = `bold ${Math.round(bh * 0.33)}px sans-serif`;
-    ctx.textAlign = "left";
-    const maxW = W - badgeW - 24;
-    let txt = state.newsText;
-    ctx.font = font;
-    while (txt.length > 4 && ctx.measureText(txt).width > maxW) txt = txt.slice(0, -4) + "…";
-    this.drawAnimText(txt, badgeW + 16, y + bh / 2, font, "#fff", state.newsAnimation, this._newsAnimProg);
+    ctx.shadowColor  = "rgba(0,0,0,0.5)";
+    ctx.shadowBlur   = 4;
+    ctx.fillText(badgeLabel, badgeX + badgeW / 2, badgeY + badgeH / 2);
+    ctx.shadowBlur   = 0;
+
+    // ── Separator line ─────────────────────────────────────────────────────
+    const sepX = badgeX + badgeW + 8;
+    ctx.fillStyle = "rgba(255,255,255,0.12)";
+    ctx.fillRect(sepX, y + bh * 0.15, 1, bh * 0.70);
+
+    // ── Main news text ─────────────────────────────────────────────────────
+    const textX  = sepX + 14;
+    const maxTW  = cardX + cardW - textX - 12;
+    const font   = `bold ${Math.round(bh * 0.31)}px sans-serif`;
+    ctx.font     = font;
+    let txt      = state.newsText;
+    while (txt.length > 4 && ctx.measureText(txt).width > maxTW) txt = txt.slice(0, -4) + "…";
+    this.drawAnimText(txt, textX, y + bh / 2, font, "rgba(240,240,240,0.97)", state.newsAnimation, this._newsAnimProg);
   }
 
   private drawLowerThird(xBase: number, yBase: number) {
     const { ctx, W, H, state } = this;
-    const accentColor = state.newsBgColor || "#cc0001";
-    const bw = Math.round(W * (this.isVertical ? 0.88 : 0.60));
-    // Lower third has two rows: title bar (red) + main text bar (dark)
-    const titleH = Math.round(H * 0.038);
-    const mainH = Math.round(H * 0.058);
-    const totalH = titleH + mainH;
-    const x = xBase || 0;
-    const y = yBase > 0 ? Math.min(H - totalH - 2, yBase) : H - totalH - Math.round(H * 0.05);
-    // Red title bar (top row)
-    ctx.fillStyle = accentColor;
-    ctx.fillRect(x, y, bw, titleH);
-    // Title text (e.g. "BREAKING NEWS", custom label, or channel name)
-    ctx.fillStyle = "#fff";
-    ctx.font = `bold ${Math.round(titleH * 0.52)}px sans-serif`;
-    ctx.textAlign = "left";
+    const accent  = state.newsBgColor || "#e5000a";
+    const bw      = Math.round(W * (this.isVertical ? 0.90 : 0.62));
+    const titleH  = Math.max(24, Math.round(H * 0.042));
+    const mainH   = Math.max(36, Math.round(H * 0.064));
+    const totalH  = titleH + mainH;
+    const r       = Math.round(titleH * 0.38);
+    const x       = xBase || 0;
+    const y       = yBase > 0 ? Math.min(H - totalH - 8, yBase) : H - totalH - Math.round(H * 0.055);
+
+    // ── Title row (accent color, rounded top corners only) ───────────────
+    ctx.save();
+    this.roundRect(x, y, bw, titleH + r, r);
+    ctx.clip();
+    const tg = ctx.createLinearGradient(x, y, x + bw, y);
+    tg.addColorStop(0, accent);
+    tg.addColorStop(1, `${accent}cc`);
+    ctx.fillStyle = tg;
+    ctx.fillRect(x, y, bw, titleH + r);
+    ctx.restore();
+
+    ctx.fillStyle    = "#fff";
+    ctx.font         = `900 ${Math.round(titleH * 0.50)}px sans-serif`;
+    ctx.textAlign    = "left";
     ctx.textBaseline = "middle";
-    const titleStr = (state.newsTitle || "LIVE UPDATE").toUpperCase();
-    ctx.fillText(titleStr, x + 10, y + titleH / 2);
-    // Dark main bar (bottom row)
-    ctx.fillStyle = "rgba(10,10,14,0.95)";
-    ctx.fillRect(x, y + titleH, bw, mainH);
-    // Left accent stripe on main bar
-    ctx.fillStyle = accentColor;
-    ctx.fillRect(x, y + titleH, 4, mainH);
-    // Main news text
-    const mainFont = `bold ${Math.round(mainH * 0.38)}px sans-serif`;
-    ctx.textBaseline = "middle";
-    this.drawAnimText(state.newsText, x + 14, y + titleH + mainH / 2, mainFont, "#fff", state.newsAnimation, this._newsAnimProg);
-    ctx.textBaseline = "alphabetic";
+    ctx.shadowColor  = "rgba(0,0,0,0.35)";
+    ctx.shadowBlur   = 3;
+    const titleStr   = (state.newsTitle || "LIVE UPDATE").toUpperCase();
+    ctx.fillText(titleStr, x + 12, y + titleH / 2);
+    ctx.shadowBlur   = 0;
+
+    // ── Main row (dark glass, rounded bottom + overlapping top clip) ──────
+    ctx.save();
+    this.roundRect(x, y + titleH, bw, mainH + r, r);
+    ctx.clip();
+    ctx.fillStyle = "rgba(8,8,18,0.96)";
+    ctx.fillRect(x, y + titleH, bw, mainH + r);
+
+    // Left accent stripe inside main bar
+    ctx.fillStyle = accent;
+    ctx.fillRect(x, y + titleH, 4, mainH + r);
+    ctx.restore();
+
+    // Main text (clip to visible mainH, not the overlapping r)
+    const mainFont = `bold ${Math.round(mainH * 0.36)}px sans-serif`;
+    this.clipRoundRect(x + 4, y + titleH, bw - 4, mainH, r - 2, () => {
+      this.drawAnimText(state.newsText, x + 18, y + titleH + mainH / 2, mainFont, "rgba(240,240,240,0.97)", state.newsAnimation, this._newsAnimProg);
+    });
   }
 
   private drawSpotlight() {
     const { ctx, W, H, state } = this;
-    const g = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.65);
-    g.addColorStop(0, "rgba(0,0,0,0.35)");
-    g.addColorStop(1, "rgba(0,0,0,0.82)");
-    ctx.fillStyle = g;
+    const accent = state.newsBgColor || "#e5000a";
+
+    // Cinematic vignette
+    const vg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.65);
+    vg.addColorStop(0, "rgba(0,0,0,0.28)");
+    vg.addColorStop(1, "rgba(0,0,0,0.84)");
+    ctx.fillStyle = vg;
     ctx.fillRect(0, 0, W, H);
-    const fs = Math.round(Math.min(W, H) * 0.052);
-    const font = `bold ${fs}px sans-serif`;
-    ctx.font = font;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
+
+    // Wrap text into lines
+    const fs    = Math.round(Math.min(W, H) * 0.054);
+    const font  = `bold ${fs}px sans-serif`;
+    ctx.font    = font;
+    const maxTW = W * 0.70;
     const words = state.newsText.split(" ");
-    const maxW = W * 0.72;
     const lines: string[] = [];
     let cur = "";
     for (const w of words) {
       const test = cur ? `${cur} ${w}` : w;
-      if (cur && ctx.measureText(test).width > maxW) { lines.push(cur); cur = w; }
+      if (cur && ctx.measureText(test).width > maxTW) { lines.push(cur); cur = w; }
       else cur = test;
     }
     if (cur) lines.push(cur);
-    const lh = fs * 1.35;
-    const startY = H / 2 - (lines.length - 1) * lh / 2;
+
+    const lh     = fs * 1.40;
+    const cardW  = Math.round(W * (this.isVertical ? 0.85 : 0.72));
+    const cardH  = Math.round(lh * lines.length + fs * 2.2);
+    const cardX  = Math.round((W - cardW) / 2);
+    const cardY  = Math.round(H / 2 - cardH / 2);
+    const cardR  = Math.round(cardH * 0.12);
+
+    // Frosted card background
+    this.roundRect(cardX, cardY, cardW, cardH, cardR);
+    ctx.fillStyle = "rgba(6,6,18,0.82)";
+    ctx.fill();
+
+    // Accent border stroke
+    this.roundRect(cardX, cardY, cardW, cardH, cardR);
+    ctx.strokeStyle = `${accent}66`;
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+
+    // Top accent strip (clipped to card top edge)
+    this.clipRoundRect(cardX, cardY, cardW, 4, 2, () => {
+      const sg = ctx.createLinearGradient(cardX, 0, cardX + cardW, 0);
+      sg.addColorStop(0, accent); sg.addColorStop(1, `${accent}55`);
+      ctx.fillStyle = sg;
+      ctx.fillRect(cardX, cardY, cardW, 4);
+    });
+
+    // Text lines
+    ctx.textAlign    = "center";
+    ctx.textBaseline = "middle";
+    const startY     = cardY + cardH / 2 - (lines.length - 1) * lh / 2;
     lines.forEach((l, i) => {
       this.drawAnimText(l, W / 2, startY + i * lh, font, "#fff", state.newsAnimation, this._newsAnimProg);
     });
-    ctx.fillStyle = "#cc0001";
-    ctx.fillRect(W / 2 - 30, H / 2 + lines.length * lh / 2 + 8, 60, 3);
   }
 
-  /** New: centered pop-up card */
+  /** Floating centered alert card */
   private drawNewsPopup() {
     const { ctx, W, H, state } = this;
-    const bw = Math.round(W * (this.isVertical ? 0.88 : 0.65));
-    const bh = Math.round(H * 0.12);
-    const bx = (W - bw) / 2;
-    const by = Math.round(H * 0.42);
-    const g = ctx.createLinearGradient(bx, by, bx, by + bh);
-    g.addColorStop(0, "rgba(15,12,41,0.97)");
-    g.addColorStop(1, "rgba(48,43,99,0.94)");
-    ctx.fillStyle = g;
-    ctx.fillRect(bx, by, bw, bh);
-    // Top accent line
-    const accentG = ctx.createLinearGradient(bx, by, bx + bw, by);
-    accentG.addColorStop(0, "#667eea"); accentG.addColorStop(1, "#a78bfa");
-    ctx.fillStyle = accentG;
-    ctx.fillRect(bx, by, bw, 3);
-    const font = `bold ${Math.round(bh * 0.35)}px sans-serif`;
-    ctx.textAlign = "center";
+    const accent  = state.newsBgColor || "#667eea";
+    const bw      = Math.round(W * (this.isVertical ? 0.88 : 0.62));
+    const bh      = Math.round(H * 0.13);
+    const bx      = Math.round((W - bw) / 2);
+    const by      = Math.round(H * 0.40);
+    const r       = Math.round(bh * 0.22);
+
+    // Outer glow ring
+    ctx.shadowColor = `${accent}66`;
+    ctx.shadowBlur  = 22;
+    this.roundRect(bx, by, bw, bh, r);
+    ctx.fillStyle = "transparent";
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Main card
+    this.roundRect(bx, by, bw, bh, r);
+    const bg = ctx.createLinearGradient(bx, by, bx, by + bh);
+    bg.addColorStop(0, "rgba(12,10,44,0.97)");
+    bg.addColorStop(1, "rgba(24,18,68,0.94)");
+    ctx.fillStyle = bg;
+    ctx.fill();
+
+    // Gradient border stroke
+    this.roundRect(bx, by, bw, bh, r);
+    const borderG = ctx.createLinearGradient(bx, by, bx + bw, by + bh);
+    borderG.addColorStop(0, `${accent}cc`);
+    borderG.addColorStop(0.5, "#a78bfa88");
+    borderG.addColorStop(1, `${accent}44`);
+    ctx.strokeStyle = borderG;
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+
+    // Top accent bar
+    this.clipRoundRect(bx, by, bw, 4, 2, () => {
+      const tg = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+      tg.addColorStop(0, accent); tg.addColorStop(1, "#a78bfa");
+      ctx.fillStyle = tg;
+      ctx.fillRect(bx, by, bw, 4);
+    });
+
+    // Centered text
+    const font = `bold ${Math.round(bh * 0.33)}px sans-serif`;
+    ctx.font         = font;
+    ctx.textAlign    = "center";
     ctx.textBaseline = "middle";
-    this.drawAnimText(state.newsText, bx + bw / 2, by + bh / 2, font, "#fff", state.newsAnimation, this._newsAnimProg);
+    let txt          = state.newsText;
+    while (txt.length > 4 && ctx.measureText(txt).width > bw - 32) txt = txt.slice(0, -4) + "…";
+    this.drawAnimText(txt, bx + bw / 2, by + bh / 2 + 2, font, "#fff", state.newsAnimation, this._newsAnimProg);
   }
 
-  /** New: gradient ticker banner */
+  /** Gradient scroll banner — visually distinct from Ticker */
   private drawScrollBanner(t: number, yBase: number) {
     const { ctx, W, H, state } = this;
-    const bh = Math.max(34, Math.round(H * 0.058));
-    const y = yBase > 0 ? Math.min(H - bh, yBase) : H - bh;
-    const g = ctx.createLinearGradient(0, y, W, y + bh);
-    g.addColorStop(0, "rgba(102,126,234,0.95)");
-    g.addColorStop(0.5, "rgba(118,75,162,0.9)");
-    g.addColorStop(1, "rgba(200,80,192,0.88)");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, y, W, bh);
-    const area = W;
-    ctx.font = `bold ${Math.round(bh * 0.38)}px sans-serif`;
-    const full = state.newsText + "          ✦          " + state.newsText;
-    const tw = ctx.measureText(full).width;
-    const speed = W * 0.09;
-    const offset = (t * speed) % (tw + area);
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, y, W, bh);
-    ctx.clip();
-    ctx.fillStyle = "#fff";
-    ctx.textAlign = "left";
+    const bh     = Math.max(42, Math.round(H * 0.065));
+    const r      = Math.round(bh * 0.26);
+    const margin = 0;
+    const y      = yBase > 0 ? Math.min(H - bh - margin, yBase) : H - bh - margin;
+    const accent = state.newsBgColor || "#667eea";
+
+    // Full-width gradient band
+    this.clipRoundRect(0, y, W, bh, 0, () => {
+      const g = ctx.createLinearGradient(0, y, W, y + bh);
+      g.addColorStop(0,   `${accent}f0`);
+      g.addColorStop(0.4, "rgba(118,75,162,0.92)");
+      g.addColorStop(1,   "rgba(200,80,192,0.90)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, y, W, bh);
+    });
+
+    // Rounded pill badge on left
+    const badgeW = Math.round(W * (this.isVertical ? 0.22 : 0.10));
+    const badgeX = 8;
+    const badgeH = bh - 10;
+    const badgeY = y + 5;
+    this.roundRect(badgeX, badgeY, badgeW, badgeH, Math.round(badgeH * 0.40));
+    ctx.fillStyle = "rgba(255,255,255,0.20)";
+    ctx.fill();
+
+    ctx.fillStyle    = "#fff";
+    ctx.font         = `900 ${Math.round(badgeH * 0.36)}px sans-serif`;
+    ctx.textAlign    = "center";
     ctx.textBaseline = "middle";
-    for (let i = 0; i < 3; i++) ctx.fillText(full, -offset + i * (tw + 20), y + bh / 2);
-    ctx.restore();
+    ctx.fillText("✦ LIVE", badgeX + badgeW / 2, badgeY + badgeH / 2);
+
+    // Scrolling text
+    const textX  = badgeX + badgeW + 14;
+    const textW  = W - textX - 8;
+    ctx.font     = `bold ${Math.round(bh * 0.34)}px sans-serif`;
+    const sep    = "   ✦   ";
+    const full   = state.newsText + sep + state.newsText;
+    const tw     = ctx.measureText(full).width;
+    const speed  = W * 0.085;
+    const offset = (t * speed) % (tw || 1);
+
+    this.clipRoundRect(textX, y + 2, textW, bh - 4, r - 2, () => {
+      ctx.fillStyle    = "rgba(255,255,255,0.95)";
+      ctx.textAlign    = "left";
+      ctx.textBaseline = "middle";
+      for (let i = 0; i < 3; i++) {
+        ctx.fillText(full, textX - offset + i * (tw + 24), y + bh / 2);
+      }
+    });
   }
 
   // ── ADS ────────────────────────────────────────────────────────────────────

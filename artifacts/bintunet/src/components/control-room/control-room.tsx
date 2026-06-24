@@ -1272,7 +1272,9 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
     const isMicShared = ctx === audioCtxRef.current && !!processorRef.current;
     if (!isMicShared) {
       const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${proto}//${window.location.host}/ws-mic`);
+      // Use /ws-music (dedicated route) so music never shares the mic WebSocket.
+      // Sharing /ws-mic caused PCM data interleaving → scratches when mic is inactive.
+      const ws = new WebSocket(`${proto}//${window.location.host}/ws-music`);
       musicWsRef.current = ws;
 
       // Prefer AudioWorkletNode (latest standard), fall back to ScriptProcessorNode
@@ -3365,6 +3367,33 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                   {bs.screenShareMode === "pip" && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "14px 16px", borderRadius: 12, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)" }}>
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 2 }}>PIP Position &amp; Size</div>
+
+                    {/* Quick corner presets */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                      {([
+                        { label: "↖ Top-Left",     x: 2,  y: 3  },
+                        { label: "↗ Top-Right",    x: 60, y: 3  },
+                        { label: "↙ Bottom-Left",  x: 2,  y: 62 },
+                        { label: "↘ Bottom-Right", x: 60, y: 62 },
+                      ] as const).map(({ label, x, y }) => (
+                        <button
+                          key={label}
+                          onClick={() => {
+                            localUpdate({ screenShareX: x, screenShareY: y });
+                            update({ screenShareX: x, screenShareY: y });
+                          }}
+                          style={{
+                            padding: "7px 6px", borderRadius: 8, fontSize: 10, fontWeight: 700,
+                            cursor: "pointer", border: "1px solid rgba(129,140,248,0.25)",
+                            background: "rgba(129,140,248,0.08)", color: "#a5b4fc",
+                            transition: "all 0.15s ease",
+                          }}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
                     {[
                       { label: "X Position", key: "screenShareX" as const, min: 0, max: 95, unit: "%" },
                       { label: "Y Position", key: "screenShareY" as const, min: 0, max: 95, unit: "%" },

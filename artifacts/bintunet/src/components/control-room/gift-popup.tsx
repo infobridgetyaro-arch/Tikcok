@@ -422,135 +422,186 @@ export function GiftPopup({ event, onDismiss }: GiftPopupProps) {
     "--gift-accent":  gift.accentColor,
   } as React.CSSProperties;
 
-  /* ── MINIMAL MODE ─────────────────────────────────────────────────────── */
+  /* ── MINIMAL MODE — pill notification (top-right corner) ─────────────── */
   if (mode === "minimal") {
     return (
       <>
         <style>{GIFT_KEYFRAMES}</style>
-        <div className="fixed z-[9999] pointer-events-none" style={{ top: 16, right: 16, ...cssVars }}>
-          <GlassCard
-            gift={gift}
-            className="relative flex items-center gap-3 rounded-2xl overflow-hidden"
+        <div
+          className="fixed z-[9999] pointer-events-none"
+          style={{ top: 20, right: 20, ...cssVars }}
+        >
+          {/* Outer glow ring */}
+          <div
+            className="absolute inset-0 rounded-[28px]"
             style={{
-              padding: "10px 16px 10px 12px",
-              minWidth: 240,
+              boxShadow: `0 0 0 2px ${gift.primaryColor}55, 0 0 24px ${gift.glowColor}55`,
+              animation: animOut ? "" : "scGiftSlideIn 0.45s cubic-bezier(0.34,1.56,0.64,1) forwards",
+            }}
+          />
+
+          {/* Card */}
+          <div
+            className="relative flex items-center gap-3 overflow-hidden"
+            style={{
+              minWidth: 260,
+              maxWidth: 340,
+              borderRadius: 28,
+              padding: "11px 18px 11px 10px",
+              background: "linear-gradient(135deg, rgba(8,8,24,0.97) 0%, rgba(14,10,40,0.95) 100%)",
+              backdropFilter: "blur(20px)",
+              border: `1.5px solid ${gift.primaryColor}44`,
+              boxShadow: `0 8px 32px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08)`,
               animation: animOut
                 ? "scGiftFadeOut 0.5s ease-in forwards"
-                : "scGiftSlideIn 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
+                : "scGiftSlideIn 0.45s cubic-bezier(0.34,1.56,0.64,1) forwards",
             }}
           >
-            {/* Left color bar */}
-            <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: gift.primaryColor, boxShadow: `0 0 8px ${gift.glowColor}` }} />
+            {/* Colored left accent pill */}
+            <div
+              className="absolute left-0 top-0 bottom-0 w-[5px] rounded-l-[28px]"
+              style={{
+                background: `linear-gradient(180deg, ${gift.primaryColor}, ${gift.accentColor})`,
+                boxShadow: `2px 0 12px ${gift.glowColor}66`,
+              }}
+            />
 
-            {/* Icon with burst glow */}
+            {/* Icon */}
             <span
-              className="text-3xl pl-1 shrink-0"
-              style={{ filter: `drop-shadow(0 0 10px ${gift.glowColor})`, animation: animOut ? "" : "scGiftIconBounce 0.5s cubic-bezier(0.34,1.8,0.64,1) both" }}
+              className="text-[28px] pl-2 shrink-0 leading-none"
+              style={{
+                filter: `drop-shadow(0 0 10px ${gift.glowColor})`,
+                animation: animOut ? "" : "scGiftIconBounce 0.5s 0.05s cubic-bezier(0.34,1.8,0.64,1) both",
+              }}
             >
               {gift.icon}
             </span>
 
-            <div className="flex flex-col min-w-0 flex-1">
-              <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: gift.primaryColor, textShadow: `0 0 6px ${gift.glowColor}` }}>
+            {/* Text block */}
+            <div className="flex flex-col min-w-0 flex-1 gap-px">
+              <span
+                className="text-[10px] font-black uppercase tracking-widest leading-none"
+                style={{ color: gift.primaryColor }}
+              >
                 {TIER_ICONS[gift.tier]} {TIER_LABELS[gift.tier]}
               </span>
-              <span className="text-sm font-bold text-white truncate leading-tight">{event.donorName.split(" ")[0]}</span>
+              <span className="text-[15px] font-bold text-white truncate leading-tight">
+                {event.donorName}
+              </span>
             </div>
 
-            <div className="ml-auto text-right shrink-0">
-              <span
-                className="text-sm font-black"
-                style={{ color: gift.primaryColor, textShadow: `0 0 10px ${gift.glowColor}` }}
-              >
-                {event.amount}
-              </span>
+            {/* Amount badge */}
+            <div
+              className="shrink-0 rounded-2xl px-3 py-1 text-sm font-black text-white"
+              style={{
+                background: `linear-gradient(135deg, ${gift.primaryColor}cc, ${gift.accentColor}aa)`,
+                boxShadow: `0 0 12px ${gift.glowColor}55`,
+              }}
+            >
+              {event.amount}
               {event.comboCount > 1 && (
-                <div className="text-[10px] font-black" style={{ color: "#ff6b35", textShadow: "0 0 8px #ff6b35" }}>🔥{event.comboCount}x</div>
+                <span className="ml-1 text-[10px]" style={{ color: "#ff9966" }}>×{event.comboCount}</span>
               )}
             </div>
 
             <ParticleCanvas gift={gift} show={burst} mode="minimal" />
-          </GlassCard>
+          </div>
         </div>
       </>
     );
   }
 
-  /* ── STANDARD MODE ────────────────────────────────────────────────────── */
+  /* ── STANDARD MODE — YouTube SuperChat–style card ─────────────────────── */
   if (mode === "standard") {
     return (
       <>
         <style>{GIFT_KEYFRAMES}</style>
-        <div className="fixed z-[9999] inset-x-0 bottom-28 flex justify-center pointer-events-none" style={cssVars}>
-          <GlassCard
-            gift={gift}
-            className="relative rounded-2xl overflow-hidden"
+        <div
+          className="fixed z-[9999] inset-x-0 bottom-28 flex justify-center pointer-events-none"
+          style={cssVars}
+        >
+          <div
+            className="relative overflow-hidden"
             style={{
-              width: "min(540px, 90vw)",
+              width: "min(520px, 92vw)",
+              borderRadius: 20,
+              background: "linear-gradient(160deg, rgba(8,8,24,0.98) 0%, rgba(14,10,44,0.96) 100%)",
+              backdropFilter: "blur(28px)",
+              border: `1.5px solid ${gift.primaryColor}55`,
+              boxShadow: `0 0 0 1px ${gift.primaryColor}22, 0 12px 48px rgba(0,0,0,0.65), 0 0 60px ${gift.glowColor}22, inset 0 1px 0 rgba(255,255,255,0.07)`,
               animation: animOut
                 ? "scGiftFadeOut 0.6s ease-in forwards"
-                : "scGiftPopIn 0.48s cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
+                : "scGiftPopIn 0.48s cubic-bezier(0.34,1.56,0.64,1) forwards",
             }}
           >
-            <TierStrip gift={gift} />
+            {/* Gradient top accent bar */}
+            <div style={{ height: 5, background: `linear-gradient(90deg, ${gift.primaryColor}, ${gift.glowColor}, ${gift.accentColor})`, borderRadius: "20px 20px 0 0" }} />
 
-            <div className="flex items-center gap-4 px-4 py-3">
-              {/* Icon */}
+            {/* Header row — tier + amount */}
+            <div
+              className="flex items-center justify-between px-4 pt-3 pb-2"
+              style={{ borderBottom: `1px solid ${gift.primaryColor}25` }}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className="text-4xl leading-none"
+                  style={{
+                    filter: `drop-shadow(0 0 14px ${gift.glowColor})`,
+                    animation: animOut ? "" : "scGiftIconBounce 0.55s 0.1s cubic-bezier(0.34,1.8,0.64,1) both",
+                  }}
+                >
+                  {gift.icon}
+                </span>
+                <div className="flex flex-col">
+                  <span
+                    className="text-[11px] font-black uppercase tracking-widest"
+                    style={{ color: gift.primaryColor }}
+                  >
+                    {TIER_ICONS[gift.tier]} {TIER_LABELS[gift.tier]}
+                  </span>
+                  <span className="text-[13px] font-semibold text-white/60">{gift.name}</span>
+                </div>
+              </div>
+
+              {/* Amount pill */}
               <div
-                className="shrink-0 text-5xl"
+                className="rounded-2xl px-4 py-1.5 text-[18px] font-black"
                 style={{
-                  filter: `drop-shadow(0 0 16px ${gift.glowColor}) drop-shadow(0 0 30px ${gift.glowColor}66)`,
-                  animation: animOut ? "" : "scGiftIconBounce 0.55s 0.1s cubic-bezier(0.34,1.8,0.64,1) both",
+                  background: `linear-gradient(135deg, ${gift.primaryColor}dd, ${gift.accentColor}bb)`,
+                  color: "#fff",
+                  boxShadow: `0 0 16px ${gift.glowColor}55, inset 0 1px 0 rgba(255,255,255,0.2)`,
                 }}
               >
-                {gift.icon}
+                {event.amount}
               </div>
+            </div>
 
-              {/* Text */}
-              <div className="flex flex-col min-w-0 flex-1">
-                <span
-                  className="text-base font-black"
-                  style={{ color: gift.primaryColor, textShadow: `0 0 10px ${gift.glowColor}` }}
-                >
-                  {gift.name}
-                </span>
-                <span className="text-xl font-bold text-white truncate leading-tight">{event.donorName}</span>
-                <span
-                  className="text-sm font-black mt-0.5"
-                  style={{ color: gift.accentColor, textShadow: `0 0 8px ${gift.glowColor}66` }}
-                >
-                  {event.amount}
-                </span>
+            {/* Donor name + combo */}
+            <div className="flex items-center justify-between px-4 pt-3 pb-2">
+              <div className="flex flex-col min-w-0">
+                <span className="text-[22px] font-black text-white leading-tight truncate">{event.donorName}</span>
+                {event.message && (
+                  <span className="text-[13px] text-white/55 italic mt-1 leading-snug">"{event.message}"</span>
+                )}
               </div>
-
-              {/* Combo badge */}
               {event.comboCount > 1 && (
                 <div
-                  className="shrink-0 text-center"
+                  className="shrink-0 ml-4 text-center"
                   style={{ animation: "scGiftComboSpin 0.4s ease-out" }}
                 >
-                  <div className="text-xl font-black" style={{ color: "#ff6b35", textShadow: "0 0 14px #ff6b35" }}>
+                  <div className="text-2xl font-black" style={{ color: "#ff6b35", textShadow: "0 0 16px #ff6b35" }}>
                     🔥 {event.comboCount}x
                   </div>
-                  <div className="text-xs font-black" style={{ color: "#ff9966" }}>COMBO</div>
+                  <div className="text-[10px] font-black" style={{ color: "#ff9966" }}>COMBO</div>
                 </div>
               )}
             </div>
 
-            {/* Message */}
-            {event.message && (
-              <div className="px-4 pb-3">
-                <div
-                  className="rounded-lg px-3 py-1.5"
-                  style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.07)" }}
-                >
-                  <span className="text-xs text-white/65 italic">"{event.message}"</span>
-                </div>
-              </div>
-            )}
+            {/* Bottom rounded spacer */}
+            <div className="h-3" />
 
             <ParticleCanvas gift={gift} show={burst} mode="standard" />
-          </GlassCard>
+          </div>
         </div>
       </>
     );

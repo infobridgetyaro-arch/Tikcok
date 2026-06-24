@@ -1163,9 +1163,10 @@ export async function registerBintunetRoutes(
   // If multiple WebSocketServer instances share the same httpServer via the
   // `server` option, the ws library calls abortHandshake() when a path
   // doesn't match — destroying the socket before the correct server handles it.
-  const wss    = new WebSocketServer({ noServer: true });
-  const micWss = new WebSocketServer({ noServer: true });
-  const camWss = new WebSocketServer({ noServer: true });
+  const wss      = new WebSocketServer({ noServer: true });
+  const micWss   = new WebSocketServer({ noServer: true });
+  const musicWss = new WebSocketServer({ noServer: true });
+  const camWss   = new WebSocketServer({ noServer: true });
   const screenWss = new WebSocketServer({ noServer: true });
 
   httpServer.on("upgrade", (req, socket, head) => {
@@ -1176,6 +1177,7 @@ export async function registerBintunetRoutes(
     };
     if (pathname === "/ws")         return route(wss);
     if (pathname === "/ws-mic")     return route(micWss);
+    if (pathname === "/ws-music")   return route(musicWss);
     if (pathname === "/ws-cam")     return route(camWss);
     if (pathname === "/ws-screen")  return route(screenWss);
     socket.destroy();
@@ -1231,6 +1233,17 @@ export async function registerBintunetRoutes(
 
   // ── /ws-mic — browser microphone → FFmpeg pipe:5 (PCM16 mono 44100 Hz) ──
   micWss.on("connection", (ws) => {
+    ws.on("message", (data, isBinary) => {
+      if (isBinary) {
+        feedMicAudio(data as Buffer);
+      }
+    });
+  });
+
+  // ── /ws-music — browser music player → FFmpeg pipe:5 (PCM16 mono 44100 Hz)
+  // Dedicated route so music never shares the mic WebSocket — prevents audio
+  // interleaving artefacts (scratches) when mic is inactive.
+  musicWss.on("connection", (ws) => {
     ws.on("message", (data, isBinary) => {
       if (isBinary) {
         feedMicAudio(data as Buffer);

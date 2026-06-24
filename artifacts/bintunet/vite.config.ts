@@ -123,6 +123,12 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path,
       },
+      "/ws-music": {
+        target: "ws://localhost:8080",
+        ws: true,
+        changeOrigin: true,
+        rewrite: (path) => path,
+      },
       "/ws-cam": {
         target: "ws://localhost:8080",
         ws: true,

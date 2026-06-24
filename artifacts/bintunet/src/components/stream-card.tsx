@@ -393,6 +393,32 @@ export function StreamCard({
                     disabled={isActive}
                     data-testid={`input-tiktok-${stream.id}`}
                   />
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 space-y-2">
+                    <p className="text-xs font-medium flex items-center gap-1.5">
+                      <SiTiktok className="w-3 h-3 text-pink-500" /> TikTok Source Tips
+                    </p>
+                    <ul className="space-y-1">
+                      {[
+                        "Enter the username without the @ symbol — the account must be live right now",
+                        "Uses streamlink under the hood; install it on the server with: pip install streamlink",
+                        "Some regions require cookies to access TikTok live streams — see below",
+                        "For 24/7 restreams: enable Auto-Restart so it reconnects when the TikTok goes offline",
+                      ].map((tip, i) => (
+                        <li key={i} className="text-xs text-muted-foreground flex gap-1.5">
+                          <span className="shrink-0 text-primary font-bold">{i + 1}.</span>
+                          {tip}
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="pt-1 border-t border-border/50 space-y-1">
+                      <p className="text-[11px] font-semibold text-foreground/80">TikTok Cookies (if region-blocked or private)</p>
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">
+                        Log in to TikTok in Chrome → install <span className="font-medium text-foreground/70">cookies.txt</span> extension → export from tiktok.com → save as{" "}
+                        <code className="bg-muted px-1 rounded text-[10px]">~/.config/streamlink/cookies-tiktok.txt</code> on the server.
+                        Then add <code className="bg-muted px-1 rounded text-[10px]">--http-cookie-jar ~/.config/streamlink/cookies-tiktok.txt</code> to the streamlink command in the server config.
+                      </p>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -410,9 +436,31 @@ export function StreamCard({
                     disabled={isActive}
                     data-testid={`input-youtube-source-${stream.id}`}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Uses <code className="bg-muted px-1 rounded">streamlink</code> — channel must be live.
-                  </p>
+                  <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 space-y-2">
+                    <p className="text-xs font-medium flex items-center gap-1.5">
+                      <Youtube className="w-3 h-3 text-red-500" /> YouTube Source Tips
+                    </p>
+                    <ul className="space-y-1">
+                      {[
+                        "Channel must be live — yt-dlp resolves the HLS/DASH URL automatically",
+                        "For 24/7 restreams: enable Auto-Restart in the quality section so the stream reconnects if the source drops",
+                        "Member-only or age-restricted streams need cookies — see below",
+                      ].map((tip, i) => (
+                        <li key={i} className="text-xs text-muted-foreground flex gap-1.5">
+                          <span className="shrink-0 text-primary font-bold">{i + 1}.</span>
+                          {tip}
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="pt-1 border-t border-border/50 space-y-1">
+                      <p className="text-[11px] font-semibold text-foreground/80">YouTube Cookies (optional, for members-only streams)</p>
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">
+                        In Chrome: install <span className="font-medium text-foreground/70">cookies.txt</span> extension → export from youtube.com → save as{" "}
+                        <code className="bg-muted px-1 rounded text-[10px]">/root/.config/yt-dlp/cookies.txt</code> on the server.
+                        yt-dlp picks it up automatically.
+                      </p>
+                    </div>
+                  </div>
                 </div>
               )}
 

@@ -43,6 +43,12 @@ interface ChatMessage {
 const statsCache = new Map<string, ChannelStats>();
 const chatPageTokens = new Map<string, string | null>();
 
+// Server-side deduplication: track message IDs already sent to the burn-in
+// overlay. Without this, the same 10 messages are re-fed to updateStreamOverlays
+// on every 3-second poll tick whenever no new chat arrives — causing the burn-in
+// to keep replaying the same messages instead of just showing new ones.
+const burnSentMessageIds = new Map<string, Set<string>>();
+
 // Rolling sub chart data: up to 60 samples (1 per minute poll)
 const subChartData: number[] = [];
 const MAX_CHART_SAMPLES = 60;
@@ -260,16 +266,33 @@ export function startLiveCountPolling() {
         try {
           const messages = await fetchLiveChat(stream.id, chatId);
           if (messages.length > 0) {
+            // Broadcast all new messages to the frontend (seenRef deduplicates display)
             broadcastStream(stream.id, "chat", messages);
-            updateStreamOverlays({
-              chatBurnMessages: messages.slice(-10).map((m) => ({
-                name: m.authorName,
-                text: m.text,
-                photo: m.authorPhoto || undefined,
-                color: m.isModerator ? "#34d399" : m.isMember ? "#a78bfa" : undefined,
-                ts: new Date(m.publishedAt).getTime(),
-              })),
-            });
+
+            // Server-side dedup for burn-in overlay: only pass messages never seen before
+            if (!burnSentMessageIds.has(stream.id)) {
+              burnSentMessageIds.set(stream.id, new Set());
+            }
+            const sentIds = burnSentMessageIds.get(stream.id)!;
+            const newBurnMsgs = messages.filter((m) => !sentIds.has(m.id));
+
+            if (newBurnMsgs.length > 0) {
+              newBurnMsgs.forEach((m) => sentIds.add(m.id));
+              // Cap the sent-IDs set to avoid unbounded memory growth
+              if (sentIds.size > 2000) {
+                const oldest = Array.from(sentIds).slice(0, 500);
+                oldest.forEach((id) => sentIds.delete(id));
+              }
+              updateStreamOverlays({
+                chatBurnMessages: newBurnMsgs.slice(-10).map((m) => ({
+                  name: m.authorName,
+                  text: m.text,
+                  photo: m.authorPhoto || undefined,
+                  color: m.isModerator ? "#34d399" : m.isMember ? "#a78bfa" : undefined,
+                  ts: new Date(m.publishedAt).getTime(),
+                })),
+              });
+            }
           }
         } catch (e) {
           logger.warn({ streamId: stream.id, err: e }, "Chat poll error");
