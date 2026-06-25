@@ -28,7 +28,18 @@ import {
   setScreenShareFrameForAll,
   preloadBreakVideo,
   getBreakVideoPreloadStatus,
+  initStreamManager,
+  getHealthSnapshot,
+  getAllHealthSnapshots,
+  setFailoverChain,
+  getFailoverChain,
+  getAllChains,
+  removeFailoverChain,
+  getCurrentSource,
+  resetToPrimary,
+  buildDefaultChain,
 } from "./stream-manager";
+import { triggerFailover } from "./source-failover";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
 import { getYouTubeStreamUrl } from "./youtube-source";
 import { startLiveCountPolling, stopLiveCountPolling, getLiveChatId, fetchLiveChat, getLiveStats } from "./youtube-counter";
@@ -1929,6 +1940,9 @@ export async function registerBintunetRoutes(
     res.json({ ok: true });
   });
 
+  // ── Stream manager: health scorer + failover init ─────────────────────────
+  initStreamManager();
+
   // ── Watcher & Layout initialisation ──────────────────────────────────────
   initWatcher(broadcastStream, broadcastGlobal);
 
@@ -2117,4 +2131,137 @@ export async function registerBintunetRoutes(
 
   startLiveCountPolling();
   httpServer.on("close", stopLiveCountPolling);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Health Scoring & Source Failover API
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * GET /api/streams/:id/health-score
+   * Returns the live 0-100 health snapshot for a stream.
+   * Includes score, status label, component breakdown, and live metrics.
+   */
+  app.get("/api/streams/:id/health-score", requireAuth, (req: Request, res: Response): void => {
+    const stream = storage.getStream(String(req.params.id));
+    if (!stream) { res.status(404).json({ error: "Stream not found" }); return; }
+    const snap = getHealthSnapshot(String(req.params.id));
+    if (!snap) {
+      res.json({
+        streamId: String(req.params.id),
+        score: 0,
+        status: "idle",
+        message: "Stream not currently active",
+        components: { ffmpegAlive: 0, bitrateStable: 0, fpsStable: 0, reconnectRate: 0, rtmpErrors: 0 },
+        metrics: { currentBitrateKbps: 0, targetBitrateKbps: 0, currentFps: 0, reconnectCount: 0, reconnectsInWindow: 0, lastRtmpErrorAt: null, lastUpdatedAt: Date.now() },
+      });
+      return;
+    }
+    res.json(snap);
+  });
+
+  /**
+   * GET /api/health/all
+   * Returns health snapshots for all currently active streams.
+   */
+  app.get("/api/health/all", requireAuth, (_req: Request, res: Response): void => {
+    res.json(getAllHealthSnapshots());
+  });
+
+  // ── Failover chain routes ─────────────────────────────────────────────────
+
+  /**
+   * GET /api/streams/:id/failover
+   * Returns the current failover chain configuration for a stream.
+   */
+  app.get("/api/streams/:id/failover", requireAuth, (req: Request, res: Response): void => {
+    const streamId = String(req.params.id);
+    const stream = storage.getStream(streamId);
+    if (!stream) { res.status(404).json({ error: "Stream not found" }); return; }
+    const chain = getFailoverChain(streamId);
+    const current = getCurrentSource(streamId);
+    res.json({ streamId, chain, currentSource: current });
+  });
+
+  /**
+   * POST /api/streams/:id/failover/chain
+   * Set a failover chain for a stream.
+   * Body: { sources: FailoverSource[], stableResetMs?: number }
+   */
+  app.post("/api/streams/:id/failover/chain", requireAuth, (req: Request, res: Response): void => {
+    const streamId = String(req.params.id);
+    const stream = storage.getStream(streamId);
+    if (!stream) { res.status(404).json({ error: "Stream not found" }); return; }
+    const { sources, stableResetMs } = req.body;
+    if (!Array.isArray(sources) || sources.length === 0) {
+      res.status(400).json({ error: "sources must be a non-empty array" }); return;
+    }
+    setFailoverChain(streamId, sources, stableResetMs);
+    res.json({ ok: true, chainLength: sources.length });
+  });
+
+  /**
+   * POST /api/streams/:id/failover/chain/auto
+   * Auto-build a failover chain from the stream's current configuration.
+   * Body: { fallbackVideoPath?: string }
+   */
+  app.post("/api/streams/:id/failover/chain/auto", requireAuth, (req: Request, res: Response): void => {
+    const streamId = String(req.params.id);
+    const stream = storage.getStream(streamId);
+    if (!stream) { res.status(404).json({ error: "Stream not found" }); return; }
+    const { fallbackVideoPath } = req.body ?? {};
+    const sources = buildDefaultChain(streamId, fallbackVideoPath);
+    if (!sources.length) { res.status(400).json({ error: "Could not build chain from current config" }); return; }
+    setFailoverChain(streamId, sources);
+    res.json({ ok: true, sources });
+  });
+
+  /**
+   * DELETE /api/streams/:id/failover/chain
+   * Remove the failover chain for a stream.
+   */
+  app.delete("/api/streams/:id/failover/chain", requireAuth, (req: Request, res: Response): void => {
+    removeFailoverChain(String(req.params.id));
+    res.json({ ok: true });
+  });
+
+  /**
+   * POST /api/streams/:id/failover/trigger
+   * Manually trigger failover to the next source in the chain.
+   * Body: { reason?: string }
+   */
+  app.post("/api/streams/:id/failover/trigger", requireAuth, (req: Request, res: Response): void => {
+    const streamId = String(req.params.id);
+    const stream = storage.getStream(streamId);
+    if (!stream) { res.status(404).json({ error: "Stream not found" }); return; }
+    const reason = req.body?.reason ?? "manual";
+    const didFailover = triggerFailover(streamId, reason);
+    if (!didFailover) {
+      res.status(409).json({ error: "No failover chain configured, or already at last source" }); return;
+    }
+    const current = getCurrentSource(streamId);
+    res.json({ ok: true, currentSource: current });
+  });
+
+  /**
+   * POST /api/streams/:id/failover/reset
+   * Reset the failover chain back to the primary source.
+   */
+  app.post("/api/streams/:id/failover/reset", requireAuth, (req: Request, res: Response): void => {
+    const streamId = String(req.params.id);
+    const stream = storage.getStream(streamId);
+    if (!stream) { res.status(404).json({ error: "Stream not found" }); return; }
+    const didReset = resetToPrimary(streamId, "manual");
+    if (!didReset) {
+      res.json({ ok: true, message: "Already on primary source — no change" }); return;
+    }
+    res.json({ ok: true, message: "Reset to primary source and restarting pipeline" });
+  });
+
+  /**
+   * GET /api/failover/all
+   * Returns failover chain status for all streams.
+   */
+  app.get("/api/failover/all", requireAuth, (_req: Request, res: Response): void => {
+    res.json(getAllChains());
+  });
 }

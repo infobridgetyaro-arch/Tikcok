@@ -9,6 +9,26 @@ import { OverlayRenderer, defaultOverlayState, type OverlayState } from "./overl
 import path from "path";
 import fs from "fs";
 import { startHlsEncoder, stopHlsEncoder } from "./hls-encoder";
+import {
+  initHealthScorer,
+  scorerRegisterStream,
+  scorerRemoveStream,
+  scorerSetFFmpegAlive,
+  scorerRecordBitrate,
+  scorerRecordFps,
+  scorerRecordReconnect,
+  scorerRecordRtmpError,
+  getHealthSnapshot,
+  getAllHealthSnapshots,
+} from "./stream-health-scorer";
+import {
+  initFailover,
+  triggerFailover as failoverTrigger,
+  markSourceStable,
+  markSourceFailed,
+} from "./source-failover";
+export { getHealthSnapshot, getAllHealthSnapshots };
+export { setFailoverChain, getFailoverChain, getAllChains, removeFailoverChain, getCurrentSource, resetToPrimary, buildDefaultChain } from "./source-failover";
 
 // ── Break Video Preload Cache ─────────────────────────────────────────────────
 // Pre-resolves YouTube URLs in the background so Go Live starts instantly.
@@ -239,6 +259,9 @@ interface StreamProcess {
   urlExpired?: boolean;
   lastFrameCount?: number;        // most-recent frame count from FFmpeg -stats output
   streamStartTime?: number;       // unix ms when stream reached "streaming" status
+  reconnectCount?: number;        // total pipeline restarts for this stream session
+  lastBitrate?: number;           // most recent output bitrate in kbps (from FFmpeg -stats)
+  lastFps?: number;               // most recent output fps (from FFmpeg -stats)
 }
 
 // ── URL cache: reuse recently resolved URLs to skip 20-35s re-resolution on restart ──
@@ -1117,7 +1140,11 @@ function purgeUploadsDir(): void {
 function startProcStatsPolling(streamId: string, pid: number): NodeJS.Timeout {
   return setInterval(() => {
     exec(`ps -p ${pid} -o %cpu=,rss=`, (err, stdout) => {
-      if (err) return; // process gone — interval will be cleared in cleanupStreamProc
+      if (err) {
+        // Process gone — FFmpeg is no longer alive
+        scorerSetFFmpegAlive(streamId, false);
+        return; // interval cleared in cleanupStreamProc
+      }
       const parts = stdout.trim().split(/\s+/);
       if (parts.length < 2) return;
       const cpu = parseFloat(parts[0]);
@@ -1126,7 +1153,20 @@ function startProcStatsPolling(streamId: string, pid: number): NodeJS.Timeout {
         const proc = activeStreams.get(streamId);
         const frames = proc?.lastFrameCount ?? 0;
         const uptime = proc?.streamStartTime ? Math.floor((Date.now() - proc.streamStartTime) / 1000) : 0;
-        broadcastStream(streamId, "proc_stats", { cpu, mem, frames, uptime });
+        const health = getHealthSnapshot(streamId);
+        broadcastStream(streamId, "proc_stats", {
+          cpu,
+          mem,
+          frames,
+          uptime,
+          bitrate: proc?.lastBitrate ?? 0,
+          fps: proc?.lastFps ?? 0,
+          reconnectCount: proc?.reconnectCount ?? 0,
+          healthScore: health?.score ?? 100,
+          healthStatus: health?.status ?? "excellent",
+        });
+        // Mark source stable every polling cycle so failover can auto-reset
+        markSourceStable(streamId);
       }
     });
   }, 3000);
@@ -1156,6 +1196,8 @@ function cleanupStreamProc(streamId: string, proc: StreamProcess) {
   browserCameraPipes.delete(streamId);
   browserCameraBuffers.delete(streamId);
   stopHlsEncoder(streamId);
+  // Tell health scorer FFmpeg is no longer running (don't remove — keeps history)
+  scorerSetFFmpegAlive(streamId, false);
 }
 
 
@@ -1183,6 +1225,10 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
     throw new Error("At least one output (YouTube, Facebook, or TikTok) is required");
 
   stopStream(streamId);
+
+  // Register with health scorer — compute target bitrate from quality setting
+  const qualityBitrateKbps = stream.quality === "best" ? 4000 : stream.quality === "720p" ? 2500 : 1500;
+  scorerRegisterStream(streamId, qualityBitrateKbps);
 
   sendLog(streamId, `--- Starting stream ---`);
   sendLog(streamId, `Quality: ${stream.quality} | FPS: ${stream.fps} | Layout: ${stream.ratio}`);
@@ -1344,6 +1390,27 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
             if (currentProc) currentProc.lastFrameCount = lastFrameCount;
           }
 
+          // ── Parse fps and bitrate from FFmpeg progress line ────────────────
+          // Format: frame=  123 fps= 30 q=28.0 size= 1234kB time=00:00:04.10 bitrate=2456.7kbits/s speed=1.00x
+          const fpsMatch = trimmed.match(/fps=\s*([\d.]+)/);
+          if (fpsMatch) {
+            const fps = parseFloat(fpsMatch[1]);
+            if (!isNaN(fps) && fps >= 0) {
+              const currentProc = activeStreams.get(streamId);
+              if (currentProc) currentProc.lastFps = fps;
+              scorerRecordFps(streamId, fps);
+            }
+          }
+          const bitrateMatch = trimmed.match(/bitrate=\s*([\d.]+)kbits\/s/);
+          if (bitrateMatch) {
+            const bitrateKbps = parseFloat(bitrateMatch[1]);
+            if (!isNaN(bitrateKbps) && bitrateKbps > 0) {
+              const currentProc = activeStreams.get(streamId);
+              if (currentProc) currentProc.lastBitrate = bitrateKbps;
+              scorerRecordBitrate(streamId, bitrateKbps);
+            }
+          }
+
           if (!gotFrames) {
             gotFrames = true;
             logger.info({ streamId }, "FFmpeg producing frames — stream is live");
@@ -1352,6 +1419,8 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
 
             const liveProc = activeStreams.get(streamId);
             if (liveProc) liveProc.streamStartTime = Date.now();
+            // Mark FFmpeg alive in health scorer now that frames are flowing
+            scorerSetFFmpegAlive(streamId, true);
 
             // ── HLS encoder (separate FFmpeg process, does not affect RTMP) ──
             if (process.env.HLS_ENABLED === "true") {
@@ -1507,6 +1576,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
           // With onfail=ignore the output is permanently dropped — it will never
           // reconnect, causing YouTube "not receiving data" warnings indefinitely.
           // Instead: trigger a clean restart so the full RTMP session is re-established.
+          scorerRecordRtmpError(streamId);
           const proc = activeStreams.get(streamId);
           if (proc?.ffmpegProcess === ffmpegProc) {
             sendLog(streamId, `[ffmpeg] RTMP output failed — reconnecting in 2s...`);
@@ -1623,6 +1693,11 @@ function hardKillAndRestart(streamId: string, delayMs: number, forceNewUrl = fal
   const proc = activeStreams.get(streamId);
   if (!proc) return;
 
+  // Track reconnect BEFORE cleanup so the counter persists into the next proc
+  proc.reconnectCount = (proc.reconnectCount ?? 0) + 1;
+  scorerRecordReconnect(streamId);
+  markSourceFailed(streamId);
+
   proc.autoRestart = false;
   cleanupStreamProc(streamId, proc);
 
@@ -1666,6 +1741,9 @@ function handleProcessExit(streamId: string, code: number | null) {
   if (storage.getStream(streamId)) {
     sendLog(streamId, `[ffmpeg] Stream cut unexpectedly (${reason}) — reconnecting in 3s...`);
     sendStatus(streamId, "reconnecting");
+    // Record unexpected process exit as a reconnect event for health scoring
+    scorerRecordReconnect(streamId);
+    markSourceFailed(streamId);
     setTimeout(() => {
       if (manuallyStopped.has(streamId)) return;
       if (storage.getStream(streamId)) {
@@ -1695,6 +1773,7 @@ export function stopStream(streamId: string) {
   manuallyStopped.add(streamId);
   clearCameraLink(streamId);
   cleanupStreamProc(streamId, proc);
+  scorerRemoveStream(streamId);
   // Remove from activeStreams NOW so handleProcessExit doesn't fire when FFmpeg
   // finally exits — we don't want it to re-broadcast "deleted" or try to auto-restart.
   activeStreams.delete(streamId);
@@ -1750,4 +1829,45 @@ export function toggleMute(streamId: string, muted: boolean) {
 
 export function isStreamActive(streamId: string): boolean {
   return activeStreams.has(streamId);
+}
+
+// ── Control-plane initialisation ──────────────────────────────────────────────
+// Call once from the HTTP server init (registerBintunetRoutes) after all
+// functions are defined.  Sets up health-scorer callbacks and failover restart.
+export function initStreamManager(): void {
+  initHealthScorer(
+    // Recovery callback — score < 50 — restart pipeline only
+    (streamId, score) => {
+      if (manuallyStopped.has(streamId)) return;
+      if (!activeStreams.has(streamId)) return;
+      sendLog(streamId, `[health] Score ${score}/100 → pipeline recovery triggered`);
+      broadcastStream(streamId, "stream_health", {
+        status: "recovery",
+        score,
+        message: `Health score ${score}/100 — restarting pipeline`,
+      });
+      // Try source failover first; if no chain configured, do a plain restart
+      const didFailover = failoverTrigger(streamId, `health score ${score}/100`);
+      if (!didFailover) {
+        hardKillAndRestart(streamId, 2000, true /* forceNewUrl */);
+      }
+    },
+    // Warning callback — score 50-80
+    (streamId, score, snap) => {
+      broadcastStream(streamId, "stream_health", {
+        status: "degraded",
+        score,
+        silentSeconds: 0,
+        message: `Stream health warning: ${score}/100 — ${snap.status}`,
+      });
+    },
+  );
+
+  initFailover((streamId) => {
+    if (manuallyStopped.has(streamId)) return;
+    sendLog(streamId, "[failover] Source switched — restarting pipeline");
+    hardKillAndRestart(streamId, 1000, true /* forceNewUrl */);
+  });
+
+  logger.info("[stream-manager] Health scorer and failover initialised");
 }
