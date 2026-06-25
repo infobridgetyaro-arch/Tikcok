@@ -618,6 +618,24 @@ export async function registerBintunetRoutes(
     }
   );
 
+  // ── Multiscreen: Apply a source to live stream (split-screen intent) ────────
+  app.post(
+    "/api/multiscreen/apply",
+    requireAuth,
+    async (req: Request, res: Response): Promise<void> => {
+      const { sourceKind, url, embedUrl, label } = req.body as {
+        sourceKind?: string; url?: string; embedUrl?: string; label?: string;
+      };
+      if (!sourceKind) { res.status(400).json({ message: "sourceKind required" }); return; }
+      // Broadcast to all WebSocket clients so the control room can react
+      broadcastGlobal("multiscreen_apply", {
+        sourceKind, url, embedUrl, label,
+        appliedAt: Date.now(),
+      });
+      res.json({ ok: true, message: "Source applied to live stream" });
+    }
+  );
+
   // ── Monitor Preview — works for all source types ───────────────────────────
   app.get(
     "/api/streams/:id/monitor-preview",

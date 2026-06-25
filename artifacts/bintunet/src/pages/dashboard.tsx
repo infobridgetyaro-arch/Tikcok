@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { StreamCard } from "@/components/stream-card";
 import { ControlRoom } from "@/components/control-room/control-room";
-import { Plus, Radio, LogOut, Wifi, WifiOff, Link, Copy, RefreshCw, X, Tv2, Settings, RotateCcw, Save } from "lucide-react";
+import { Plus, Radio, LogOut, Wifi, WifiOff, Link, Copy, RefreshCw, X, Settings, RotateCcw, Save } from "lucide-react";
 import type { StreamConfig } from "@/types/schema";
 import { YoutubePanel } from "@/components/youtube-panel";
 import { SettingsModal } from "@/components/settings-modal";
@@ -445,17 +445,40 @@ export default function Dashboard() {
       <header className="sticky top-0 z-40 border-b bg-card/90 backdrop-blur-md">
         <div className="max-w-5xl mx-auto px-4 py-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
-            <div
-              className="flex items-center justify-center w-8 h-8 rounded-lg shrink-0"
-              style={{
-                background: "linear-gradient(135deg, rgba(var(--primary)/0.2) 0%, rgba(var(--primary)/0.08) 100%)",
-                border: "1px solid rgba(var(--primary)/0.25)",
-              }}
-            >
-              <Tv2 className="w-4 h-4 text-primary" />
-            </div>
+            {/* BintuNet broadcast logo */}
+            <svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
+              <rect width="34" height="34" rx="9" fill="url(#logo-bg)" />
+              {/* Signal arcs */}
+              <path d="M8.5 17 C8.5 12.3 12.3 8.5 17 8.5" stroke="url(#arc1)" strokeWidth="2" strokeLinecap="round" />
+              <path d="M8.5 17 C8.5 21.7 12.3 25.5 17 25.5" stroke="url(#arc1)" strokeWidth="2" strokeLinecap="round" />
+              <path d="M6 17 C6 10.9 10.9 6 17 6" stroke="url(#arc2)" strokeWidth="1.5" strokeLinecap="round" opacity="0.5" />
+              <path d="M6 17 C6 23.1 10.9 28 17 28" stroke="url(#arc2)" strokeWidth="1.5" strokeLinecap="round" opacity="0.5" />
+              {/* Bold B letter */}
+              <text x="15" y="22" fontFamily="system-ui, -apple-system, sans-serif" fontWeight="900" fontSize="12" fill="white" letterSpacing="-0.5">B</text>
+              {/* Live dot */}
+              <circle cx="26" cy="10" r="3" fill="#ef4444">
+                <animate attributeName="opacity" values="1;0.3;1" dur="1.6s" repeatCount="indefinite" />
+              </circle>
+              <defs>
+                <linearGradient id="logo-bg" x1="0" y1="0" x2="34" y2="34">
+                  <stop offset="0%" stopColor="#4f46e5" />
+                  <stop offset="100%" stopColor="#7c3aed" />
+                </linearGradient>
+                <linearGradient id="arc1" x1="8" y1="17" x2="17" y2="8">
+                  <stop offset="0%" stopColor="#a78bfa" />
+                  <stop offset="100%" stopColor="#e0e7ff" />
+                </linearGradient>
+                <linearGradient id="arc2" x1="6" y1="17" x2="17" y2="6">
+                  <stop offset="0%" stopColor="#818cf8" stopOpacity="0.8" />
+                  <stop offset="100%" stopColor="#c7d2fe" stopOpacity="0.4" />
+                </linearGradient>
+              </defs>
+            </svg>
             <div className="leading-none">
-              <h1 className="text-base font-black tracking-tight text-foreground">BintuNet</h1>
+              <h1 className="text-base font-black tracking-tight text-foreground" style={{ letterSpacing: "-0.03em" }}>
+                Bintu<span style={{ color: "hsl(var(--primary))" }}>Net</span>
+              </h1>
+              <p className="text-[9px] text-muted-foreground font-semibold tracking-widest uppercase" style={{ letterSpacing: "0.12em", marginTop: 1 }}>Broadcast Studio</p>
             </div>
           </div>
 
