@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
 import { useWebSocket } from "@/hooks/use-websocket";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getAuthToken } from "@/lib/queryClient";
 import { StreamCard } from "@/components/stream-card";
 import { ControlRoom } from "@/components/control-room/control-room";
 import { Plus, Radio, LogOut, Wifi, WifiOff, Link, Copy, RefreshCw, X, Settings, RotateCcw, Save } from "lucide-react";
@@ -158,9 +158,14 @@ export default function Dashboard() {
 
   const { saveDrafts, loadDrafts, savedAt, clearDrafts } = useStreamDrafts();
 
+  const authFetchHeaders = (): Record<string, string> => {
+    const token = getAuthToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
   const fetchStreams = useCallback(async () => {
     try {
-      const res = await fetch("/api/streams", { credentials: "include" });
+      const res = await fetch("/api/streams", { credentials: "include", headers: authFetchHeaders() });
       if (res.ok) {
         const data = await res.json();
         setStreams(data);
@@ -421,7 +426,7 @@ export default function Dashboard() {
               await fetch("/api/broadcast", {
                 method: "POST",
                 credentials: "include",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", ...authFetchHeaders() },
                 body: JSON.stringify({
                   featuredComment: { name: msg.authorName, text: msg.text, color: "#ff2244", ts: Date.now() },
                 }),
@@ -434,7 +439,7 @@ export default function Dashboard() {
               await fetch("/api/broadcast", {
                 method: "POST",
                 credentials: "include",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", ...authFetchHeaders() },
                 body: JSON.stringify({ featuredComment: null }),
               });
             } catch {}

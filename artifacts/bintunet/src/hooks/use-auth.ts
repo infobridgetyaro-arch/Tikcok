@@ -1,12 +1,24 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getAuthToken, setAuthToken, queryClient } from "@/lib/queryClient";
+
+async function authFetch(url: string, init?: RequestInit) {
+  const token = getAuthToken();
+  return fetch(url, {
+    ...init,
+    credentials: "include",
+    headers: {
+      ...(init?.headers as Record<string, string> | undefined),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+}
 
 export function useAuth() {
   const { data: user, isLoading } = useQuery<{ authenticated: boolean } | null>({
     queryKey: ["/api/auth/check"],
     queryFn: async () => {
       try {
-        const res = await fetch("/api/auth/check", { credentials: "include" });
+        const res = await authFetch("/api/auth/check");
         if (res.status === 401) return { authenticated: false };
         return await res.json();
       } catch {
@@ -18,8 +30,19 @@ export function useAuth() {
 
   const loginMutation = useMutation({
     mutationFn: async (password: string) => {
-      const res = await apiRequest("POST", "/api/auth/login", { password });
-      return res.json();
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ password }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Login failed" }));
+        throw new Error(err.message || "Login failed");
+      }
+      const data = await res.json();
+      if (data.token) setAuthToken(data.token);
+      return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
@@ -28,7 +51,8 @@ export function useAuth() {
 
   const logoutMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/auth/logout");
+      await authFetch("/api/auth/logout", { method: "POST" });
+      setAuthToken(null);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });

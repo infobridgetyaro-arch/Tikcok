@@ -30,6 +30,7 @@ import {
   getBreakVideoPreloadStatus,
 } from "./stream-manager";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
+import { getYouTubeStreamUrl } from "./youtube-source";
 import { startLiveCountPolling, stopLiveCountPolling, getLiveChatId, fetchLiveChat, getLiveStats } from "./youtube-counter";
 import type { OverlayPosition } from "./overlay-renderer";
 import { registerDonationGateway, setDonationCallback, getGatewayPaymentUrl, getQRScanCount, getGiftQueue } from "./donation-gateway";
@@ -273,6 +274,25 @@ const PASSWORD = process.env.BINTUNET_PASSWORD || "bintunet";
 
 let inviteToken: string = crypto.randomBytes(6).toString("hex");
 
+// ── Token-based auth store (persists in memory, survives cookie issues) ──────
+const authTokens = new Set<string>();
+
+function generateAuthToken(): string {
+  const token = crypto.randomBytes(32).toString("hex");
+  authTokens.add(token);
+  return token;
+}
+
+function revokeAuthToken(token: string): void {
+  authTokens.delete(token);
+}
+
+function extractBearerToken(req: Request): string | null {
+  const header = req.headers["authorization"];
+  if (header && header.startsWith("Bearer ")) return header.slice(7).trim();
+  return null;
+}
+
 export async function registerBintunetRoutes(
   httpServer: Server,
   app: Express
@@ -295,11 +315,10 @@ export async function registerBintunetRoutes(
   );
 
   function requireAuth(req: Request, res: Response, next: NextFunction): void {
-    if (!req.session?.authenticated) {
-      res.status(401).json({ message: "Unauthorized" });
-      return;
-    }
-    next();
+    if (req.session?.authenticated) { next(); return; }
+    const token = extractBearerToken(req);
+    if (token && authTokens.has(token)) { next(); return; }
+    res.status(401).json({ message: "Unauthorized" });
   }
 
   function buildInviteUrl(req: Request): string {
@@ -314,24 +333,24 @@ export async function registerBintunetRoutes(
     const { password } = req.body;
     if (password === PASSWORD) {
       req.session.authenticated = true;
-      res.json({ success: true });
+      const token = generateAuthToken();
+      res.json({ success: true, token });
       return;
     }
     res.status(401).json({ message: "Invalid password" });
   });
 
   app.get("/api/auth/check", (req: Request, res: Response): void => {
-    if (req.session?.authenticated) {
-      res.json({ authenticated: true });
-      return;
-    }
+    if (req.session?.authenticated) { res.json({ authenticated: true }); return; }
+    const token = extractBearerToken(req);
+    if (token && authTokens.has(token)) { res.json({ authenticated: true }); return; }
     res.status(401).json({ authenticated: false });
   });
 
   app.post("/api/auth/logout", (req: Request, res: Response): void => {
-    req.session.destroy(() => {
-      res.json({ success: true });
-    });
+    const token = extractBearerToken(req);
+    if (token) revokeAuthToken(token);
+    req.session.destroy(() => { res.json({ success: true }); });
   });
 
   app.get("/api/invite", requireAuth, (req: Request, res: Response): void => {
@@ -354,7 +373,8 @@ export async function registerBintunetRoutes(
       return;
     }
     req.session.authenticated = true;
-    res.json({ success: true });
+    const authToken = generateAuthToken();
+    res.json({ success: true, token: authToken });
   });
 
   // ── Generate a camera-guest token for an invite-authenticated user ─────────
@@ -530,23 +550,31 @@ export async function registerBintunetRoutes(
     async (req: Request, res: Response): Promise<void> => {
       try {
         const stream = storage.getStream(String(req.params.id));
-        if (!stream) {
-          res.status(404).json({ message: "Stream not found" });
+        if (!stream) { res.status(404).json({ message: "Stream not found" }); return; }
+
+        // ── YouTube source ────────────────────────────────────────────────────
+        if (stream.sourceType === "youtube") {
+          if (!stream.youtubeSourceUrl) {
+            res.status(400).json({ message: "No YouTube URL set", isLive: false }); return;
+          }
+          try {
+            const url = await getYouTubeStreamUrl(stream.youtubeSourceUrl);
+            const isHls = url.includes(".m3u8");
+            res.json({ isLive: true, hlsUrl: isHls ? url : null, flvUrl: isHls ? null : url, sourceType: "youtube" });
+          } catch (e: any) {
+            const msg: string = e.message || "";
+            res.status(400).json({ message: msg, isLive: msg.includes("not live") || msg.includes("NOT_LIVE") ? false : null });
+          }
           return;
         }
+
+        // ── TikTok source ─────────────────────────────────────────────────────
         if (!stream.tiktokUsername) {
-          res.status(400).json({ message: "No TikTok username set" });
-          return;
+          res.status(400).json({ message: "No TikTok username set", isLive: false }); return;
         }
         const url = await getTikTokStreamUrl(stream.tiktokUsername, stream.quality || "best");
         const isHls = url.includes(".m3u8");
-        res.json({
-          isLive: true,
-          hlsUrl: isHls ? url : null,
-          flvUrl: isHls ? null : url,
-          title: null,
-          roomId: "streamlink",
-        });
+        res.json({ isLive: true, hlsUrl: isHls ? url : null, flvUrl: isHls ? null : url, sourceType: "tiktok" });
       } catch (e: any) {
         res.status(400).json({ message: e.message, isLive: false });
       }
