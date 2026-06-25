@@ -1,11 +1,25 @@
+/**
+ * YouTube Live Stream Extractor
+ *
+ * Production-ready resolver with:
+ * - Channel URL parsing (handle, /c/, /user/, /channel/, direct video IDs)
+ * - Smart error classification (live status, age restriction, members-only, geo, scheduled)
+ * - 5-tier fallback chain: streamlink → tv_embedded → mweb → ios → android+web
+ * - Automatic retries with exponential backoff on transient failures
+ * - FFmpeg cookie header builder for authenticated CDN access
+ * - Detailed structured logging
+ */
+
 import { spawn } from "child_process";
+import https from "https";
+import http from "http";
 import fs from "fs";
 import path from "path";
+import { logger } from "./lib/logger";
 
-/** In-process cache: YouTube URL → downloaded temp file path */
+// ── In-process cache: YouTube URL → downloaded temp file path ────────────────
 const ytDownloadCache = new Map<string, string>();
 
-/** Delete all cached yt-dlp downloads and clear the cache map. */
 export function clearYtDownloadCache(): void {
   for (const [, filePath] of ytDownloadCache.entries()) {
     try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch {}
@@ -13,10 +27,182 @@ export function clearYtDownloadCache(): void {
   ytDownloadCache.clear();
 }
 
-/**
- * Returns yt-dlp --cookies args if a cookies.txt file has been uploaded.
- * The cookies file lives at <cwd>/cookies.txt in Netscape format.
- */
+// ── Error classification ──────────────────────────────────────────────────────
+
+export type YouTubeErrorCode =
+  | "NOT_LIVE"
+  | "LIVE_ENDED"
+  | "SCHEDULED"
+  | "AGE_RESTRICTED"
+  | "MEMBERS_ONLY"
+  | "GEO_RESTRICTED"
+  | "PRIVATE_VIDEO"
+  | "LOGIN_REQUIRED"
+  | "RATE_LIMITED"
+  | "UNAVAILABLE"
+  | "TIMEOUT"
+  | "TOOL_NOT_FOUND"
+  | "NETWORK_ERROR"
+  | "UNKNOWN";
+
+export class YouTubeStreamError extends Error {
+  constructor(
+    message: string,
+    public readonly code: YouTubeErrorCode,
+    public readonly method?: string,
+  ) {
+    super(message);
+    this.name = "YouTubeStreamError";
+  }
+}
+
+function classifyYouTubeError(stderr: string, fallback: string, method: string): YouTubeStreamError {
+  const low = stderr.toLowerCase();
+
+  if (
+    low.includes("is not currently live") ||
+    low.includes("not live") ||
+    low.includes("no streams") ||
+    low.includes("no active streams") ||
+    low.includes("is offline") ||
+    low.includes("this live event has ended")
+  ) {
+    return new YouTubeStreamError(
+      "The YouTube channel is not currently live.",
+      "NOT_LIVE",
+      method,
+    );
+  }
+  if (
+    low.includes("live event has ended") ||
+    low.includes("stream has ended") ||
+    low.includes("live event is over")
+  ) {
+    return new YouTubeStreamError("This YouTube live event has ended.", "LIVE_ENDED", method);
+  }
+  if (
+    low.includes("scheduled") ||
+    low.includes("upcoming") ||
+    low.includes("will begin") ||
+    low.includes("premieres") ||
+    low.includes("premiere")
+  ) {
+    return new YouTubeStreamError(
+      "This stream is scheduled for the future. It is not live yet.",
+      "SCHEDULED",
+      method,
+    );
+  }
+  if (
+    low.includes("age-restricted") ||
+    low.includes("age restricted") ||
+    low.includes("confirm your age")
+  ) {
+    return new YouTubeStreamError(
+      "This stream is age-restricted. Upload cookies.txt with a logged-in YouTube account.",
+      "AGE_RESTRICTED",
+      method,
+    );
+  }
+  if (
+    low.includes("member") ||
+    low.includes("membership") ||
+    low.includes("members only") ||
+    low.includes("join this channel") ||
+    low.includes("channel membership")
+  ) {
+    return new YouTubeStreamError(
+      "This stream is members-only. A YouTube channel membership is required to access it.",
+      "MEMBERS_ONLY",
+      method,
+    );
+  }
+  if (
+    low.includes("not available in your country") ||
+    low.includes("geo") ||
+    low.includes("country") ||
+    low.includes("region") ||
+    low.includes("georestrict")
+  ) {
+    return new YouTubeStreamError(
+      "This stream is geo-restricted and not available from the server's current location.",
+      "GEO_RESTRICTED",
+      method,
+    );
+  }
+  if (low.includes("private video") || low.includes("private stream")) {
+    return new YouTubeStreamError(
+      "This video is private and cannot be accessed without an authorized account.",
+      "PRIVATE_VIDEO",
+      method,
+    );
+  }
+  if (
+    low.includes("sign in") ||
+    low.includes("not a bot") ||
+    low.includes("confirm you") ||
+    low.includes("bot detection") ||
+    low.includes("please log in") ||
+    low.includes("login required")
+  ) {
+    return new YouTubeStreamError(
+      "YouTube is requesting sign-in. Upload cookies.txt in Settings → YouTube Cookies to bypass this.",
+      "LOGIN_REQUIRED",
+      method,
+    );
+  }
+  if (
+    low.includes("429") ||
+    low.includes("too many requests") ||
+    low.includes("rate limit") ||
+    low.includes("http error 429")
+  ) {
+    return new YouTubeStreamError(
+      "YouTube is rate-limiting requests (429). Wait 30 seconds and try again.",
+      "RATE_LIMITED",
+      method,
+    );
+  }
+  if (
+    low.includes("video unavailable") ||
+    low.includes("removed by") ||
+    low.includes("no longer available") ||
+    low.includes("account has been terminated")
+  ) {
+    return new YouTubeStreamError(
+      "This YouTube video or channel is unavailable.",
+      "UNAVAILABLE",
+      method,
+    );
+  }
+  if (low.includes("timed out") || low.includes("timeout") || low === "timeout") {
+    return new YouTubeStreamError(
+      "Request timed out while fetching YouTube stream.",
+      "TIMEOUT",
+      method,
+    );
+  }
+  if (
+    low.includes("connection refused") ||
+    low.includes("network") ||
+    low.includes("name or service not known")
+  ) {
+    return new YouTubeStreamError(
+      `Network error: ${stderr.slice(0, 200)}`,
+      "NETWORK_ERROR",
+      method,
+    );
+  }
+
+  return new YouTubeStreamError(
+    stderr ? `${method}: ${stderr.slice(0, 300)}` : fallback,
+    "UNKNOWN",
+    method,
+  );
+}
+
+// ── Cookies helpers ───────────────────────────────────────────────────────────
+
 export function getCookiesArgs(): string[] {
   const cookiesPath = path.join(process.cwd(), "cookies.txt");
   return fs.existsSync(cookiesPath) ? ["--cookies", cookiesPath] : [];
@@ -27,10 +213,7 @@ export function getCookiesConfigured(): boolean {
 }
 
 /**
- * Reads cookies.txt (Netscape format) and returns a Cookie header string
- * suitable for FFmpeg's -headers option.
- * e.g. "Cookie: SID=abc; HSID=xyz\r\n"
- * Returns an empty string when no cookies file exists or it has no YouTube entries.
+ * Reads cookies.txt (Netscape format) and builds a Cookie header string for FFmpeg.
  */
 export function getYouTubeFFmpegCookieHeader(): string {
   const cookiesPath = path.join(process.cwd(), "cookies.txt");
@@ -60,114 +243,59 @@ export function getYouTubeFFmpegCookieHeader(): string {
   }
 }
 
-/**
- * Parses yt-dlp stderr and returns a user-friendly error message.
- */
-export function humaniseYtdlpError(stderr: string, fallback: string): string {
-  const low = stderr.toLowerCase();
-  if (
-    low.includes("sign in") ||
-    low.includes("not a bot") ||
-    low.includes("confirm you") ||
-    low.includes("bot detection")
-  ) {
-    return "YouTube is blocking the request. The channel may require sign-in. Try a different channel URL or check the channel is publicly live.";
-  }
-  if (low.includes("private video") || low.includes("age-restricted") || low.includes("age restricted")) {
-    return `This video is private or age-restricted. It cannot be streamed without account access.`;
-  }
-  if (low.includes("is not currently live") || low.includes("not live") || low.includes("no streams")) {
-    return "NOT_LIVE";
-  }
-  return stderr ? `yt-dlp: ${stderr.slice(0, 300)}` : fallback;
-}
+// ── URL normalisation & channel ID resolution ─────────────────────────────────
 
-/** Normalise any YouTube channel/video input to a full HTTPS URL */
+/**
+ * Normalise any YouTube input to a canonical HTTPS URL.
+ *
+ * Handles:
+ *  - Full URLs (https://www.youtube.com/...)
+ *  - @handles        → /live page (auto-detects current live stream)
+ *  - /channel/UCxxx  → channel live
+ *  - /c/ChannelName  → channel live
+ *  - /user/Username  → channel live
+ *  - 11-char video IDs
+ *  - Plain channel names (assumed handle)
+ */
 export function normaliseYouTubeUrl(input: string): string {
   const url = input.trim();
-  if (url.startsWith("http")) return url;
+
+  // Already a full URL
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+
+  // Handle starts with @
   if (url.startsWith("@")) return `https://www.youtube.com/${url}/live`;
+
+  // 11-char video ID
   if (/^[a-zA-Z0-9_-]{11}$/.test(url)) return `https://www.youtube.com/watch?v=${url}`;
+
+  // /channel/, /c/, /user/ paths without domain
+  if (url.startsWith("/channel/") || url.startsWith("/c/") || url.startsWith("/user/")) {
+    return `https://www.youtube.com${url}/live`;
+  }
+
+  // Plain username or channel name — assume @handle format
   return `https://www.youtube.com/@${url}/live`;
 }
 
-// ── Internal yt-dlp helpers ───────────────────────────────────────────────────
-
 /**
- * yt-dlp with the tv_embedded player client.
- *
- * The TV embedded client (used by Chromecast, Smart TVs, etc.) does NOT
- * require a Proof-of-Origin Token (rqh parameter). The HLS manifest URL it
- * returns is served by YouTube CDN without any cookie or token validation —
- * making it the best no-auth option for both live streams and VODs.
- *
- * Confirmed working June 2025 for public channels without cookies.
+ * Extract channel ID or handle from a YouTube URL for logging/display.
  */
-function ytdlpTvEmbedded(pageUrl: string, format: string, getLive: boolean): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const args = [
-      "--no-playlist",
-      "-f", format,
-      "--get-url",
-      "--no-check-certificate",
-      "--socket-timeout", "15",
-      "--extractor-args", "youtube:player_client=tv_embedded",
-      "--add-header", "Accept-Language:en-US,en;q=0.9",
-    ];
-    if (getLive) args.push("--no-live-from-start");
-    args.push(pageUrl);
-
-    const proc = spawn("yt-dlp", args);
-    let stdout = "";
-    let stderr = "";
-    proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
-    proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
-
-    const timer = setTimeout(() => {
-      try { proc.kill("SIGKILL"); } catch {}
-      reject(new Error("TIMEOUT"));
-    }, 30_000);
-
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      const lines = stdout.trim().split("\n").filter((l) => l.startsWith("http"));
-      if (code === 0 && lines[0]) {
-        resolve(lines[0]);
-      } else {
-        const friendly = humaniseYtdlpError(stderr.trim(), `tv_embedded: no URL (exit ${code})`);
-        reject(new Error(friendly));
-      }
-    });
-
-    proc.on("error", (err: NodeJS.ErrnoException) => {
-      clearTimeout(timer);
-      reject(new Error(err.code === "ENOENT"
-        ? "yt-dlp is not installed. Install with: pip install yt-dlp"
-        : `spawn: ${err.message}`
-      ));
-    });
-  });
+export function extractChannelIdentifier(url: string): string {
+  const normalized = normaliseYouTubeUrl(url);
+  const match = normalized.match(/youtube\.com\/(?:@([^/?]+)|channel\/([^/?]+)|c\/([^/?]+)|user\/([^/?]+))/);
+  if (!match) return url;
+  return (match[1] && `@${match[1]}`) || match[2] || match[3] || match[4] || url;
 }
 
-/**
- * yt-dlp with a specific player_client (mweb, ios, android, etc.)
- * Used as fallback after tv_embedded and streamlink.
- */
-function ytdlpWithClient(pageUrl: string, playerClient: string, format: string, getLive: boolean): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const args = [
-      "--no-playlist",
-      "-f", format,
-      "--get-url",
-      "--no-check-certificate",
-      "--socket-timeout", "15",
-      "--extractor-args", `youtube:player_client=${playerClient}`,
-      "--add-header", "Accept-Language:en-US,en;q=0.9",
-      ...getCookiesArgs(),
-    ];
-    if (getLive) args.push("--no-live-from-start");
-    args.push(pageUrl);
+// ── yt-dlp subprocess helpers ─────────────────────────────────────────────────
 
+function spawnYtdlp(
+  args: string[],
+  method: string,
+  timeoutMs = 30_000,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
     const proc = spawn("yt-dlp", args);
     let stdout = "";
     let stderr = "";
@@ -176,8 +304,8 @@ function ytdlpWithClient(pageUrl: string, playerClient: string, format: string, 
 
     const timer = setTimeout(() => {
       try { proc.kill("SIGKILL"); } catch {}
-      reject(new Error("TIMEOUT"));
-    }, 30_000);
+      reject(new YouTubeStreamError(`${method} timed out`, "TIMEOUT", method));
+    }, timeoutMs);
 
     proc.on("close", (code) => {
       clearTimeout(timer);
@@ -185,29 +313,32 @@ function ytdlpWithClient(pageUrl: string, playerClient: string, format: string, 
       if (code === 0 && lines[0]) {
         resolve(lines[0]);
       } else {
-        reject(new Error(humaniseYtdlpError(
+        reject(classifyYouTubeError(
           stderr.trim(),
-          `yt-dlp (${playerClient}): Could not get YouTube stream URL.`,
-        )));
+          `${method}: no URL found (exit ${code})`,
+          method,
+        ));
       }
     });
 
     proc.on("error", (err: NodeJS.ErrnoException) => {
       clearTimeout(timer);
-      reject(new Error(err.code === "ENOENT"
-        ? "yt-dlp is not installed. Install with: pip install yt-dlp"
-        : `spawn: ${err.message}`
-      ));
+      if (err.code === "ENOENT") {
+        reject(new YouTubeStreamError(
+          "yt-dlp is not installed. Install with: pip install yt-dlp",
+          "TOOL_NOT_FOUND",
+          method,
+        ));
+      } else {
+        reject(classifyYouTubeError(err.message, `spawn error: ${err.message}`, method));
+      }
     });
   });
 }
 
-/**
- * Attempt 1 — streamlink.
- * No bot detection, no PO Token requirement.
- * Confirmed working June 2025 for public YouTube live channels.
- */
-function streamlinkGetYouTubeUrl(pageUrl: string): Promise<string> {
+// ── Tier 1: streamlink ────────────────────────────────────────────────────────
+
+function tier1_streamlink(pageUrl: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn("streamlink", [
       "--stream-url",
@@ -225,7 +356,7 @@ function streamlinkGetYouTubeUrl(pageUrl: string): Promise<string> {
 
     const timer = setTimeout(() => {
       try { proc.kill("SIGKILL"); } catch {}
-      reject(new Error("TIMEOUT"));
+      reject(new YouTubeStreamError("streamlink timed out", "TIMEOUT", "streamlink"));
     }, 35_000);
 
     proc.on("close", (code) => {
@@ -234,168 +365,319 @@ function streamlinkGetYouTubeUrl(pageUrl: string): Promise<string> {
       if (code === 0 && url) {
         resolve(url);
       } else {
-        const errText = stderr.trim();
-        const lower = errText.toLowerCase();
-        if (lower.includes("no playable streams") || lower.includes("no streams") || lower.includes("not currently live")) {
-          reject(new Error("NOT_LIVE"));
-        } else {
-          reject(new Error(errText ? `streamlink: ${errText.slice(0, 300)}` : "STREAMLINK_FAIL"));
-        }
+        reject(classifyYouTubeError(stderr.trim() || `exit ${code}`, "streamlink failed", "streamlink"));
       }
     });
 
     proc.on("error", (err: NodeJS.ErrnoException) => {
       clearTimeout(timer);
-      reject(new Error(err.code === "ENOENT" ? "ENOENT_STREAMLINK" : `spawn: ${err.message}`));
+      if (err.code === "ENOENT") {
+        reject(new YouTubeStreamError("streamlink not installed", "TOOL_NOT_FOUND", "streamlink"));
+      } else {
+        reject(classifyYouTubeError(err.message, "streamlink spawn error", "streamlink"));
+      }
     });
   });
+}
+
+// ── Tier 2: yt-dlp tv_embedded (no PO Token, cookie-free) ────────────────────
+
+function tier2_tvEmbedded(pageUrl: string, format: string, isLive: boolean): Promise<string> {
+  const args = [
+    "--no-playlist",
+    "-f", format,
+    "--get-url",
+    "--no-check-certificate",
+    "--socket-timeout", "15",
+    "--extractor-args", "youtube:player_client=tv_embedded",
+    "--add-header", "Accept-Language:en-US,en;q=0.9",
+  ];
+  if (isLive) args.push("--no-live-from-start");
+  args.push(pageUrl);
+  return spawnYtdlp(args, "yt-dlp:tv_embedded");
+}
+
+// ── Tier 3: yt-dlp mweb ──────────────────────────────────────────────────────
+
+function tier3_mweb(pageUrl: string, format: string, isLive: boolean): Promise<string> {
+  const args = [
+    "--no-playlist",
+    "-f", format,
+    "--get-url",
+    "--no-check-certificate",
+    "--socket-timeout", "15",
+    "--extractor-args", "youtube:player_client=mweb",
+    "--add-header", "Accept-Language:en-US,en;q=0.9",
+    ...getCookiesArgs(),
+  ];
+  if (isLive) args.push("--no-live-from-start");
+  args.push(pageUrl);
+  return spawnYtdlp(args, "yt-dlp:mweb");
+}
+
+// ── Tier 4: yt-dlp ios ───────────────────────────────────────────────────────
+
+function tier4_ios(pageUrl: string, format: string, isLive: boolean): Promise<string> {
+  const args = [
+    "--no-playlist",
+    "-f", format,
+    "--get-url",
+    "--no-check-certificate",
+    "--socket-timeout", "15",
+    "--extractor-args", "youtube:player_client=ios",
+    "--add-header", "Accept-Language:en-US,en;q=0.9",
+    ...getCookiesArgs(),
+  ];
+  if (isLive) args.push("--no-live-from-start");
+  args.push(pageUrl);
+  return spawnYtdlp(args, "yt-dlp:ios");
+}
+
+// ── Tier 5: yt-dlp multi-client (last resort) ────────────────────────────────
+
+function tier5_multiClient(pageUrl: string, format: string, isLive: boolean): Promise<string> {
+  const clientList = getCookiesConfigured()
+    ? "ios,mweb,web_creator,android,web"
+    : "ios,mweb,android";
+  const args = [
+    "--no-playlist",
+    "-f", format,
+    "--get-url",
+    "--no-check-certificate",
+    "--socket-timeout", "15",
+    "--extractor-args", `youtube:player_client=${clientList}`,
+    "--add-header", "Accept-Language:en-US,en;q=0.9",
+    ...getCookiesArgs(),
+  ];
+  if (isLive) args.push("--no-live-from-start");
+  args.push(pageUrl);
+  return spawnYtdlp(args, "yt-dlp:multi-client");
+}
+
+// ── URL health check ──────────────────────────────────────────────────────────
+
+export function checkYouTubeStreamHealth(
+  url: string,
+  timeoutMs = 10_000,
+): Promise<{ healthy: boolean; reason?: string }> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      resolve({ healthy: false, reason: "Health check timed out" });
+    }, timeoutMs);
+
+    try {
+      const parsed = new URL(url);
+      const lib = parsed.protocol === "https:" ? https : http;
+      const isHls = url.includes(".m3u8");
+
+      const req = lib.request(
+        {
+          hostname: parsed.hostname,
+          port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
+          path: parsed.pathname + parsed.search,
+          method: isHls ? "GET" : "HEAD",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            Referer: "https://www.youtube.com/",
+            "Accept-Language": "en-US,en;q=0.9",
+          },
+          timeout: timeoutMs - 1000,
+        },
+        (res) => {
+          clearTimeout(timer);
+          if (!isHls) {
+            resolve({ healthy: res.statusCode !== undefined && res.statusCode < 400, reason: res.statusCode !== undefined && res.statusCode >= 400 ? `HTTP ${res.statusCode}` : undefined });
+            res.destroy();
+            return;
+          }
+          let body = "";
+          res.setEncoding("utf8");
+          res.on("data", (c: string) => { body += c; if (body.length > 32768) res.destroy(); });
+          res.on("end", () => {
+            if (res.statusCode !== undefined && res.statusCode >= 400) {
+              resolve({ healthy: false, reason: `HTTP ${res.statusCode}` });
+              return;
+            }
+            const hasSegments = body.includes(".ts") || body.includes(".m4s") || body.includes("EXTINF") || body.includes("EXT-X-STREAM-INF");
+            resolve({ healthy: hasSegments, reason: hasSegments ? undefined : "Manifest has no playable segments" });
+          });
+          res.on("error", (e) => resolve({ healthy: false, reason: e.message }));
+        },
+      );
+      req.on("timeout", () => { req.destroy(); clearTimeout(timer); resolve({ healthy: false, reason: "Connection timed out" }); });
+      req.on("error", (e) => { clearTimeout(timer); resolve({ healthy: false, reason: e.message }); });
+      req.end();
+    } catch (e: any) {
+      clearTimeout(timer);
+      resolve({ healthy: false, reason: e.message });
+    }
+  });
+}
+
+// ── Retry helper ──────────────────────────────────────────────────────────────
+
+/**
+ * Run an async operation up to maxAttempts times, waiting delayMs between each.
+ * Only retries on transient errors (TIMEOUT, RATE_LIMITED, UNKNOWN, NETWORK_ERROR).
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxAttempts: number,
+  delayMs: number,
+  isRetryable: (e: Error) => boolean,
+): Promise<T> {
+  let lastError!: Error;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastError = e;
+      if (attempt < maxAttempts && isRetryable(e)) {
+        const backoff = delayMs * Math.pow(2, attempt - 1);
+        logger.warn({ attempt, maxAttempts, delayMs: backoff }, "[youtube] Transient error — retrying");
+        await new Promise((r) => setTimeout(r, backoff));
+      } else {
+        throw e;
+      }
+    }
+  }
+  throw lastError;
+}
+
+function isTransient(e: Error): boolean {
+  if (e instanceof YouTubeStreamError) {
+    return ["TIMEOUT", "RATE_LIMITED", "UNKNOWN", "NETWORK_ERROR"].includes(e.code);
+  }
+  return false;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+export interface YouTubeFetchResult {
+  url: string;
+  resolvedBy: string;
+}
+
 /**
- * Main YouTube live URL resolver — cookie-free by design.
+ * Main YouTube live URL resolver.
  *
- * 4-tier fallback chain (fastest / most reliable first):
+ * 5-tier fallback chain (fastest / most reliable first):
  *   1. streamlink          — no bot detection, no POT requirement
- *   2. yt-dlp tv_embedded  — TV embedded client, no rqh/POT in URL (NEW primary)
- *   3. yt-dlp mweb         — mobile web, works for many channels
- *   4. yt-dlp ios+android  — last resort (may include rqh if channel requires it)
+ *   2. yt-dlp tv_embedded  — TV embedded client, no rqh/POT in URL
+ *   3. yt-dlp mweb         — mobile web, works for most channels
+ *   4. yt-dlp ios          — iOS client, good for age-gated content
+ *   5. yt-dlp multi-client — last resort, tries ios+mweb+android together
  *
- * The tv_embedded client is the key improvement: it returns an HLS manifest
- * URL without the rqh= Proof-of-Origin Token, so FFmpeg can read segments
- * directly from YouTube CDN without any browser cookies.
+ * Definitive errors (NOT_LIVE, MEMBERS_ONLY, PRIVATE_VIDEO, SCHEDULED, etc.)
+ * short-circuit the cascade immediately.
  */
 export async function getYouTubeStreamUrl(input: string): Promise<string> {
   const pageUrl = normaliseYouTubeUrl(input);
+  const ident = extractChannelIdentifier(input);
+  const logTag = `[youtube:${ident}]`;
 
-  // ── Attempt 1: streamlink ─────────────────────────────────────────────────
-  try {
-    const url = await streamlinkGetYouTubeUrl(pageUrl);
-    return url;
-  } catch (e: any) {
-    const msg: string = e.message || "";
-    if (msg === "NOT_LIVE") {
-      throw new Error("The YouTube channel does not appear to be live right now. Double-check the username/URL and try again.");
+  const definitive = new Set<YouTubeErrorCode>([
+    "NOT_LIVE", "LIVE_ENDED", "MEMBERS_ONLY", "PRIVATE_VIDEO",
+    "SCHEDULED", "AGE_RESTRICTED", "UNAVAILABLE",
+  ]);
+
+  const format = "b[protocol^=m3u8]/b[ext=mp4]/b";
+
+  type Tier = { name: string; fn: () => Promise<string> };
+  const tiers: Tier[] = [
+    { name: "streamlink", fn: () => tier1_streamlink(pageUrl) },
+    { name: "tv_embedded", fn: () => tier2_tvEmbedded(pageUrl, format, true) },
+    { name: "mweb", fn: () => tier3_mweb(pageUrl, format, true) },
+    { name: "ios", fn: () => tier4_ios(pageUrl, format, true) },
+    { name: "multi-client", fn: () => tier5_multiClient(pageUrl, format, true) },
+  ];
+
+  let lastError: YouTubeStreamError | null = null;
+
+  for (const tier of tiers) {
+    try {
+      const url = await withRetry(tier.fn, 2, 3000, isTransient);
+      logger.info({ ident, tier: tier.name }, `${logTag} URL resolved via ${tier.name}`);
+      return url;
+    } catch (e: any) {
+      const err = e instanceof YouTubeStreamError
+        ? e
+        : classifyYouTubeError(e.message ?? "", "Unknown error", tier.name);
+
+      logger.warn({ ident, tier: tier.name, code: err.code, msg: err.message.slice(0, 150) }, `${logTag} Tier failed`);
+
+      // Short-circuit on definitive errors
+      if (definitive.has(err.code)) throw err;
+
+      // Skip remaining tiers if tools aren't installed
+      if (err.code === "TOOL_NOT_FOUND" && tier.name === "streamlink") {
+        logger.warn(`${logTag} streamlink not installed — skipping to yt-dlp tiers`);
+        continue;
+      }
+
+      lastError = err;
     }
-    // ENOENT or other failure — fall through silently to yt-dlp
   }
 
-  // ── Attempt 2: yt-dlp tv_embedded (no PO Token required — cookie-free) ───
-  try {
-    return await ytdlpTvEmbedded(pageUrl, "b[protocol^=m3u8]/b[ext=mp4]/b", true);
-  } catch (e: any) {
-    const msg: string = e.message || "";
-    if (msg === "NOT_LIVE" || msg.includes("not currently live")) {
-      throw new Error("The YouTube channel does not appear to be live right now. Double-check the username/URL and try again.");
-    }
-    if (msg.includes("private") || msg.includes("age-restricted")) {
-      throw new Error(msg);
-    }
-    // other failure — fall through
-  }
+  throw new YouTubeStreamError(
+    lastError?.message || `Could not get YouTube stream URL for ${ident}. Is the channel live and publicly accessible?`,
+    lastError?.code ?? "UNKNOWN",
+    "all-tiers",
+  );
+}
 
-  // ── Attempt 3: yt-dlp mweb ───────────────────────────────────────────────
-  try {
-    return await ytdlpWithClient(pageUrl, "mweb", "b[protocol^=m3u8]/b[ext=mp4]/b", true);
-  } catch (e: any) {
-    const msg: string = e.message || "";
-    if (msg.includes("not live") || msg === "NOT_LIVE") {
-      throw new Error("The YouTube channel does not appear to be live right now. Double-check the username/URL and try again.");
-    }
-    // other failure — fall through
-  }
-
-  // ── Attempt 4: yt-dlp ios+android (last resort) ──────────────────────────
-  const clientList = getCookiesConfigured()
-    ? "ios,mweb,web_creator,android,web"
-    : "ios,mweb,android";
-
-  try {
-    return await ytdlpWithClient(pageUrl, clientList, "b[protocol^=m3u8]/b[ext=mp4]/b", true);
-  } catch (e: any) {
-    throw new Error(e.message || "Could not get YouTube stream URL. Is the channel live and publicly accessible?");
-  }
+/**
+ * Humanised yt-dlp error message (legacy helper used by download functions).
+ */
+export function humaniseYtdlpError(stderr: string, fallback: string): string {
+  return classifyYouTubeError(stderr, fallback, "yt-dlp").message;
 }
 
 /**
  * Gets the direct CDN video URL for a YouTube VOD (not a live stream).
- * Uses --get-url so there is NO download — the URL is passed straight to FFmpeg.
- *
- * Tries tv_embedded first (no POT, no cookies required).
- * Falls back to mweb/ios if tv_embedded cannot find a single muxed format.
- *
- * We request format "18" first — YouTube's 360p muxed H.264+AAC mp4.
- * For the break video overlay 360p is more than sufficient.
+ * Uses tv_embedded first (no POT, no cookies), falls back to mweb/ios.
  */
 export async function getYouTubeVideoDirectUrl(input: string): Promise<string> {
   const url = input.trim();
+  const vodfmt = "18/b[height<=480][ext=mp4]/b[height<=720][ext=mp4]/worst[ext=mp4]/worst";
 
-  // ── Try tv_embedded first (no cookie / no POT required) ──────────────────
+  // Tier 1: tv_embedded (no cookie / no POT required)
   try {
-    return await ytdlpTvEmbedded(
-      url,
-      "18/b[height<=480][ext=mp4]/b[height<=720][ext=mp4]/worst[ext=mp4]/worst",
-      false,
-    );
-  } catch {
-    // fall through to mweb
-  }
+    return await tier2_tvEmbedded(url, vodfmt, false);
+  } catch {}
 
-  // ── Fallback: mweb client ─────────────────────────────────────────────────
-  const playerClients = getCookiesConfigured()
+  // Tier 2: mweb
+  try {
+    return await tier3_mweb(url, vodfmt, false);
+  } catch {}
+
+  // Tier 3: ios
+  try {
+    return await tier4_ios(url, vodfmt, false);
+  } catch {}
+
+  // Tier 4: multi-client
+  const clientList = getCookiesConfigured()
     ? "ios,mweb,web_creator,android,web"
     : "mweb,android";
 
-  return new Promise((resolve, reject) => {
-    const proc = spawn("yt-dlp", [
-      "--no-playlist",
-      "-f", "18/b[height<=480][ext=mp4]/worst[ext=mp4]/worst",
-      "--get-url",
-      "--no-check-certificate",
-      "--socket-timeout", "20",
-      "--extractor-args", `youtube:player_client=${playerClients}`,
-      "--add-header", "Accept-Language:en-US,en;q=0.9",
-      ...getCookiesArgs(),
-      url,
-    ]);
-
-    let stdout = "";
-    let stderr = "";
-    proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
-    proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
-
-    const timer = setTimeout(() => {
-      try { proc.kill("SIGKILL"); } catch {}
-      reject(new Error("Timeout getting YouTube video URL (20s)."));
-    }, 20000);
-
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      const lines = stdout.trim().split("\n").filter((l) => l.startsWith("http"));
-      if (code === 0 && lines.length === 1) {
-        resolve(lines[0]);
-      } else if (code === 0 && lines.length > 1) {
-        reject(new Error("YouTube returned separate DASH streams — falling back to download."));
-      } else {
-        reject(new Error(humaniseYtdlpError(stderr.trim(), "Could not get direct URL from YouTube.")));
-      }
-    });
-
-    proc.on("error", (err: NodeJS.ErrnoException) => {
-      clearTimeout(timer);
-      reject(err.code === "ENOENT"
-        ? new Error("yt-dlp is not installed. Install with: pip install yt-dlp")
-        : err
-      );
-    });
-  });
+  return spawnYtdlp([
+    "--no-playlist",
+    "-f", vodfmt,
+    "--get-url",
+    "--no-check-certificate",
+    "--socket-timeout", "20",
+    "--extractor-args", `youtube:player_client=${clientList}`,
+    "--add-header", "Accept-Language:en-US,en;q=0.9",
+    ...getCookiesArgs(),
+    url,
+  ], "yt-dlp:vod-multi", 25_000);
 }
 
 /**
  * Downloads a YouTube (or any yt-dlp-supported) video to a local temp mp4.
  * Used as last resort when direct-URL approach fails (DASH streams, etc.).
- * Results are cached per URL (file is re-used on repeated calls).
+ * Results are cached per URL.
  */
 export async function downloadYouTubeVideoToTemp(
   input: string,
@@ -414,7 +696,6 @@ export async function downloadYouTubeVideoToTemp(
 
   const destPath = path.join(uploadsDir, `break_yt_${Date.now()}.mp4`);
 
-  // Try tv_embedded first (no cookies required), fall back to ios/mweb
   const playerClients = getCookiesConfigured()
     ? "tv_embedded,ios,mweb,web_creator,android,web"
     : "tv_embedded,ios,mweb,android";
@@ -451,7 +732,7 @@ export async function downloadYouTubeVideoToTemp(
       try { proc.kill("SIGKILL"); } catch {}
       try { fs.unlinkSync(destPath); } catch {}
       reject(new Error("Download timed out after 120 seconds. Try a shorter video or upload the file instead."));
-    }, 120000);
+    }, 120_000);
 
     proc.on("close", (code) => {
       clearTimeout(timer);

@@ -891,9 +891,9 @@ async function resolveInputUrl(
   }
 
   if (!stream.tiktokUsername) throw new Error("TikTok username is required");
-  const url = await getTikTokStreamUrl(stream.tiktokUsername, stream.quality || "best");
-  urlCache.set(stream.id, { url, sourceType, resolvedAt: Date.now() });
-  return { url, sourceType: "tiktok" };
+  const tiktokResult = await getTikTokStreamUrl(stream.tiktokUsername, stream.quality || "best");
+  urlCache.set(stream.id, { url: tiktokResult.url, sourceType, resolvedAt: Date.now() });
+  return { url: tiktokResult.url, sourceType: "tiktok" };
 }
 
 async function getXSpaceAudioUrl(spaceUrl: string): Promise<string> {

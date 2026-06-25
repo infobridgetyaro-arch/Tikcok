@@ -35,6 +35,29 @@ import { startLiveCountPolling, stopLiveCountPolling, getLiveChatId, fetchLiveCh
 import type { OverlayPosition } from "./overlay-renderer";
 import { registerDonationGateway, setDonationCallback, getGatewayPaymentUrl, getQRScanCount, getGiftQueue } from "./donation-gateway";
 import type { GiftQueueItem } from "./gift-system";
+import {
+  startWatching,
+  stopWatching,
+  getWatcherEntry,
+  getAllWatchers,
+  removeWatcher,
+  initWatcher,
+} from "./stream-watcher";
+import {
+  computeLayout,
+  computePiPLayout,
+  getCurrentLayout,
+  layoutToPixels,
+} from "./layout-engine";
+import {
+  checkTikTokStreamHealth,
+  getTikTokCookiesConfigured,
+  getReconnectStats,
+} from "./tiktok-extractor";
+import {
+  checkYouTubeStreamHealth,
+  getCookiesConfigured as getYTCookiesConfigured,
+} from "./youtube-source";
 
 interface BroadcastState {
   newsActive: boolean;
@@ -572,9 +595,9 @@ export async function registerBintunetRoutes(
         if (!stream.tiktokUsername) {
           res.status(400).json({ message: "No TikTok username set", isLive: false }); return;
         }
-        const url = await getTikTokStreamUrl(stream.tiktokUsername, stream.quality || "best");
-        const isHls = url.includes(".m3u8");
-        res.json({ isLive: true, hlsUrl: isHls ? url : null, flvUrl: isHls ? null : url, sourceType: "tiktok" });
+        const tiktokResult = await getTikTokStreamUrl(stream.tiktokUsername, stream.quality || "best");
+        const isHls = tiktokResult.format === "hls" || tiktokResult.url.includes(".m3u8");
+        res.json({ isLive: true, hlsUrl: isHls ? tiktokResult.url : null, flvUrl: isHls ? null : tiktokResult.url, sourceType: "tiktok" });
       } catch (e: any) {
         res.status(400).json({ message: e.message, isLive: false });
       }
@@ -586,14 +609,14 @@ export async function registerBintunetRoutes(
     requireAuth,
     async (req: Request, res: Response): Promise<void> => {
       try {
-        const url = await getTikTokStreamUrl(String(req.params.username), "best");
-        const isHls = url.includes(".m3u8");
+        const ttkResult = await getTikTokStreamUrl(String(req.params.username), "best");
+        const isHls = ttkResult.format === "hls" || ttkResult.url.includes(".m3u8");
         res.json({
           isLive: true,
-          hlsUrl: isHls ? url : null,
-          flvUrl: isHls ? null : url,
+          hlsUrl: isHls ? ttkResult.url : null,
+          flvUrl: isHls ? null : ttkResult.url,
           title: null,
-          roomId: "streamlink",
+          roomId: ttkResult.resolvedBy,
         });
       } catch (e: any) {
         res.status(400).json({ message: e.message, isLive: false });
@@ -612,9 +635,9 @@ export async function registerBintunetRoutes(
       if (type === "tiktok") {
         const username = value.replace(/^@/, "").trim();
         try {
-          const url = await getTikTokStreamUrl(username, "best");
-          const isHls = url.includes(".m3u8");
-          res.json({ type: isHls ? "hls" : "none", url: isHls ? url : null });
+          const tkRes = await getTikTokStreamUrl(username, "best");
+          const isHls = tkRes.format === "hls" || tkRes.url.includes(".m3u8");
+          res.json({ type: isHls ? "hls" : "none", url: isHls ? tkRes.url : null });
         } catch (e: any) {
           res.status(400).json({ message: e.message || "User not live or not found" });
         }
@@ -674,9 +697,9 @@ export async function registerBintunetRoutes(
 
       if (stream.sourceType === "tiktok" && stream.tiktokUsername) {
         try {
-          const url = await getTikTokStreamUrl(stream.tiktokUsername, stream.quality || "best");
-          const isHls = url.includes(".m3u8");
-          res.json({ type: isHls ? "hls" : "none", url: isHls ? url : null, embedUrl: null });
+          const monRes = await getTikTokStreamUrl(stream.tiktokUsername, stream.quality || "best");
+          const isHls = monRes.format === "hls" || monRes.url.includes(".m3u8");
+          res.json({ type: isHls ? "hls" : "none", url: isHls ? monRes.url : null, embedUrl: null });
         } catch {
           res.json({ type: "none", url: null, embedUrl: null });
         }
@@ -1904,6 +1927,192 @@ export async function registerBintunetRoutes(
     const { streamId } = req.query as { streamId?: string };
     if (streamId) paymentSessions.delete(streamId);
     res.json({ ok: true });
+  });
+
+  // ── Watcher & Layout initialisation ──────────────────────────────────────
+  initWatcher(broadcastStream, broadcastGlobal);
+
+  // ── Stream Watcher routes ─────────────────────────────────────────────────
+
+  /** GET /api/streams/watcher/status — list all active watchers */
+  app.get("/api/streams/watcher/status", requireAuth, (_req: Request, res: Response): void => {
+    const all = getAllWatchers().map((e) => ({
+      streamId: e.streamId,
+      sourceType: e.sourceType,
+      identifier: e.identifier,
+      status: e.status,
+      resolvedUrl: e.resolvedUrl,
+      resolvedBy: e.resolvedBy,
+      lastChecked: e.lastChecked,
+      nextCheckAt: e.nextCheckAt,
+      consecutiveErrors: e.consecutiveErrors,
+      totalPolls: e.totalPolls,
+      startedAt: e.startedAt,
+    }));
+    res.json(all);
+  });
+
+  /** GET /api/streams/:id/watcher — get watcher status for a specific stream */
+  app.get("/api/streams/:id/watcher", requireAuth, (req: Request, res: Response): void => {
+    const entry = getWatcherEntry(String(req.params.id));
+    if (!entry) { res.json({ watching: false }); return; }
+    res.json({
+      watching: true,
+      streamId: entry.streamId,
+      sourceType: entry.sourceType,
+      identifier: entry.identifier,
+      status: entry.status,
+      resolvedUrl: entry.resolvedUrl,
+      resolvedBy: entry.resolvedBy,
+      lastChecked: entry.lastChecked,
+      nextCheckAt: entry.nextCheckAt,
+      consecutiveErrors: entry.consecutiveErrors,
+      totalPolls: entry.totalPolls,
+      startedAt: entry.startedAt,
+      logs: entry.logs,
+    });
+  });
+
+  /** POST /api/streams/:id/watch — start watching (auto-poll until live) */
+  app.post("/api/streams/:id/watch", requireAuth, (req: Request, res: Response): void => {
+    const streamId = String(req.params.id);
+    const stream = storage.getStream(streamId);
+    if (!stream) { res.status(404).json({ error: "Stream not found" }); return; }
+
+    const { sourceType, identifier } = req.body as {
+      sourceType?: string;
+      identifier?: string;
+    };
+
+    const resolvedType = (sourceType ?? stream.sourceType ?? "tiktok") as "tiktok" | "youtube";
+    const resolvedId = identifier
+      ?? (resolvedType === "tiktok" ? stream.tiktokUsername : stream.youtubeSourceUrl)
+      ?? "";
+
+    if (!resolvedId) {
+      res.status(400).json({ error: "identifier required (username for TikTok, URL/handle for YouTube)" });
+      return;
+    }
+
+    const entry = startWatching(streamId, resolvedType, resolvedId);
+    res.json({
+      ok: true,
+      streamId: entry.streamId,
+      sourceType: entry.sourceType,
+      identifier: entry.identifier,
+      status: entry.status,
+    });
+  });
+
+  /** DELETE /api/streams/:id/watch — stop watching */
+  app.delete("/api/streams/:id/watch", requireAuth, (req: Request, res: Response): void => {
+    removeWatcher(String(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // ── Layout Engine routes ──────────────────────────────────────────────────
+
+  /** GET /api/layout — get the current computed layout */
+  app.get("/api/layout", requireAuth, (_req: Request, res: Response): void => {
+    res.json(getCurrentLayout());
+  });
+
+  /** POST /api/layout/compute — recompute layout for a given set of stream IDs */
+  app.post("/api/layout/compute", requireAuth, (req: Request, res: Response): void => {
+    const { streamIds, mode } = req.body as {
+      streamIds?: string[];
+      mode?: "auto" | "pip";
+    };
+
+    if (!Array.isArray(streamIds) || streamIds.length === 0) {
+      res.status(400).json({ error: "streamIds[] required" });
+      return;
+    }
+
+    const layout = mode === "pip" && streamIds.length === 2
+      ? computePiPLayout(streamIds[0], streamIds[1])
+      : computeLayout(streamIds);
+
+    res.json(layout);
+  });
+
+  /** GET /api/layout/pixels — layout converted to pixel coordinates */
+  app.get("/api/layout/pixels", requireAuth, (req: Request, res: Response): void => {
+    const { w, h } = req.query as { w?: string; h?: string };
+    const outW = parseInt(w ?? "1280", 10);
+    const outH = parseInt(h ?? "720", 10);
+    if (isNaN(outW) || isNaN(outH) || outW <= 0 || outH <= 0) {
+      res.status(400).json({ error: "w and h must be positive integers" });
+      return;
+    }
+    const px = layoutToPixels(getCurrentLayout(), outW, outH);
+    res.json({ layout: getCurrentLayout(), pixels: px, outputW: outW, outputH: outH });
+  });
+
+  // ── Stream health check routes ────────────────────────────────────────────
+
+  /** GET /api/streams/:id/health — check the resolved URL health */
+  app.get("/api/streams/:id/health", requireAuth, async (req: Request, res: Response): Promise<void> => {
+    const streamId = String(req.params.id);
+    const stream = storage.getStream(streamId);
+    if (!stream) { res.status(404).json({ error: "Stream not found" }); return; }
+
+    const { url } = req.query as { url?: string };
+    const targetUrl = url ?? "";
+
+    if (!targetUrl) {
+      res.status(400).json({ error: "url query parameter required" });
+      return;
+    }
+
+    const sourceType = stream.sourceType ?? "tiktok";
+    try {
+      const result = sourceType === "youtube"
+        ? await checkYouTubeStreamHealth(targetUrl)
+        : await checkTikTokStreamHealth(targetUrl);
+
+      res.json({ streamId, url: targetUrl, ...result });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /** GET /api/streams/:id/reconnect-stats — TikTok reconnect history */
+  app.get("/api/streams/:id/reconnect-stats", requireAuth, (req: Request, res: Response): void => {
+    const stream = storage.getStream(String(req.params.id));
+    if (!stream) { res.status(404).json({ error: "Stream not found" }); return; }
+    const username = stream.tiktokUsername ?? "";
+    const stats = getReconnectStats(username);
+    res.json(stats ?? { count: 0, lastAt: null, errors: [] });
+  });
+
+  /** GET /api/streams/tools/status — check if streamlink and yt-dlp are installed */
+  app.get("/api/streams/tools/status", requireAuth, async (_req: Request, res: Response): Promise<void> => {
+    const check = (tool: string): Promise<{ installed: boolean; version?: string }> =>
+      new Promise((resolve) => {
+        const proc = require("child_process").spawn(tool, ["--version"]);
+        let out = "";
+        proc.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
+        proc.stderr?.on("data", (d: Buffer) => { out += d.toString(); });
+        proc.on("close", (code: number) => {
+          resolve({ installed: code === 0, version: out.split("\n")[0]?.trim().slice(0, 80) });
+        });
+        proc.on("error", () => resolve({ installed: false }));
+      });
+
+    const [streamlink, ytdlp, ffmpeg] = await Promise.all([
+      check("streamlink"),
+      check("yt-dlp"),
+      check("ffmpeg"),
+    ]);
+
+    res.json({
+      streamlink,
+      ytdlp,
+      ffmpeg,
+      tikTokCookies: getTikTokCookiesConfigured(),
+      youtubeCookies: getYTCookiesConfigured(),
+    });
   });
 
   startLiveCountPolling();

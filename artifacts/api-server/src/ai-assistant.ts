@@ -138,18 +138,20 @@ export async function processAIMessage(
   userMessage: string,
   history: AIMessage[],
 ): Promise<AIResponse> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey =
+    process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+  const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined;
 
   if (!apiKey) {
     return {
-      message: "⚠️ AI assistant not configured. Please add your **OPENAI_API_KEY** to the environment secrets to enable the AI controller.",
+      message: "⚠️ AI assistant not configured. Add the OpenAI integration in Replit or set **OPENAI_API_KEY** in environment secrets to enable the AI controller.",
       action: null,
       pendingContext: null,
-      error: "OPENAI_API_KEY not set",
+      error: "No OpenAI API key configured",
     };
   }
 
-  const client = new OpenAI({ apiKey });
+  const client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
 
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     { role: "system", content: SYSTEM_PROMPT },
