@@ -1600,6 +1600,16 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
         if (
           trimmed.includes("Last message repeated") ||
           trimmed.includes("moov atom not found") ||
+          // HLS segment-boundary reconnect — FFmpeg fetches the next segment
+          // immediately ("in 0 second(s)") and streaming continues uninterrupted.
+          // This is normal live-HLS behaviour, not an error.
+          trimmed.includes("Will reconnect at") ||
+          // Verbose HTTP/HLS operational messages — not actionable for the user
+          trimmed.includes("Opening an input url") ||
+          trimmed.includes("Opening an output url") ||
+          trimmed.includes("Input stream #0") ||
+          trimmed.includes("Starting new cluster") ||
+          trimmed.includes("No trailing") ||
           trimmed === ""
         ) return;
 
