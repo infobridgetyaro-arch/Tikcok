@@ -291,6 +291,31 @@ const activeStreams = new Map<string, StreamProcess>();
 // checks this before calling startStream so that a pending reconnect timer
 // that fires after the user clicked Stop can never leak back to YouTube.
 const manuallyStopped = new Set<string>();
+
+// ── Restart-loop protection ───────────────────────────────────────────────────
+// restartScheduled: set when ANY restart timer is pending for a stream.
+// A second concurrent restart path checks this and bails — prevents the race
+// between handleProcessExit and the health-recovery callback both scheduling
+// startStream at the same time (the root cause of the rapid-restart + rate-limit loop).
+const restartScheduled = new Set<string>();
+
+// Consecutive restart failure count per stream → drives exponential backoff
+// so a channel that keeps failing doesn't hammer YouTube and get the server IP blocked.
+const restartBackoff = new Map<string, number>();
+const BACKOFF_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
+
+function getBackoffDelay(streamId: string): number {
+  const count = restartBackoff.get(streamId) ?? 0;
+  return BACKOFF_DELAYS_MS[Math.min(count, BACKOFF_DELAYS_MS.length - 1)];
+}
+function bumpBackoff(streamId: string): void {
+  restartBackoff.set(streamId, (restartBackoff.get(streamId) ?? 0) + 1);
+}
+function resetBackoff(streamId: string): void {
+  restartBackoff.delete(streamId);
+  restartScheduled.delete(streamId);
+}
+
 const wsClients = new Set<WebSocket>();
 
 let currentOverlayState: OverlayState = defaultOverlayState();
@@ -1421,6 +1446,9 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
             if (liveProc) liveProc.streamStartTime = Date.now();
             // Mark FFmpeg alive in health scorer now that frames are flowing
             scorerSetFFmpegAlive(streamId, true);
+            // Stream is producing frames — reset the restart backoff so the next
+            // failure starts the countdown fresh rather than hitting the long delays.
+            resetBackoff(streamId);
 
             // ── HLS encoder (separate FFmpeg process, does not affect RTMP) ──
             if (process.env.HLS_ENABLED === "true") {
@@ -1693,15 +1721,17 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
   }
 }
 
-// ── Immediate hard-kill + fast restart ───────────────────────────────────────
+// ── Immediate hard-kill + scheduled restart ───────────────────────────────────
 // forceNewUrl=true  — bypass the URL cache (use when ending a break video so
 //                     TikTok/YouTube live URLs are re-fetched).
 // keepStatus=true   — do NOT emit "reconnecting"; UI stays as "streaming"
 //                     (used for seamless mute/unmute where the gap is ~100 ms
 //                      and is invisible to the viewer behind platform buffers).
-function hardKillAndRestart(streamId: string, delayMs: number, forceNewUrl = false, keepStatus = false) {
+function hardKillAndRestart(streamId: string, _delayMs: number, forceNewUrl = false, keepStatus = false) {
   const proc = activeStreams.get(streamId);
   if (!proc) return;
+  // ── Guard: only one restart timer per stream at a time ───────────────────
+  if (restartScheduled.has(streamId)) return;
 
   // Track reconnect BEFORE cleanup so the counter persists into the next proc
   proc.reconnectCount = (proc.reconnectCount ?? 0) + 1;
@@ -1709,37 +1739,44 @@ function hardKillAndRestart(streamId: string, delayMs: number, forceNewUrl = fal
   markSourceFailed(streamId);
 
   proc.autoRestart = false;
+  activeStreams.delete(streamId);   // delete FIRST so health-recovery re-entry bails early
   cleanupStreamProc(streamId, proc);
 
   try { proc.ffmpegProcess?.kill("SIGKILL"); } catch {}
-  activeStreams.delete(streamId);
   if (!keepStatus) sendStatus(streamId, "reconnecting");
 
+  // Exponential backoff — grows with each consecutive failure, resets on first frame
+  const delay = getBackoffDelay(streamId);
+  bumpBackoff(streamId);
+  restartScheduled.add(streamId);
+  if (delay > 5_000) sendLog(streamId, `Backing off — retrying in ${delay / 1000}s...`);
+
   setTimeout(() => {
-    // If the user clicked Stop while this timer was pending, abort — don't
-    // send any more data to YouTube/Facebook.
+    restartScheduled.delete(streamId);
     if (manuallyStopped.has(streamId)) return;
     if (storage.getStream(streamId)) {
       startStream(streamId, !forceNewUrl /* reuseUrl */, keepStatus).catch((e: any) => {
-        sendLog(streamId, `Fast-restart failed: ${e.message}`);
+        sendLog(streamId, `Restart failed: ${e.message}`);
         sendStatus(streamId, "error");
       });
     }
-  }, delayMs);
+  }, delay);
 }
 
 function handleProcessExit(streamId: string, code: number | null) {
   const proc = activeStreams.get(streamId);
   if (!proc) return;
 
-  cleanupStreamProc(streamId, proc);
+  // ── Delete from activeStreams FIRST ───────────────────────────────────────
+  // cleanupStreamProc calls scorerSetFFmpegAlive(false) which synchronously
+  // triggers recompute() → health-recovery callback.  That callback checks
+  // activeStreams.has(streamId) before scheduling a restart.  By deleting here
+  // first we guarantee the health-recovery path bails out, leaving this
+  // function as the sole owner of the restart decision — no duplicate timers.
   activeStreams.delete(streamId);
+  cleanupStreamProc(streamId, proc);
   try { proc.ffmpegProcess?.kill("SIGKILL"); } catch {}
 
-  // stopStream() removes from activeStreams BEFORE killing FFmpeg, so reaching
-  // here means a true unexpected exit (crash, source drop, network error).
-  // If the user manually stopped the stream, honour that — do NOT reconnect.
-  // Otherwise auto-reconnect so external cuts recover without user intervention.
   const reason = code !== null ? `exit code ${code}` : "signal";
 
   if (manuallyStopped.has(streamId)) {
@@ -1748,13 +1785,23 @@ function handleProcessExit(streamId: string, code: number | null) {
     return;
   }
 
+  // If a restart is already scheduled (e.g. hardKillAndRestart from the watchdog
+  // fired a moment before FFmpeg exited), don't double-schedule.
+  if (restartScheduled.has(streamId)) return;
+
   if (storage.getStream(streamId)) {
-    sendLog(streamId, `[ffmpeg] Stream cut unexpectedly (${reason}) — reconnecting in 3s...`);
-    sendStatus(streamId, "reconnecting");
-    // Record unexpected process exit as a reconnect event for health scoring
     scorerRecordReconnect(streamId);
     markSourceFailed(streamId);
+
+    const delay = getBackoffDelay(streamId);
+    bumpBackoff(streamId);
+    restartScheduled.add(streamId);
+
+    sendLog(streamId, `[ffmpeg] Stream cut (${reason}) — reconnecting in ${delay / 1000}s...`);
+    sendStatus(streamId, "reconnecting");
+
     setTimeout(() => {
+      restartScheduled.delete(streamId);
       if (manuallyStopped.has(streamId)) return;
       if (storage.getStream(streamId)) {
         startStream(streamId).catch((e: any) => {
@@ -1762,7 +1809,7 @@ function handleProcessExit(streamId: string, code: number | null) {
           sendStatus(streamId, "error");
         });
       }
-    }, 3000);
+    }, delay);
   } else {
     clearCameraLink(streamId);
     sendLog(streamId, `[ffmpeg] Process ended (${reason}).`);
@@ -1846,10 +1893,23 @@ export function isStreamActive(streamId: string): boolean {
 // functions are defined.  Sets up health-scorer callbacks and failover restart.
 export function initStreamManager(): void {
   initHealthScorer(
-    // Recovery callback — score < 50 — restart pipeline only
+    // Recovery callback — score < 50
     (streamId, score) => {
       if (manuallyStopped.has(streamId)) return;
-      if (!activeStreams.has(streamId)) return;
+      if (!activeStreams.has(streamId)) return;   // handleProcessExit already owns it
+      if (restartScheduled.has(streamId)) return; // restart already pending
+
+      const stream = storage.getStream(streamId);
+      if (!stream) return;
+
+      // Honour the user's auto-restart preference
+      if (!stream.autoRestart) {
+        sendLog(streamId, `[health] Score ${score}/100 — stream degraded (auto-restart is off; stop and restart manually)`);
+        broadcastStream(streamId, "stream_health", { status: "degraded", score,
+          message: `Health score ${score}/100 — auto-restart disabled` });
+        return;
+      }
+
       sendLog(streamId, `[health] Score ${score}/100 → pipeline recovery triggered`);
       broadcastStream(streamId, "stream_health", {
         status: "recovery",
