@@ -16,6 +16,7 @@ import http from "http";
 import fs from "fs";
 import path from "path";
 import { logger } from "./lib/logger";
+import { getOAuth2AuthArgs } from "./oauth2-manager";
 
 // ── In-process cache: YouTube URL → downloaded temp file path ────────────────
 const ytDownloadCache = new Map<string, string>();
@@ -146,7 +147,7 @@ function classifyYouTubeError(stderr: string, fallback: string, method: string):
     low.includes("login required")
   ) {
     return new YouTubeStreamError(
-      "YouTube is requesting sign-in. Upload cookies.txt in Settings → YouTube Cookies to bypass this.",
+      "YouTube is requiring sign-in. Use Settings → YouTube Sign-In to authenticate once with your Google account (no cookies file needed).",
       "LOGIN_REQUIRED",
       method,
     );
@@ -210,6 +211,16 @@ export function getCookiesArgs(): string[] {
 
 export function getCookiesConfigured(): boolean {
   return fs.existsSync(path.join(process.cwd(), "cookies.txt"));
+}
+
+/**
+ * Returns authentication args for yt-dlp, preferring OAuth2 token over cookies.txt.
+ * OAuth2 is the recommended approach — one-time browser sign-in, no file management.
+ */
+export function getAuthArgs(): string[] {
+  const oauth2 = getOAuth2AuthArgs();
+  if (oauth2.length) return oauth2;
+  return getCookiesArgs();
 }
 
 /**
@@ -408,7 +419,7 @@ function tier3_mweb(pageUrl: string, format: string, isLive: boolean): Promise<s
     "--socket-timeout", "15",
     "--extractor-args", "youtube:player_client=mweb",
     "--add-header", "Accept-Language:en-US,en;q=0.9",
-    ...getCookiesArgs(),
+    ...getAuthArgs(),
   ];
   if (isLive) args.push("--no-live-from-start");
   args.push(pageUrl);
@@ -426,7 +437,7 @@ function tier4_ios(pageUrl: string, format: string, isLive: boolean): Promise<st
     "--socket-timeout", "15",
     "--extractor-args", "youtube:player_client=ios",
     "--add-header", "Accept-Language:en-US,en;q=0.9",
-    ...getCookiesArgs(),
+    ...getAuthArgs(),
   ];
   if (isLive) args.push("--no-live-from-start");
   args.push(pageUrl);
@@ -436,22 +447,80 @@ function tier4_ios(pageUrl: string, format: string, isLive: boolean): Promise<st
 // ── Tier 5: yt-dlp multi-client (last resort) ────────────────────────────────
 
 function tier5_multiClient(pageUrl: string, format: string, isLive: boolean): Promise<string> {
-  const clientList = getCookiesConfigured()
-    ? "ios,mweb,web_creator,android,web"
-    : "ios,mweb,android";
+  const hasAuth = getAuthArgs().length > 0;
+  const clientList = hasAuth
+    ? "ios,mweb,web_creator,android,android_embedded,web"
+    : "ios,mweb,android,android_embedded,tv_embedded";
+  const args = [
+    "--no-playlist",
+    "-f", format,
+    "--get-url",
+    "--no-check-certificate",
+    "--socket-timeout", "20",
+    "--extractor-args", `youtube:player_client=${clientList}`,
+    "--add-header", "Accept-Language:en-US,en;q=0.9",
+    ...getAuthArgs(),
+  ];
+  if (isLive) args.push("--no-live-from-start");
+  args.push(pageUrl);
+  return spawnYtdlp(args, "yt-dlp:multi-client", 35_000);
+}
+
+// ── Tier 6: yt-dlp android ───────────────────────────────────────────────────
+// Android client often bypasses bot detection — YouTube treats it as a trusted app.
+
+function tier6_android(pageUrl: string, format: string, isLive: boolean): Promise<string> {
   const args = [
     "--no-playlist",
     "-f", format,
     "--get-url",
     "--no-check-certificate",
     "--socket-timeout", "15",
-    "--extractor-args", `youtube:player_client=${clientList}`,
+    "--extractor-args", "youtube:player_client=android",
     "--add-header", "Accept-Language:en-US,en;q=0.9",
-    ...getCookiesArgs(),
+    ...getAuthArgs(),
   ];
   if (isLive) args.push("--no-live-from-start");
   args.push(pageUrl);
-  return spawnYtdlp(args, "yt-dlp:multi-client");
+  return spawnYtdlp(args, "yt-dlp:android");
+}
+
+// ── Tier 7: yt-dlp android_embedded ─────────────────────────────────────────
+// Embedded client used in third-party apps — different bot-check path.
+
+function tier7_androidEmbedded(pageUrl: string, format: string, isLive: boolean): Promise<string> {
+  const args = [
+    "--no-playlist",
+    "-f", format,
+    "--get-url",
+    "--no-check-certificate",
+    "--socket-timeout", "15",
+    "--extractor-args", "youtube:player_client=android_embedded",
+    "--add-header", "Accept-Language:en-US,en;q=0.9",
+    ...getAuthArgs(),
+  ];
+  if (isLive) args.push("--no-live-from-start");
+  args.push(pageUrl);
+  return spawnYtdlp(args, "yt-dlp:android_embedded");
+}
+
+// ── Tier 8: yt-dlp web_creator ───────────────────────────────────────────────
+// YouTube Studio creator-side client — rarely blocked, works on public live streams.
+
+function tier8_webCreator(pageUrl: string, format: string, isLive: boolean): Promise<string> {
+  const args = [
+    "--no-playlist",
+    "-f", format,
+    "--get-url",
+    "--no-check-certificate",
+    "--socket-timeout", "15",
+    "--extractor-args", "youtube:player_client=web_creator",
+    "--add-header", "Accept-Language:en-US,en;q=0.9",
+    ...getAuthArgs(),
+  ];
+  if (isLive) args.push("--no-live-from-start");
+  args.push(pageUrl);
+  return spawnYtdlp(args, "yt-dlp:web_creator");
 }
 
 // ── URL health check ──────────────────────────────────────────────────────────
@@ -585,11 +654,14 @@ export async function getYouTubeStreamUrl(input: string): Promise<string> {
 
   type Tier = { name: string; fn: () => Promise<string> };
   const tiers: Tier[] = [
-    { name: "streamlink", fn: () => tier1_streamlink(pageUrl) },
-    { name: "tv_embedded", fn: () => tier2_tvEmbedded(pageUrl, format, true) },
-    { name: "mweb", fn: () => tier3_mweb(pageUrl, format, true) },
-    { name: "ios", fn: () => tier4_ios(pageUrl, format, true) },
-    { name: "multi-client", fn: () => tier5_multiClient(pageUrl, format, true) },
+    { name: "streamlink",        fn: () => tier1_streamlink(pageUrl) },
+    { name: "tv_embedded",       fn: () => tier2_tvEmbedded(pageUrl, format, true) },
+    { name: "mweb",              fn: () => tier3_mweb(pageUrl, format, true) },
+    { name: "ios",               fn: () => tier4_ios(pageUrl, format, true) },
+    { name: "android",           fn: () => tier6_android(pageUrl, format, true) },
+    { name: "android_embedded",  fn: () => tier7_androidEmbedded(pageUrl, format, true) },
+    { name: "web_creator",       fn: () => tier8_webCreator(pageUrl, format, true) },
+    { name: "multi-client",      fn: () => tier5_multiClient(pageUrl, format, true) },
   ];
 
   let lastError: YouTubeStreamError | null = null;

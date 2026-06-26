@@ -40,6 +40,13 @@ import {
   buildDefaultChain,
 } from "./stream-manager";
 import { triggerFailover } from "./source-failover";
+import {
+  startOAuth2Flow,
+  cancelOAuth2Flow,
+  clearOAuth2Token,
+  getOAuth2State,
+  isOAuth2Authenticated,
+} from "./oauth2-manager";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
 import { getYouTubeStreamUrl } from "./youtube-source";
 import { startLiveCountPolling, stopLiveCountPolling, getLiveChatId, fetchLiveChat, getLiveStats } from "./youtube-counter";
@@ -2263,5 +2270,52 @@ export async function registerBintunetRoutes(
    */
   app.get("/api/failover/all", requireAuth, (_req: Request, res: Response): void => {
     res.json(getAllChains());
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // YouTube OAuth2 Device-Code Authentication
+  // Alternative to cookies.txt — sign in once from any browser, token persists.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * GET /api/youtube/oauth2/status
+   * Returns current OAuth2 state: idle | pending | authenticated | failed
+   */
+  app.get("/api/youtube/oauth2/status", requireAuth, (_req: Request, res: Response): void => {
+    const state = getOAuth2State();
+    res.json({ ...state, configured: isOAuth2Authenticated() });
+  });
+
+  /**
+   * POST /api/youtube/oauth2/start
+   * Starts the yt-dlp OAuth2 device-code flow.
+   * Returns { deviceUrl, userCode } — user opens deviceUrl on any browser and signs in.
+   * The background process keeps running until auth completes.
+   */
+  app.post("/api/youtube/oauth2/start", requireAuth, async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const result = await startOAuth2Flow();
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/youtube/oauth2/cancel
+   * Cancels an in-progress OAuth2 flow.
+   */
+  app.post("/api/youtube/oauth2/cancel", requireAuth, (_req: Request, res: Response): void => {
+    cancelOAuth2Flow();
+    res.json({ ok: true });
+  });
+
+  /**
+   * DELETE /api/youtube/oauth2
+   * Clears the saved OAuth2 token, requiring re-authentication.
+   */
+  app.delete("/api/youtube/oauth2", requireAuth, (_req: Request, res: Response): void => {
+    clearOAuth2Token();
+    res.json({ ok: true, message: "OAuth2 token cleared" });
   });
 }
