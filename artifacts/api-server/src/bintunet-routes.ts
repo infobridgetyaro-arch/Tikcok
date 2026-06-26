@@ -1,5 +1,6 @@
 import express from "express";
 import type { Express, Request, Response, NextFunction } from "express";
+import { logger } from "./lib/logger";
 import type { Server } from "http";
 import { WebSocketServer } from "ws";
 import session from "express-session";
@@ -483,12 +484,22 @@ export async function registerBintunetRoutes(
     "/api/streams/:id/start",
     requireAuth,
     async (req: Request, res: Response): Promise<void> => {
-      try {
-        await startStream(String(req.params.id));
-        res.json({ success: true });
-      } catch (e: any) {
-        res.status(400).json({ message: e.message });
+      const id = String(req.params.id);
+      const stream = storage.getStream(id);
+      if (!stream) {
+        res.status(404).json({ message: "Stream not found" });
+        return;
       }
+
+      // Return 200 immediately — URL resolution (streamlink / yt-dlp) can take
+      // 5–15 s and we don't want the UI button frozen while it runs.
+      // The UI follows progress via WebSocket status/log events.
+      res.json({ success: true });
+
+      // Fire start in background; errors surface as stream log messages.
+      startStream(id).catch((e: any) => {
+        logger.warn({ streamId: id, err: e.message }, "startStream background error");
+      });
     }
   );
 

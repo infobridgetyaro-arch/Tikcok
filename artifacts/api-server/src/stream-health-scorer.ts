@@ -62,6 +62,7 @@ interface StreamState {
   lastRtmpErrorAt: number | null;
   recoveryTriggeredAt: number | null;
   warningEmittedAt: number | null;
+  registeredAt: number;   // when the stream was (re-)registered; gates startup grace
 }
 
 // ── Scoring constants ─────────────────────────────────────────────────────────
@@ -88,6 +89,11 @@ const PTS_RTMP      = 10;
 
 // Recovery cooldown: don't trigger recovery more than once per 30s
 const RECOVERY_COOLDOWN_MS = 30_000;
+
+// Startup grace period: don't score (or trigger recovery) until FFmpeg has had
+// time to connect to the source and produce data. During this window a score
+// of 0 is completely expected — FFmpeg is still negotiating the HLS playlist.
+const STARTUP_GRACE_MS = 30_000;
 
 // ── Module state ──────────────────────────────────────────────────────────────
 
@@ -116,6 +122,7 @@ export function scorerRegisterStream(streamId: string, targetBitrateKbps: number
     lastRtmpErrorAt: null,
     recoveryTriggeredAt: null,
     warningEmittedAt: null,
+    registeredAt: Date.now(),
   });
   logger.debug({ streamId, targetBitrateKbps }, "[health] Stream registered");
 }
@@ -252,9 +259,15 @@ function recompute(streamId: string): void {
   const s = states.get(streamId);
   if (!s) return;
 
+  const now = Date.now();
+
+  // During the startup grace window, scoring is suppressed entirely.
+  // FFmpeg needs time to negotiate the HLS playlist and produce output — a
+  // score of 0 during this window is completely expected, not a failure.
+  if (now - s.registeredAt < STARTUP_GRACE_MS) return;
+
   const { score, components } = computeScore(s);
   const status = scoreToStatus(score);
-  const now = Date.now();
 
   const snapshot: StreamHealthSnapshot = {
     streamId,
