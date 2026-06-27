@@ -202,6 +202,41 @@ export function getLiveChatId(streamId: string): string | null {
   return statsCache.get(stream.youtubeChannelId)?.liveChatId ?? null;
 }
 
+/**
+ * Immediately runs one stats poll cycle (fire-and-forget).
+ * Call this after a stream's youtubeChannelId is set or changed so the
+ * liveChatId is resolved right away instead of waiting up to 60 s.
+ */
+export function triggerStatsPollNow(): void {
+  // Run inline without touching the interval so the regular 60s cycle is unaffected
+  if (statsPolling) return;
+  statsPolling = true;
+  const streams = storage.getStreams();
+  const seen = new Set<string>();
+  const tasks = streams
+    .filter((s) => s.youtubeChannelId && !seen.has(s.youtubeChannelId))
+    .map(async (stream) => {
+      seen.add(stream.youtubeChannelId!);
+      try {
+        const stats = await fetchChannelStats(stream.youtubeChannelId!);
+        const streamsForChannel = storage.getStreams().filter(
+          (s) => s.youtubeChannelId === stream.youtubeChannelId
+        );
+        for (const s of streamsForChannel) {
+          broadcastStream(s.id, "stats", {
+            subs: stats.subs,
+            viewers: stats.viewers,
+            hasChat: !!stats.liveChatId,
+          });
+        }
+        updateStreamOverlays({ subs: stats.subs, viewers: stats.viewers });
+      } catch (e) {
+        logger.warn({ channelId: stream.youtubeChannelId, err: e }, "[youtube] Immediate stats poll error");
+      }
+    });
+  Promise.all(tasks).finally(() => { statsPolling = false; });
+}
+
 export function startLiveCountPolling() {
   if (pollingInterval) return;
 

@@ -52,7 +52,7 @@ import {
 } from "./oauth2-manager";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
 import { getYouTubeStreamUrl } from "./youtube-source";
-import { startLiveCountPolling, stopLiveCountPolling, getLiveChatId, fetchLiveChat, getLiveStats } from "./youtube-counter";
+import { startLiveCountPolling, stopLiveCountPolling, getLiveChatId, fetchLiveChat, getLiveStats, triggerStatsPollNow } from "./youtube-counter";
 import type { OverlayPosition } from "./overlay-renderer";
 import { registerDonationGateway, setDonationCallback, getGatewayPaymentUrl, getQRScanCount, getGiftQueue } from "./donation-gateway";
 import type { GiftQueueItem } from "./gift-system";
@@ -480,6 +480,11 @@ export async function registerBintunetRoutes(
       if (!stream) {
         res.status(404).json({ message: "Stream not found" });
         return;
+      }
+      // If youtubeChannelId was just set or changed, immediately resolve the
+      // liveChatId so chat burn-in starts within seconds (not up to 60 s).
+      if (req.body.youtubeChannelId && stream.youtubeChannelId) {
+        triggerStatsPollNow();
       }
       res.json(stream);
     }
