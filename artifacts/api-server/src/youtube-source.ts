@@ -15,9 +15,71 @@ import https from "https";
 import http from "http";
 import fs from "fs";
 import path from "path";
+import os from "os";
 import { logger } from "./lib/logger";
 import { getOAuth2AuthArgs } from "./oauth2-manager";
 import { YTDLP_BIN } from "./lib/ytdlp";
+
+// ── Cookies path resolution ────────────────────────────────────────────────────
+//
+// Priority (highest → lowest):
+//   1. YOUTUBE_COOKIES_PATH  — explicit path to an existing cookies file on the runner
+//   2. YOUTUBE_COOKIES_B64   — base64-encoded Netscape cookies.txt content (GitHub Actions secret)
+//   3. cookies.txt in cwd    — file uploaded via the dashboard Settings page
+//
+// GitHub Actions setup (recommended for CI):
+//   a) In Chrome/Firefox, install "Get cookies.txt LOCALLY" and export cookies for youtube.com
+//   b) Base64-encode: base64 -w 0 cookies.txt > cookies.b64   (Linux/Mac)
+//      On Windows:  certutil -encode cookies.txt cookies.b64
+//   c) Add the result as a repository secret named  YOUTUBE_COOKIES_B64
+//   d) Pass it to the server step:
+//        env:
+//          YOUTUBE_COOKIES_B64: ${{ secrets.YOUTUBE_COOKIES_B64 }}
+
+const COOKIES_TMP_PATH = path.join(os.tmpdir(), "yt-cookies.txt");
+
+function _resolveStartupCookiesPath(): string {
+  const envPath = process.env["YOUTUBE_COOKIES_PATH"];
+  if (envPath) {
+    if (fs.existsSync(envPath)) {
+      logger.info(`[youtube] Using cookies from YOUTUBE_COOKIES_PATH: ${envPath}`);
+      return envPath;
+    }
+    logger.warn(`[youtube] YOUTUBE_COOKIES_PATH set but file not found: ${envPath}`);
+  }
+
+  const b64 = process.env["YOUTUBE_COOKIES_B64"];
+  if (b64) {
+    try {
+      const decoded = Buffer.from(b64.trim(), "base64").toString("utf-8");
+      fs.writeFileSync(COOKIES_TMP_PATH, decoded, "utf-8");
+      logger.info("[youtube] YOUTUBE_COOKIES_B64 decoded → cookies written to tmp, yt-dlp authenticated");
+      return COOKIES_TMP_PATH;
+    } catch (err) {
+      logger.warn({ err }, "[youtube] Failed to decode YOUTUBE_COOKIES_B64 — will try without cookies");
+    }
+  }
+
+  return path.join(process.cwd(), "cookies.txt");
+}
+
+const _startupCookiesPath = _resolveStartupCookiesPath();
+
+/**
+ * Returns the effective path to the YouTube cookies file.
+ * Checks env vars on every call so that a freshly uploaded dashboard cookies.txt
+ * is picked up without a server restart.
+ */
+export function getCookiesPath(): string {
+  // If startup resolved a CI path (env var), keep it for the session
+  if (_startupCookiesPath !== path.join(process.cwd(), "cookies.txt")) {
+    return _startupCookiesPath;
+  }
+  // Otherwise re-resolve each time so newly uploaded files take effect immediately
+  const envPath = process.env["YOUTUBE_COOKIES_PATH"];
+  if (envPath && fs.existsSync(envPath)) return envPath;
+  return path.join(process.cwd(), "cookies.txt");
+}
 
 // ── In-process cache: YouTube URL → downloaded temp file path ────────────────
 const ytDownloadCache = new Map<string, string>();
@@ -147,10 +209,14 @@ function classifyYouTubeError(stderr: string, fallback: string, method: string):
     low.includes("please log in") ||
     low.includes("login required")
   ) {
-    const hasCookiesNow = fs.existsSync(path.join(process.cwd(), "cookies.txt"));
+    const hasCookiesNow = fs.existsSync(getCookiesPath());
     const cookiesHint = hasCookiesNow
       ? "Your cookies.txt is uploaded but YouTube still requires sign-in — the cookies may be expired or missing auth tokens (SID, SAPISID). Export fresh cookies from a logged-in Chrome/Firefox session using a browser extension like 'Get cookies.txt LOCALLY'."
-      : "YouTube requires sign-in. Upload a cookies.txt file (Netscape format) from a logged-in YouTube account via Settings → Cookies, or use Settings → YouTube Sign-In to authenticate once with your Google account.";
+      : "YouTube requires sign-in (bot detection). Fix options: " +
+        "(1) Dashboard → Settings → Cookies: upload a cookies.txt (Netscape format) from a logged-in YouTube account. " +
+        "(2) CI/GitHub Actions: set the YOUTUBE_COOKIES_B64 environment variable to a base64-encoded cookies.txt " +
+        "(base64 -w 0 cookies.txt) and pass it as a secret. " +
+        "Use the 'Get cookies.txt LOCALLY' browser extension to export cookies.";
     return new YouTubeStreamError(cookiesHint, "LOGIN_REQUIRED", method);
   }
   if (
@@ -206,12 +272,12 @@ function classifyYouTubeError(stderr: string, fallback: string, method: string):
 // ── Cookies helpers ───────────────────────────────────────────────────────────
 
 export function getCookiesArgs(): string[] {
-  const cookiesPath = path.join(process.cwd(), "cookies.txt");
+  const cookiesPath = getCookiesPath();
   return fs.existsSync(cookiesPath) ? ["--cookies", cookiesPath] : [];
 }
 
 export function getCookiesConfigured(): boolean {
-  return fs.existsSync(path.join(process.cwd(), "cookies.txt"));
+  return fs.existsSync(getCookiesPath());
 }
 
 /**
@@ -238,7 +304,7 @@ export function getCookiesConfigured(): boolean {
  *   inside its own session — no POT validation issues for public live streams.
  */
 export function getYouTubeStreamlinkPipeArgs(pageUrl: string): string[] {
-  const cookiesPath = path.join(process.cwd(), "cookies.txt");
+  const cookiesPath = getCookiesPath();
   const hasCookies = fs.existsSync(cookiesPath);
   return [
     "--stdout",
@@ -268,7 +334,7 @@ export function getYouTubeYtdlpPipeArgs(pageUrl: string): string[] {
   //
   // --no-config: prevents yt-dlp from reading system/user config files that may
   // contain unsupported --compat-options (e.g. no-keepalive) in this environment.
-  const cookiesPath = path.join(process.cwd(), "cookies.txt");
+  const cookiesPath = getCookiesPath();
   const hasCookies = fs.existsSync(cookiesPath);
   return [
     "--no-config",
@@ -301,7 +367,7 @@ export function getAuthArgs(): string[] {
  * Reads cookies.txt (Netscape format) and builds a Cookie header string for FFmpeg.
  */
 export function getYouTubeFFmpegCookieHeader(): string {
-  const cookiesPath = path.join(process.cwd(), "cookies.txt");
+  const cookiesPath = getCookiesPath();
   if (!fs.existsSync(cookiesPath)) return "";
 
   try {
@@ -446,7 +512,7 @@ function tier0_webWithCookies(pageUrl: string, format: string, isLive: boolean):
 // ── Tier 1: streamlink ────────────────────────────────────────────────────────
 
 function tier1_streamlink(pageUrl: string): Promise<string> {
-  const cookiesPath = path.join(process.cwd(), "cookies.txt");
+  const cookiesPath = getCookiesPath();
   const hasCookies = fs.existsSync(cookiesPath);
 
   return new Promise((resolve, reject) => {

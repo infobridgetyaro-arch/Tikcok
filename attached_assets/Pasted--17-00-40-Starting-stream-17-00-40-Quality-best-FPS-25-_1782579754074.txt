@@ -1,0 +1,87 @@
+[17:00:40] --- Starting stream ---
+
+[17:00:40] Quality: best | FPS: 25 | Layout: desktop
+
+[17:00:40] Audio: On | Auto-restart: On
+
+[17:00:40] Overlay: burn-in enabled (canvas → FFmpeg pipe)
+
+[17:00:40] YouTube source: direct HLS — connecting FFmpeg to kenyacitizentv...
+
+[17:00:40] YouTube source ready [pipe mode (yt-dlp → stdin)] — launching FFmpeg...
+
+[17:00:40] Output: YouTube
+
+[17:00:40] Launching FFmpeg (1s GOP, 5s RTMP timeout, stall watchdog active)...
+
+[17:00:40] [yt-dlp] Spawning pipe: yt-dlp - https://www.youtube.com/@kenyacitizentv/live
+
+[17:00:41] [yt-dlp] [youtube:tab] Extracting URL: https://www.youtube.com/@kenyacitizentv/live
+
+[17:00:41] [yt-dlp] [youtube:tab] @kenyacitizentv/live: Downloading webpage
+
+[17:00:42] [yt-dlp] [youtube] Extracting URL: https://www.youtube.com/watch?v=1YzlFiqmHDY
+
+[17:00:42] [yt-dlp] [youtube] 1YzlFiqmHDY: Downloading webpage
+
+[17:00:43] [yt-dlp] [youtube] 1YzlFiqmHDY: Downloading ios player API JSON
+
+[17:00:43] [yt-dlp] [youtube] 1YzlFiqmHDY: Downloading android player API JSON
+
+[17:00:43] [yt-dlp] WARNING: [youtube] No title found in player responses; falling back to title from initial data. Other metadata may also be missing
+
+[17:00:43] [yt-dlp] ERROR: [youtube] 1YzlFiqmHDY: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication. See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp for how to manually pass cookies. Also see https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies for tips on effectively exporting YouTube cookies
+
+[17:00:43] [ffmpeg] [in#0 @ 0x556908d2f8c0] Error opening input: Invalid data found when processing input
+
+[17:00:43] [ffmpeg] Error opening input file pipe:0.
+
+[17:00:43] [ffmpeg] Error opening input files: Invalid data found when processing input
+
+[17:00:43] FFmpeg exited (code: 183, signal: null)
+
+[17:00:43] [ffmpeg] Stream cut (exit code 183) — reconnecting in 5s...
+
+[17:00:48] --- Starting stream ---
+
+[17:00:48] Quality: best | FPS: 25 | Layout: desktop
+
+[17:00:48] Audio: On | Auto-restart: On
+
+[17:00:48] Overlay: burn-in enabled (canvas → FFmpeg pipe)
+
+[17:00:48] YouTube source: direct HLS — connecting FFmpeg to kenyacitizentv...
+
+[17:00:48] YouTube source ready [pipe mode (yt-dlp → stdin)] — launching FFmpeg...
+
+[17:00:48] Output: YouTube
+
+[17:00:48] Launching FFmpeg (1s GOP, 5s RTMP timeout, stall watchdog active)...
+
+[17:00:48] [yt-dlp] Spawning pipe: yt-dlp - https://www.youtube.com/@kenyacitizentv/live
+
+[17:00:49] [yt-dlp] [youtube:tab] Extracting URL: https://www.youtube.com/@kenyacitizentv/live
+
+[17:00:49] [yt-dlp] [youtube:tab] @kenyacitizentv/live: Downloading webpage
+
+[17:00:52] [yt-dlp] [youtube] Extracting URL: https://www.youtube.com/watch?v=1YzlFiqmHDY
+
+[17:00:52] [yt-dlp] [youtube] 1YzlFiqmHDY: Downloading webpage
+
+[17:00:53] [yt-dlp] [youtube] 1YzlFiqmHDY: Downloading ios player API JSON
+
+[17:00:53] [yt-dlp] [youtube] 1YzlFiqmHDY: Downloading android player API JSON
+
+[17:00:53] [yt-dlp] WARNING: [youtube] No title found in player responses; falling back to title from initial data. Other metadata may also be missing
+
+[17:00:53] [yt-dlp] ERROR: [youtube] 1YzlFiqmHDY: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication. See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp for how to manually pass cookies. Also see https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies for tips on effectively exporting YouTube cookies
+
+[17:00:53] [ffmpeg] [in#0 @ 0x55e3a4ce88c0] Error opening input: Invalid data found when processing input
+
+[17:00:53] [ffmpeg] Error opening input file pipe:0.
+
+[17:00:53] [ffmpeg] Error opening input files: Invalid data found when processing input
+
+[17:00:53] FFmpeg exited (code: 183, signal: null)
+
+[17:00:53] [ffmpeg] Stream cut (exit code 183) — reconnecting in 15s...
