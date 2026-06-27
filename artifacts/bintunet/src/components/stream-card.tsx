@@ -543,18 +543,84 @@ export function StreamCard({
                       className="h-8 text-sm"
                       data-testid={`input-xspace-${stream.id}`}
                     />
-                    <Label htmlFor={`xspace-img-${stream.id}`} className="text-xs flex items-center gap-1.5 pt-1">
-                      <Image className="w-3 h-3 text-zinc-400" /> Background Image URL <span className="text-muted-foreground font-normal">(optional — shown behind audio)</span>
+
+                    {/* Background media upload */}
+                    <Label className="text-xs flex items-center gap-1.5 pt-1">
+                      <Image className="w-3 h-3 text-zinc-400" /> Background Media <span className="text-muted-foreground font-normal">(image or looped video)</span>
                     </Label>
-                    <Input
-                      id={`xspace-img-${stream.id}`}
-                      placeholder="https://… or /api/uploads/filename.jpg"
-                      value={stream.xspaceImageUrl ?? ""}
-                      onChange={(e) => onUpdate(stream.id, { xspaceImageUrl: e.target.value })}
-                      disabled={isActive}
-                      className="h-8 text-sm"
-                    />
-                    <p className="text-[11px] text-muted-foreground">Audio-only restream. Add an image URL (X logo, profile photo, etc.) to show on the video background instead of the gradient. Space must be live.</p>
+                    {stream.xspaceVideoPath ? (
+                      <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-2.5 py-2">
+                        <Film className="w-3 h-3 text-zinc-400 shrink-0" />
+                        <span className="flex-1 text-xs font-mono text-muted-foreground truncate">{stream.xspaceVideoPath.split("/").pop()}</span>
+                        <button
+                          disabled={isActive}
+                          onClick={async () => {
+                            const token = getAuthToken();
+                            const headers: Record<string, string> = {};
+                            if (token) headers["Authorization"] = `Bearer ${token}`;
+                            await fetch(`/api/streams/${stream.id}/upload-xspace-media`, { method: "DELETE", credentials: "include", headers });
+                            onUpdate(stream.id, { xspaceVideoPath: "" });
+                            toast({ title: "Background media removed" });
+                          }}
+                          className="shrink-0 text-muted-foreground hover:text-destructive"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div>
+                        <label className={`flex items-center gap-2 rounded-lg border border-dashed border-zinc-600 bg-zinc-900/30 px-3 py-2.5 text-xs text-muted-foreground cursor-pointer hover:border-zinc-400 hover:text-foreground transition-colors ${isActive ? "pointer-events-none opacity-50" : ""}`}>
+                          <Upload className="w-3.5 h-3.5 shrink-0" />
+                          <span>Upload image or video (mp4, jpg, png…)</span>
+                          <input
+                            type="file"
+                            accept=".mp4,.webm,.mov,.avi,.mkv,.m4v,.jpg,.jpeg,.png,.gif,.webp"
+                            className="hidden"
+                            disabled={isActive}
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              const formData = new FormData();
+                              formData.append("media", file);
+                              const xhr = new XMLHttpRequest();
+                              xhr.open("POST", `/api/streams/${stream.id}/upload-xspace-media`);
+                              xhr.withCredentials = true;
+                              const token = getAuthToken();
+                              if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+                              xhr.onload = () => {
+                                if (xhr.status === 200) {
+                                  const data = JSON.parse(xhr.responseText);
+                                  onUpdate(stream.id, { xspaceVideoPath: data.path });
+                                  toast({ title: "Background uploaded", description: `${file.name} ready.` });
+                                } else {
+                                  toast({ title: "Upload failed", description: JSON.parse(xhr.responseText)?.message, variant: "destructive" });
+                                }
+                              };
+                              xhr.onerror = () => toast({ title: "Upload failed", variant: "destructive" });
+                              xhr.send(formData);
+                            }}
+                          />
+                        </label>
+                      </div>
+                    )}
+
+                    {/* Fallback: image URL */}
+                    {!stream.xspaceVideoPath && (
+                      <>
+                        <Label htmlFor={`xspace-img-${stream.id}`} className="text-xs flex items-center gap-1.5">
+                          or paste an image URL
+                        </Label>
+                        <Input
+                          id={`xspace-img-${stream.id}`}
+                          placeholder="https://… (X logo, profile photo…)"
+                          value={stream.xspaceImageUrl ?? ""}
+                          onChange={(e) => onUpdate(stream.id, { xspaceImageUrl: e.target.value })}
+                          disabled={isActive}
+                          className="h-8 text-sm"
+                        />
+                      </>
+                    )}
+                    <p className="text-[11px] text-muted-foreground">Audio-only restream. Upload a picture or video (looped, muted) to show on the video background. Space must be live.</p>
                   </div>
                 )}
 

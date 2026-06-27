@@ -287,6 +287,8 @@ export default function Dashboard() {
       youtubeSourceUrl: "",
       cameraDevice: "/dev/video0",
       xspaceUrl: "",
+      xspaceImageUrl: "",
+      xspaceVideoPath: "",
       uploadedVideoLoop: false,
       youtubeStreamKey: "",
       facebookRtmpUrl: "",

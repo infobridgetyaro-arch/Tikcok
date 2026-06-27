@@ -307,6 +307,25 @@ const uploadStreamVideo = multer({
   },
 });
 
+// multer for X Space background media — accepts images AND videos
+const xspaceMediaStorage = multer.diskStorage({
+  destination: uploadDir,
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const safeName = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
+    cb(null, `xspace-${Date.now()}-${safeName}${ext}`);
+  },
+});
+const uploadXspaceMedia = multer({
+  storage: xspaceMediaStorage,
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB
+  fileFilter: (_req, file, cb) => {
+    const allowed = [".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v", ".jpg", ".jpeg", ".png", ".gif", ".webp"];
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, allowed.includes(ext));
+  },
+});
+
 declare module "express-session" {
   interface SessionData {
     authenticated: boolean;
@@ -578,6 +597,43 @@ export async function registerBintunetRoutes(
         filename: req.file.originalname,
         size: req.file.size,
       });
+    }
+  );
+
+  // Upload X Space background media (image or video — looped, muted)
+  app.post(
+    "/api/streams/:id/upload-xspace-media",
+    requireAuth,
+    uploadXspaceMedia.single("media"),
+    (req: Request, res: Response): void => {
+      const id = String(req.params.id);
+      const stream = storage.getStream(id);
+      if (!stream) { res.status(404).json({ message: "Stream not found" }); return; }
+      if (!req.file) {
+        res.status(400).json({ message: "No file received or unsupported format (mp4, webm, mov, jpg, png, gif, webp)." });
+        return;
+      }
+      if (stream.xspaceVideoPath && stream.xspaceVideoPath !== req.file.path) {
+        try { if (fs.existsSync(stream.xspaceVideoPath)) fs.unlinkSync(stream.xspaceVideoPath); } catch {}
+      }
+      storage.updateStream(id, { xspaceVideoPath: req.file.path });
+      res.json({ success: true, path: req.file.path, filename: req.file.originalname, size: req.file.size });
+    }
+  );
+
+  // Delete X Space background media
+  app.delete(
+    "/api/streams/:id/upload-xspace-media",
+    requireAuth,
+    (req: Request, res: Response): void => {
+      const id = String(req.params.id);
+      const stream = storage.getStream(id);
+      if (!stream) { res.status(404).json({ message: "Stream not found" }); return; }
+      if (stream.xspaceVideoPath) {
+        try { if (fs.existsSync(stream.xspaceVideoPath)) fs.unlinkSync(stream.xspaceVideoPath); } catch {}
+        storage.updateStream(id, { xspaceVideoPath: "" });
+      }
+      res.json({ success: true });
     }
   );
 

@@ -6,6 +6,7 @@ export type StreamConfig = {
   cameraDevice: string;
   xspaceUrl: string;
   xspaceImageUrl: string;
+  xspaceVideoPath: string;
   uploadedVideoPath: string;
   uploadedVideoLoop: boolean;
   youtubeStreamKey: string;

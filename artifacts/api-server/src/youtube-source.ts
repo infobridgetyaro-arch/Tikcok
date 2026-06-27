@@ -223,6 +223,24 @@ export function getCookiesConfigured(): boolean {
  * CDN requests (manifest refresh, segment auth, token rotation) — FFmpeg just receives
  * a clean MPEG-TS stream and never touches the CDN directly.
  */
+/**
+ * Returns streamlink CLI args to pipe a YouTube live stream directly to FFmpeg stdin.
+ * streamlink speaks YouTube's native streaming API and does not require a
+ * Proof-of-Origin Token (POT) for public live streams, making it far more
+ * reliable than yt-dlp's web/tv_embedded/ios clients for server-side use.
+ */
+export function getYouTubeStreamlinkPipeArgs(pageUrl: string): string[] {
+  return [
+    "--stdout",
+    "--loglevel", "warning",
+    "--retry-streams", "5",
+    "--retry-max", "5",
+    "--retry-open", "5",
+    pageUrl,
+    "best/1080p60/1080p/720p60/720p/480p/360p/worst",
+  ];
+}
+
 export function getYouTubeYtdlpPipeArgs(pageUrl: string): string[] {
   // Use tv_embedded + ios + android clients — these don't require a Proof-of-Origin
   // Token (POT) for public live streams, so no browser cookies or OAuth2 are needed.

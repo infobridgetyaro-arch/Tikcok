@@ -2,7 +2,7 @@ import { ChildProcess, spawn, exec } from "child_process";
 import { storage } from "./storage";
 import { logger } from "./lib/logger";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
-import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader, getCookiesConfigured, getYouTubeYtdlpPipeArgs } from "./youtube-source";
+import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader, getCookiesConfigured, getYouTubeYtdlpPipeArgs, getYouTubeStreamlinkPipeArgs } from "./youtube-source";
 import type { WebSocket } from "ws";
 import type { StreamConfig } from "./schema";
 import { OverlayRenderer, defaultOverlayState, type OverlayState } from "./overlay-renderer";
@@ -792,17 +792,28 @@ function buildFFmpegArgs(
     "-i", "pipe:6",
   );
 
-  // ── Input 7: X Space background image (optional) ─────────────────────────
-  // Only added when sourceType === "xspace" and xspaceImageUrl is provided.
-  // -loop 1: keep reading the still image indefinitely so FFmpeg never runs out
-  // of frames for the video stream.
+  // ── Input 7: X Space background media (image URL, local image, or local video) ──
+  // Priority: xspaceVideoPath (uploaded local file) > xspaceImageUrl (remote URL).
+  // Local image: -loop 1 -framerate 2 keeps a still image looping as video frames.
+  // Local video: -stream_loop -1 loops the video file forever (no audio taken from it).
+  // Remote image URL: -loop 1 (existing behaviour, kept for backwards compat).
   const xspaceImageUrl = sourceType === "xspace" ? (stream.xspaceImageUrl ?? "").trim() : "";
-  if (xspaceImageUrl) {
-    args.push(
-      "-loop", "1",
-      "-thread_queue_size", "8",
-      "-i", xspaceImageUrl,
-    );
+  const xspaceVideoPath = sourceType === "xspace" ? (stream.xspaceVideoPath ?? "").trim() : "";
+  const videoExts = new Set([".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v", ".ts"]);
+  const xspaceLocalIsVideo = xspaceVideoPath
+    ? videoExts.has(path.extname(xspaceVideoPath).toLowerCase())
+    : false;
+
+  if (xspaceVideoPath) {
+    if (xspaceLocalIsVideo) {
+      // Looped video file as visual background (audio intentionally ignored)
+      args.push("-stream_loop", "-1", "-thread_queue_size", "8", "-i", xspaceVideoPath);
+    } else {
+      // Static image file (jpg/png/webp)
+      args.push("-loop", "1", "-framerate", "2", "-thread_queue_size", "8", "-i", xspaceVideoPath);
+    }
+  } else if (xspaceImageUrl) {
+    args.push("-loop", "1", "-thread_queue_size", "8", "-i", xspaceImageUrl);
   }
 
   // threads=0: auto-detect (all available cores).
@@ -882,9 +893,12 @@ function buildFFmpegArgs(
 
   if (isXSpace) {
     // X Space is audio-only — no [0:v] exists. Build video from gradient/black only.
-    if (xspaceImageUrl) {
-      // With a background image (input 7): scale & pad it to fill frame, overlay
-      // above the gradient but below the UI overlay so the image is visible behind chat.
+    const hasXSpaceBg = !!(xspaceVideoPath || xspaceImageUrl);
+    if (hasXSpaceBg) {
+      // With a background media (input 7): scale & pad it to fill frame, overlay
+      // above the gradient but below the UI overlay so the image/video is visible behind chat.
+      // For video loops: eof_action=repeat on the UI overlay keeps rendering if the video
+      // file temporarily stalls; the video itself loops via -stream_loop -1.
       filterGraph = [
         `[3:v]format=rgba,scale=${scaleW}:${scaleH}[_bg]`,
         `[1:v][_bg]overlay=0:0:format=auto[_base]`,
@@ -1503,13 +1517,15 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       env: { ...process.env },
     });
 
-    // YouTube pipe mode: spawn yt-dlp and pipe its stdout directly into FFmpeg stdin.
-    // This keeps yt-dlp in control of all CDN requests so the POT/session tokens
-    // are always valid — FFmpeg never touches googlevideo.com directly.
+    // YouTube pipe mode: spawn streamlink and pipe its stdout directly into FFmpeg stdin.
+    // streamlink speaks YouTube's native live streaming API and does NOT require a
+    // Proof-of-Origin Token (POT), making it reliable for public live streams without
+    // browser cookies or OAuth2. yt-dlp's web/tv_embedded/ios clients all fail on
+    // server-side live streams because YouTube's CDN 403s any POT-less segment request.
     let ytSourceProcess: ChildProcess | undefined = undefined;
     if (useYtPipe) {
-      const ytArgs = getYouTubeYtdlpPipeArgs(normaliseYouTubeUrl(stream.youtubeSourceUrl || ""));
-      ytSourceProcess = spawn("yt-dlp", ytArgs, { stdio: ["ignore", "pipe", "pipe"] });
+      const slArgs = getYouTubeStreamlinkPipeArgs(normaliseYouTubeUrl(stream.youtubeSourceUrl || ""));
+      ytSourceProcess = spawn("streamlink", slArgs, { stdio: ["ignore", "pipe", "pipe"] });
 
       const stdinPipe = ffmpegProc.stdin as NodeJS.WritableStream | null;
       if (stdinPipe && ytSourceProcess.stdout) {
@@ -1522,24 +1538,23 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
         const lines = d.toString().split("\n");
         for (const raw of lines) {
           const line = raw.trim();
-          // Only log meaningful lines — suppress verbose download progress spam
           if (line && !line.startsWith("[download]") && !line.startsWith("frame=")) {
-            sendLog(streamId, `[yt-dlp] ${line.slice(0, 300)}`);
+            sendLog(streamId, `[streamlink] ${line.slice(0, 300)}`);
           }
         }
       });
 
       ytSourceProcess.on("exit", (code, signal) => {
-        logger.info({ streamId, code, signal }, "[yt-dlp] pipe process exited");
-        sendLog(streamId, `[yt-dlp] Pipe process exited (code: ${code}) — FFmpeg will detect EOF and reconnect`);
+        logger.info({ streamId, code, signal }, "[streamlink] pipe process exited");
+        sendLog(streamId, `[streamlink] Pipe process exited (code: ${code}) — FFmpeg will detect EOF and reconnect`);
       });
 
       ytSourceProcess.on("error", (err) => {
-        logger.error({ streamId, err }, "[yt-dlp] pipe process spawn error");
-        sendLog(streamId, `[yt-dlp] Failed to spawn: ${err.message}`);
+        logger.error({ streamId, err }, "[streamlink] pipe process spawn error");
+        sendLog(streamId, `[streamlink] Failed to spawn: ${err.message}`);
       });
 
-      sendLog(streamId, `YouTube yt-dlp pipe started — streaming to FFmpeg stdin`);
+      sendLog(streamId, `YouTube streamlink pipe started — streaming to FFmpeg stdin`);
     }
 
     const isVertical = stream.ratio === "mobile";

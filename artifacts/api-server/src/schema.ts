@@ -8,6 +8,7 @@ export const streamConfigSchema = z.object({
   cameraDevice: z.string().default("/dev/video0"),
   xspaceUrl: z.string().default(""),
   xspaceImageUrl: z.string().default(""),
+  xspaceVideoPath: z.string().default(""),
   uploadedVideoPath: z.string().default(""),
   uploadedVideoLoop: z.boolean().default(true),
   youtubeStreamKey: z.string().default(""),
