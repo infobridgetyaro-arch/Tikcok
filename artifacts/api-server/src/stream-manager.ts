@@ -973,7 +973,7 @@ function buildFFmpegArgs(
 
   args.push(
     "-c:v", "libx264",
-    "-preset", "veryfast",
+    "-preset", "superfast",
     "-tune", "zerolatency",
     "-b:v", bitrate,
     "-maxrate", maxrate,
