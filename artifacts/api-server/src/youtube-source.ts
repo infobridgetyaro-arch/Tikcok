@@ -224,16 +224,32 @@ export function getCookiesConfigured(): boolean {
  * a clean MPEG-TS stream and never touches the CDN directly.
  */
 export function getYouTubeYtdlpPipeArgs(pageUrl: string): string[] {
+  // IMPORTANT: Do NOT select formats that require internal FFmpeg muxing (e.g. separate
+  // video+audio streams). When yt-dlp needs to merge streams it spawns an internal FFmpeg
+  // process — that child FFmpeg fetches HLS segments without the POT/session cookie and
+  // gets 403 on every segment.
+  //
+  // Fix: --downloader native forces yt-dlp's own Python HTTP client (which has full cookie
+  // context) to download every segment. --hls-use-mpegts outputs as MPEG-TS which FFmpeg
+  // stdin expects. We pick a pre-muxed combined HLS format (itag 95/91/92/93/94/95) so no
+  // internal mux/remux step is needed at all.
+  const cookiesPath = path.join(process.cwd(), "cookies.txt");
   return [
     "--no-playlist",
-    "--no-part",
     "--no-check-certificate",
     "--socket-timeout", "30",
     "--extractor-args", "youtube:player_client=web",
     "--add-header", "Accept-Language:en-US,en;q=0.9",
-    "-f", "b[vcodec!*=none][acodec!*=none][protocol^=m3u8]/best[vcodec!*=none][acodec!*=none]/best",
+    // Native downloader: yt-dlp's Python HTTP client fetches every HLS segment — no
+    // internal FFmpeg spawned, cookies are always in scope.
+    "--downloader", "native",
+    // Output HLS as MPEG-TS stream (required for piping to FFmpeg stdin)
+    "--hls-use-mpegts",
+    // Select a combined (pre-muxed) HLS stream — avoid separate A/V tracks that
+    // would require internal muxing and trigger an internal FFmpeg process.
+    "-f", "93/94/95/91/92/best[protocol^=m3u8][vcodec!*=none][acodec!*=none]/best[protocol^=m3u8]",
     "-o", "-",
-    ...getAuthArgs(),
+    "--cookies", cookiesPath,
     pageUrl,
   ];
 }
