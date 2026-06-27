@@ -2,7 +2,7 @@ import { ChildProcess, spawn, exec } from "child_process";
 import { storage } from "./storage";
 import { logger } from "./lib/logger";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
-import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache } from "./youtube-source";
+import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl } from "./youtube-source";
 import type { WebSocket } from "ws";
 import type { StreamConfig } from "./schema";
 import { OverlayRenderer, defaultOverlayState, type OverlayState } from "./overlay-renderer";
@@ -1071,12 +1071,17 @@ async function resolveInputUrl(
 
   if (sourceType === "youtube") {
     const input = (stream.youtubeSourceUrl || "").trim();
-    if (!input) throw new Error("YouTube HLS URL is required");
-    if (!input.includes(".m3u8") && !input.startsWith("http")) {
-      throw new Error("YouTube source must be a public HLS URL (.m3u8). Paste the direct stream URL.");
-    }
-    urlCache.set(stream.id, { url: input, sourceType: "youtube", resolvedAt: Date.now() });
-    return { url: input, sourceType: "youtube" };
+    if (!input) throw new Error("YouTube source URL or handle is required");
+
+    // If the user already pasted a direct HLS URL, pass it straight to FFmpeg.
+    // Otherwise resolve the YouTube page URL / handle / video ID via yt-dlp.
+    const isDirect = input.includes(".m3u8");
+    const hlsUrl = isDirect
+      ? input
+      : await getYouTubeStreamUrl(normaliseYouTubeUrl(input));
+
+    urlCache.set(stream.id, { url: hlsUrl, sourceType: "youtube", resolvedAt: Date.now() });
+    return { url: hlsUrl, sourceType: "youtube" };
   }
 
   if (sourceType === "xspace") {
