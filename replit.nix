@@ -1,5 +1,6 @@
 {pkgs}: {
   deps = [
+    pkgs.python3
     pkgs.noto-fonts
     pkgs.librsvg
     pkgs.giflib
