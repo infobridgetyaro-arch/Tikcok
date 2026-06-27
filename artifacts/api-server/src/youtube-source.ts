@@ -253,18 +253,18 @@ export function getYouTubeStreamlinkPipeArgs(pageUrl: string): string[] {
 }
 
 export function getYouTubeYtdlpPipeArgs(pageUrl: string): string[] {
-  // Use tv_embedded + ios + android clients — these don't require a Proof-of-Origin
-  // Token (POT) for public live streams, so no browser cookies or OAuth2 are needed.
-  // The "web" client was previously used here but now requires POT for every request,
-  // making it unreliable without a freshly authenticated browser session.
+  // Streams the YouTube live source as MPEG-TS to stdout so FFmpeg can read it on stdin.
   //
-  // --downloader native: yt-dlp's Python HTTP client fetches every HLS segment so
-  // session context (headers, cookies) stays in scope. Never use the default
-  // downloader for live streams — it spawns an internal FFmpeg that lacks session state.
-  // --hls-use-mpegts: output as continuous MPEG-TS stream, required for FFmpeg stdin.
+  // Client selection: ios + android don't require a Proof-of-Origin Token (POT) for
+  // public live streams. tv_embedded was removed — it is unsupported in yt-dlp 2026+.
   //
-  // Format priority: prefer pre-muxed HLS (itag 95/93/91/92/94) to avoid internal
-  // A+V merge which would spawn a second FFmpeg inside yt-dlp (broken for live CDN URLs).
+  // Downloader: we intentionally do NOT pass --downloader native here.
+  // The native downloader with --hls-use-mpegts caused yt-dlp's internal FFmpeg to
+  // fetch HLS segments without session/cookie context, producing HTTP 403 on rqh=1
+  // segments. yt-dlp's default downloader passes cookies and headers to its internal
+  // FFmpeg via -headers, so CDN authentication works correctly.
+  //
+  // Format: prefer pre-muxed HLS itags (91-95) to avoid an A+V merge step.
   //
   // --no-config: prevents yt-dlp from reading system/user config files that may
   // contain unsupported --compat-options (e.g. no-keepalive) in this environment.
@@ -275,17 +275,11 @@ export function getYouTubeYtdlpPipeArgs(pageUrl: string): string[] {
     "--no-playlist",
     "--no-check-certificate",
     "--socket-timeout", "30",
-    // tv_embedded is unsupported in yt-dlp 2026+ — ios and android don't need it.
     "--extractor-args", "youtube:player_client=ios,android",
     "--add-header", "Accept-Language:en-US,en;q=0.9",
-    // Start at the live edge, NOT the beginning of the DVR window.
-    // Without this, yt-dlp catches up from the stream start — viewers see
-    // old content and experience buffering until yt-dlp reaches real-time.
+    // Start at the live edge, not the beginning of the DVR window.
     "--no-live-from-start",
-    "--downloader", "native",
-    "--hls-use-mpegts",
     // Prefer pre-muxed HLS itags (91-95) — no internal A+V merge needed.
-    // Combined [vcodec+acodec] filter first, then fall back to known live itags.
     "-f", "93/94/95/92/91/best[protocol^=m3u8][vcodec!*=none][acodec!*=none]/best[protocol^=m3u8]/best",
     "-o", "-",
     ...(hasCookies ? ["--cookies", cookiesPath] : []),
