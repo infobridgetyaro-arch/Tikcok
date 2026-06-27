@@ -75,7 +75,7 @@ function getSourceDisplay(stream: StreamConfig): string {
 }
 
 function canStart(stream: StreamConfig): boolean {
-  const hasOutput = !!(stream.youtubeStreamKey || stream.facebookRtmpUrl || stream.tiktokStreamKey);
+  const hasOutput = !!(stream.youtubeStreamKey || stream.facebookRtmpUrl || stream.instagramStreamKey || stream.tiktokStreamKey);
   if (stream.sourceType === "youtube") return !!(stream.youtubeSourceUrl) && hasOutput;
   if (stream.sourceType === "camera") return !!(stream.cameraDevice) && hasOutput;
   if (stream.sourceType === "xspace") return !!(stream.xspaceUrl) && hasOutput;
@@ -651,10 +651,21 @@ export function StreamCard({
                       <Label htmlFor={`facebook-${stream.id}`} className="text-xs flex items-center gap-1.5"><span className="text-blue-400 font-bold text-[10px]">fb</span>Facebook Key <span className="text-muted-foreground font-normal text-[10px]">(opt.)</span></Label>
                       <Input id={`facebook-${stream.id}`} placeholder="Optional" type="password" value={stream.facebookRtmpUrl} onChange={(e) => onUpdate(stream.id, { facebookRtmpUrl: e.target.value })} disabled={isActive} className="h-8 text-sm" data-testid={`input-facebook-${stream.id}`} />
                     </div>
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor={`tiktok-key-${stream.id}`} className="text-xs flex items-center gap-1.5"><SiTiktok className="w-3 h-3 text-pink-400" />TikTok Key <span className="text-muted-foreground font-normal text-[10px]">(opt.)</span></Label>
-                    <Input id={`tiktok-key-${stream.id}`} placeholder="TikTok Live Studio stream key" type="password" value={stream.tiktokStreamKey} onChange={(e) => onUpdate(stream.id, { tiktokStreamKey: e.target.value })} disabled={isActive} className="h-8 text-sm" data-testid={`input-tiktok-key-${stream.id}`} />
+                    <div className="space-y-1">
+                      <Label htmlFor={`instagram-key-${stream.id}`} className="text-xs flex items-center gap-1.5">
+                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{color:"#E1306C"}}>
+                          <rect x="2" y="2" width="20" height="20" rx="5" ry="5"/>
+                          <circle cx="12" cy="12" r="4"/>
+                          <circle cx="17.5" cy="6.5" r="0.5" fill="currentColor" stroke="none"/>
+                        </svg>
+                        Instagram Key <span className="text-muted-foreground font-normal text-[10px]">(opt.)</span>
+                      </Label>
+                      <Input id={`instagram-key-${stream.id}`} placeholder="Instagram stream key" type="password" value={stream.instagramStreamKey} onChange={(e) => onUpdate(stream.id, { instagramStreamKey: e.target.value })} disabled={isActive} className="h-8 text-sm" data-testid={`input-instagram-${stream.id}`} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor={`tiktok-key-${stream.id}`} className="text-xs flex items-center gap-1.5"><SiTiktok className="w-3 h-3 text-pink-400" />TikTok Key <span className="text-muted-foreground font-normal text-[10px]">(opt.)</span></Label>
+                      <Input id={`tiktok-key-${stream.id}`} placeholder="TikTok Live Studio stream key" type="password" value={stream.tiktokStreamKey} onChange={(e) => onUpdate(stream.id, { tiktokStreamKey: e.target.value })} disabled={isActive} className="h-8 text-sm" data-testid={`input-tiktok-key-${stream.id}`} />
+                    </div>
                   </div>
                 </div>
 

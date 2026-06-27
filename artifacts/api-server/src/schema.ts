@@ -11,6 +11,7 @@ export const streamConfigSchema = z.object({
   uploadedVideoLoop: z.boolean().default(true),
   youtubeStreamKey: z.string().default(""),
   facebookRtmpUrl: z.string().default(""),
+  instagramStreamKey: z.string().default(""),
   tiktokStreamKey: z.string().default(""),
   youtubeChannelId: z.string().default(""),
   ratio: z.enum(["mobile", "desktop"]).default("mobile"),

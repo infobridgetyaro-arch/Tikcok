@@ -9,6 +9,7 @@ export type StreamConfig = {
   uploadedVideoLoop: boolean;
   youtubeStreamKey: string;
   facebookRtmpUrl: string;
+  instagramStreamKey: string;
   tiktokStreamKey: string;
   youtubeChannelId: string;
   ratio: "mobile" | "desktop";

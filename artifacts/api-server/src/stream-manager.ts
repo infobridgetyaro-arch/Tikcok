@@ -1374,8 +1374,8 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
     throw new Error("X Space URL is required");
   if (sourceType === "upload" && !stream.uploadedVideoPath)
     throw new Error("No video file uploaded. Upload a video file before starting the stream.");
-  if (!stream.youtubeStreamKey && !stream.facebookRtmpUrl && !stream.tiktokStreamKey)
-    throw new Error("At least one output (YouTube, Facebook, or TikTok) is required");
+  if (!stream.youtubeStreamKey && !stream.facebookRtmpUrl && !stream.instagramStreamKey && !stream.tiktokStreamKey)
+    throw new Error("At least one output (YouTube, Facebook, Instagram, or TikTok) is required");
 
   stopStream(streamId);
 
@@ -1430,6 +1430,10 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
     if (stream.facebookRtmpUrl) {
       outputs.push(`rtmps://live-api-s.facebook.com:443/rtmp/${stream.facebookRtmpUrl}`);
       sendLog(streamId, `Output: Facebook`);
+    }
+    if (stream.instagramStreamKey) {
+      outputs.push(`rtmps://live-upload.instagram.com:443/live/${stream.instagramStreamKey}`);
+      sendLog(streamId, `Output: Instagram`);
     }
     if (stream.tiktokStreamKey) {
       outputs.push(`rtmp://push.tiktokv.com/live/${stream.tiktokStreamKey}`);
