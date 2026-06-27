@@ -2,7 +2,7 @@ import { ChildProcess, spawn, exec } from "child_process";
 import { storage } from "./storage";
 import { logger } from "./lib/logger";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
-import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader, getYouTubeYtdlpPipeArgs } from "./youtube-source";
+import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader, getYouTubeYtdlpPipeArgs, getYouTubeStreamlinkPipeArgs } from "./youtube-source";
 import { YTDLP_BIN } from "./lib/ytdlp";
 import type { WebSocket } from "ws";
 import type { StreamConfig } from "./schema";
@@ -1525,7 +1525,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       const inputType = inputUrl.includes(".m3u8") ? "HLS" : "FLV";
       sendLog(streamId, `Using ${inputType} stream input`);
     } else if (sourceType === "youtube" || resolvedType === "youtube_pipe") {
-      const modeLabel = resolvedType === "youtube_pipe" ? "pipe mode (yt-dlp → stdin)" : "direct HLS";
+      const modeLabel = resolvedType === "youtube_pipe" ? "pipe mode (streamlink → stdin)" : "direct HLS";
       sendLog(streamId, `YouTube source ready [${modeLabel}] — launching FFmpeg...`);
     }
 
@@ -1606,13 +1606,21 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       }
     }
 
-    // YouTube pipe mode: spawn yt-dlp and pipe its stdout to FFmpeg stdin.
-    // yt-dlp handles all HLS segment fetches including POT token rotation,
-    // so YouTube CDN never rate-limits the connection (no 429 on segments).
+    // YouTube pipe mode: spawn streamlink and pipe its stdout to FFmpeg stdin.
+    //
+    // WHY streamlink over yt-dlp here:
+    // yt-dlp resolves the HLS URL then uses an internal FFmpeg subprocess to fetch
+    // segments — that internal FFmpeg lacks yt-dlp's cookie/session context, so
+    // YouTube CDN returns HTTP 403 on rqh=1 (Proof-of-Origin) segments.
+    // streamlink keeps all segment fetches inside its own authenticated session,
+    // avoiding the 403 issue entirely for public YouTube live streams.
+    //
+    // yt-dlp is still used as a fallback if streamlink exits non-zero within 10s.
     if (resolvedType === "youtube_pipe") {
-      const ytArgs = getYouTubeYtdlpPipeArgs(normaliseYouTubeUrl((stream.youtubeSourceUrl || "").trim()));
-      sendLog(streamId, `[yt-dlp] Spawning pipe: ${YTDLP_BIN} ${ytArgs.slice(-2).join(" ")}`);
-      const ytProc = spawn(YTDLP_BIN, ytArgs, { stdio: ["ignore", "pipe", "pipe"] });
+      const pageUrl = normaliseYouTubeUrl((stream.youtubeSourceUrl || "").trim());
+      const slArgs = getYouTubeStreamlinkPipeArgs(pageUrl);
+      sendLog(streamId, `[streamlink] Spawning pipe: streamlink ${slArgs.slice(-2).join(" ")}`);
+      let ytProc = spawn("streamlink", slArgs, { stdio: ["ignore", "pipe", "pipe"] });
 
       const stdinPipe = ffmpegProc.stdin as NodeJS.WritableStream | null;
       if (stdinPipe) {
@@ -1620,32 +1628,80 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
         ytProc.stdout?.pipe(stdinPipe);
       }
 
-      let ytErrBuf = "";
+      // Fallback: if streamlink exits with non-zero within 10 s, retry with yt-dlp
+      let slFailed = false;
+      const slFallbackTimer = setTimeout(() => {
+        // streamlink survived 10 s — it's running fine, cancel fallback
+        slFailed = true; // mark so the exit handler doesn't double-spawn
+      }, 10_000);
+
+      let slErrBuf = "";
       ytProc.stderr?.on("data", (d: Buffer) => {
-        ytErrBuf += d.toString();
-        const lines = ytErrBuf.split("\n");
-        ytErrBuf = lines.pop() ?? "";
+        slErrBuf += d.toString();
+        const lines = slErrBuf.split("\n");
+        slErrBuf = lines.pop() ?? "";
         for (const line of lines) {
           const t = line.trim();
           if (!t) continue;
-          sendLog(streamId, `[yt-dlp] ${t}`);
-          logger.info({ streamId, line: t }, "[youtube-pipe] yt-dlp stderr");
+          sendLog(streamId, `[streamlink] ${t}`);
+          logger.info({ streamId, line: t }, "[youtube-pipe] streamlink stderr");
         }
       });
 
       ytProc.on("error", (err: NodeJS.ErrnoException) => {
-        logger.error({ streamId, err: err.message }, "[youtube-pipe] yt-dlp spawn error");
+        clearTimeout(slFallbackTimer);
         if (err.code === "ENOENT") {
-          sendLog(streamId, "[yt-dlp] Binary not found — check server setup");
+          // streamlink not installed — fall back to yt-dlp immediately
+          sendLog(streamId, "[streamlink] Not found — falling back to yt-dlp");
+          const ytArgs = getYouTubeYtdlpPipeArgs(pageUrl);
+          sendLog(streamId, `[yt-dlp] Spawning pipe: ${YTDLP_BIN} ${ytArgs.slice(-2).join(" ")}`);
+          const ytFallback = spawn(YTDLP_BIN, ytArgs, { stdio: ["ignore", "pipe", "pipe"] });
+          if (stdinPipe) ytFallback.stdout?.pipe(stdinPipe);
+          ytFallback.stderr?.on("data", (d: Buffer) => {
+            for (const line of d.toString().split("\n")) {
+              const t = line.trim(); if (t) sendLog(streamId, `[yt-dlp] ${t}`);
+            }
+          });
+          ytFallback.on("exit", (code, signal) => {
+            logger.info({ streamId, code, signal }, "[youtube-pipe] yt-dlp fallback exited");
+            const p = activeStreams.get(streamId);
+            if (p) p.ytSourceProcess = undefined;
+          });
+          const p = activeStreams.get(streamId);
+          if (p) p.ytSourceProcess = ytFallback;
+          ytProc = ytFallback;
         } else {
-          sendLog(streamId, `[yt-dlp] Error: ${err.message}`);
+          logger.error({ streamId, err: err.message }, "[youtube-pipe] streamlink spawn error");
+          sendLog(streamId, `[streamlink] Error: ${err.message}`);
         }
       });
 
       ytProc.on("exit", (code, signal) => {
-        logger.info({ streamId, code, signal }, "[youtube-pipe] yt-dlp exited");
-        const currentProc = activeStreams.get(streamId);
-        if (currentProc) currentProc.ytSourceProcess = undefined;
+        clearTimeout(slFallbackTimer);
+        logger.info({ streamId, code, signal }, "[youtube-pipe] streamlink exited");
+        if (!slFailed && code !== 0 && code !== null) {
+          // streamlink failed quickly — fall back to yt-dlp
+          sendLog(streamId, `[streamlink] Exited (code ${code}) — falling back to yt-dlp`);
+          const ytArgs = getYouTubeYtdlpPipeArgs(pageUrl);
+          sendLog(streamId, `[yt-dlp] Spawning pipe: ${YTDLP_BIN} ${ytArgs.slice(-2).join(" ")}`);
+          const ytFallback = spawn(YTDLP_BIN, ytArgs, { stdio: ["ignore", "pipe", "pipe"] });
+          if (stdinPipe) ytFallback.stdout?.pipe(stdinPipe);
+          ytFallback.stderr?.on("data", (d: Buffer) => {
+            for (const line of d.toString().split("\n")) {
+              const t = line.trim(); if (t) sendLog(streamId, `[yt-dlp] ${t}`);
+            }
+          });
+          ytFallback.on("exit", (c, s) => {
+            logger.info({ streamId, code: c, signal: s }, "[youtube-pipe] yt-dlp fallback exited");
+            const p = activeStreams.get(streamId);
+            if (p) p.ytSourceProcess = undefined;
+          });
+          const p = activeStreams.get(streamId);
+          if (p) p.ytSourceProcess = ytFallback;
+        } else {
+          const currentProc = activeStreams.get(streamId);
+          if (currentProc) currentProc.ytSourceProcess = undefined;
+        }
       });
 
       // Store so cleanupStreamProc can kill it on stop

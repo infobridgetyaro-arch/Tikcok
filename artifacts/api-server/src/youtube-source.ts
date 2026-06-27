@@ -229,14 +229,24 @@ export function getCookiesConfigured(): boolean {
  * streamlink speaks YouTube's native streaming API and does not require a
  * Proof-of-Origin Token (POT) for public live streams, making it far more
  * reliable than yt-dlp's web/tv_embedded/ios clients for server-side use.
+ *
+ * WHY streamlink over yt-dlp for pipe mode:
+ * - yt-dlp resolves HLS segment URLs but then its internal FFmpeg fetches them.
+ *   That internal FFmpeg subprocess doesn't inherit yt-dlp's cookie/session context,
+ *   so YouTube CDN returns 403 Forbidden on rqh=1 (Proof-of-Origin) segments.
+ * - streamlink uses a dedicated YouTube plugin that keeps all segment fetches
+ *   inside its own session — no POT validation issues for public live streams.
  */
 export function getYouTubeStreamlinkPipeArgs(pageUrl: string): string[] {
+  const cookiesPath = path.join(process.cwd(), "cookies.txt");
+  const hasCookies = fs.existsSync(cookiesPath);
   return [
     "--stdout",
     "--loglevel", "warning",
     "--retry-streams", "5",
     "--retry-max", "5",
     "--retry-open", "5",
+    ...(hasCookies ? ["--http-cookie-jar", cookiesPath] : []),
     pageUrl,
     "best/1080p60/1080p/720p60/720p/480p/360p/worst",
   ];
@@ -265,7 +275,8 @@ export function getYouTubeYtdlpPipeArgs(pageUrl: string): string[] {
     "--no-playlist",
     "--no-check-certificate",
     "--socket-timeout", "30",
-    "--extractor-args", "youtube:player_client=tv_embedded,ios,android",
+    // tv_embedded is unsupported in yt-dlp 2026+ — ios and android don't need it.
+    "--extractor-args", "youtube:player_client=ios,android",
     "--add-header", "Accept-Language:en-US,en;q=0.9",
     // Start at the live edge, NOT the beginning of the DVR window.
     // Without this, yt-dlp catches up from the stream start — viewers see
