@@ -3,6 +3,7 @@ import { storage } from "./storage";
 import { logger } from "./lib/logger";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
 import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader } from "./youtube-source";
+import { YTDLP_BIN } from "./lib/ytdlp";
 import type { WebSocket } from "ws";
 import type { StreamConfig } from "./schema";
 import { OverlayRenderer, defaultOverlayState, type OverlayState } from "./overlay-renderer";
@@ -1130,7 +1131,7 @@ async function getXSpaceAudioUrl(spaceUrl: string): Promise<string> {
 
     try {
       const url = await new Promise<string>((resolve, reject) => {
-        const ytdlp = spawn("yt-dlp", [
+        const ytdlp = spawn(YTDLP_BIN, [
           "-g",
           "--no-playlist",
           "-f", "bestaudio",

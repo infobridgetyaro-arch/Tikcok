@@ -17,6 +17,7 @@ import fs from "fs";
 import path from "path";
 import { logger } from "./lib/logger";
 import { getOAuth2AuthArgs } from "./oauth2-manager";
+import { YTDLP_BIN } from "./lib/ytdlp";
 
 // ── In-process cache: YouTube URL → downloaded temp file path ────────────────
 const ytDownloadCache = new Map<string, string>();
@@ -365,7 +366,7 @@ function spawnYtdlp(
   timeoutMs = 30_000,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("yt-dlp", args);
+    const proc = spawn(YTDLP_BIN, args);
     let stdout = "";
     let stderr = "";
     proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
@@ -860,7 +861,7 @@ export async function downloadYouTubeVideoToTemp(
     : "tv_embedded,ios,mweb,android";
 
   return new Promise((resolve, reject) => {
-    const proc = spawn("yt-dlp", [
+    const proc = spawn(YTDLP_BIN, [
       "--no-playlist",
       "-f", "b[height<=720][ext=mp4]/b[height<=480][ext=mp4]/b[height<=720]/b[height<=480]/b",
       "--merge-output-format", "mp4",

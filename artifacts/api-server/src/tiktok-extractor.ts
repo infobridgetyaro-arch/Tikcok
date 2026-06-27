@@ -17,6 +17,8 @@ import { logger } from "./lib/logger";
 import fs from "fs";
 import path from "path";
 
+import { YTDLP_BIN } from "./lib/ytdlp";
+
 // ── Error classification ──────────────────────────────────────────────────────
 
 export type TikTokErrorCode =
@@ -386,7 +388,7 @@ function method1_streamlink(username: string, quality: string): Promise<string> 
 /** Method 2: yt-dlp default username-based lookup */
 function method2_ytdlp_username(username: string, quality: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("yt-dlp", [
+    const proc = spawn(YTDLP_BIN, [
       "--get-url",
       "--no-check-certificates",
       "--no-playlist",
@@ -431,7 +433,7 @@ function method2_ytdlp_username(username: string, quality: string): Promise<stri
 /** Method 3: yt-dlp with alternate TikTok API hostname (bypasses main API rate limits) */
 function method3_ytdlp_alt_api(username: string, quality: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("yt-dlp", [
+    const proc = spawn(YTDLP_BIN, [
       "--get-url",
       "--no-check-certificates",
       "--no-playlist",
@@ -479,7 +481,7 @@ function method3_ytdlp_alt_api(username: string, quality: string): Promise<strin
 /** Method 4: yt-dlp with mobile UA and web extractor client */
 function method4_ytdlp_mobile(username: string, quality: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("yt-dlp", [
+    const proc = spawn(YTDLP_BIN, [
       "--get-url",
       "--no-check-certificates",
       "--no-playlist",

@@ -1,6 +1,7 @@
 import express from "express";
 import type { Express, Request, Response, NextFunction } from "express";
 import { logger } from "./lib/logger";
+import { YTDLP_BIN } from "./lib/ytdlp";
 import type { Server } from "http";
 import { WebSocketServer } from "ws";
 import session from "express-session";
@@ -1085,7 +1086,7 @@ export async function registerBintunetRoutes(
     let stdout = "";
     let stderr = "";
 
-    const proc = spawn("yt-dlp", args);
+    const proc = spawn(YTDLP_BIN, args);
     proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
     proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
 
@@ -1139,7 +1140,7 @@ export async function registerBintunetRoutes(
           entry.originalUrl,
         ];
 
-        const ytdlp = spawn("yt-dlp", args);
+        const ytdlp = spawn(YTDLP_BIN, args);
 
         // Detect format from first chunk to set Content-Type
         let headersSent = false;

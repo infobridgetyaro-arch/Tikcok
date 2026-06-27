@@ -20,6 +20,7 @@ import { spawn, ChildProcess } from "child_process";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { YTDLP_BIN } from "./lib/ytdlp";
 import { logger } from "./lib/logger";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -117,7 +118,7 @@ export function startOAuth2Flow(): Promise<{ deviceUrl: string; userCode: string
       "https://www.youtube.com/watch?v=jNQXAC9IVRw",
     ];
 
-    const p = spawn("yt-dlp", args);
+    const p = spawn(YTDLP_BIN, args);
     activeProc = p;
 
     let allOutput = "";
