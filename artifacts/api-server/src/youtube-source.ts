@@ -263,9 +263,15 @@ export function getYouTubeYtdlpPipeArgs(pageUrl: string): string[] {
     "--socket-timeout", "30",
     "--extractor-args", "youtube:player_client=tv_embedded,ios,android",
     "--add-header", "Accept-Language:en-US,en;q=0.9",
+    // Start at the live edge, NOT the beginning of the DVR window.
+    // Without this, yt-dlp catches up from the stream start — viewers see
+    // old content and experience buffering until yt-dlp reaches real-time.
+    "--no-live-from-start",
     "--downloader", "native",
     "--hls-use-mpegts",
-    "-f", "best[protocol^=m3u8][vcodec!*=none][acodec!*=none]/95/94/93/92/91/best[protocol^=m3u8]/best",
+    // Prefer pre-muxed HLS itags (91-95) — no internal A+V merge needed.
+    // Combined [vcodec+acodec] filter first, then fall back to known live itags.
+    "-f", "93/94/95/92/91/best[protocol^=m3u8][vcodec!*=none][acodec!*=none]/best[protocol^=m3u8]/best",
     "-o", "-",
     ...(hasCookies ? ["--cookies", cookiesPath] : []),
     pageUrl,
