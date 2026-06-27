@@ -564,7 +564,7 @@ export function StreamCard({
                           }}
                           className="shrink-0 text-muted-foreground hover:text-destructive"
                         >
-                          <X className="w-3.5 h-3.5" />
+                          <XIcon className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     ) : (
