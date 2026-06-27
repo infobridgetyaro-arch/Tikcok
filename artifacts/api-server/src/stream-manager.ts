@@ -302,7 +302,64 @@ const restartScheduled = new Set<string>();
 // Consecutive restart failure count per stream → drives exponential backoff
 // so a channel that keeps failing doesn't hammer YouTube and get the server IP blocked.
 const restartBackoff = new Map<string, number>();
-const BACKOFF_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
+// Backoff schedule: 5s → 15s → 30s → 60s → 120s → 300s cap for 6+
+const BACKOFF_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000, 300_000];
+
+// ── Resolver circuit breaker ──────────────────────────────────────────────────
+// After CB_FAILURE_THRESHOLD resolution failures in CB_WINDOW_MS, the circuit
+// opens and blocks further attempts for CB_OPEN_COOLDOWN_MS. After the cooldown
+// one probe is allowed; success closes the circuit, failure extends the cooldown.
+interface CBState {
+  failures: number[];       // unix-ms timestamps of recent failures
+  openedAt: number | null;  // when circuit was opened (null = closed)
+  probeInFlight: boolean;   // one probe allowed after cooldown
+}
+const CB_WINDOW_MS        = 5  * 60_000; // 5-minute failure window
+const CB_FAILURE_THRESHOLD = 5;           // failures before circuit opens
+const CB_OPEN_COOLDOWN_MS = 10 * 60_000; // 10-minute open-circuit cooldown
+const resolverCBs = new Map<string, CBState>();
+
+function getCB(streamId: string): CBState {
+  if (!resolverCBs.has(streamId)) {
+    resolverCBs.set(streamId, { failures: [], openedAt: null, probeInFlight: false });
+  }
+  return resolverCBs.get(streamId)!;
+}
+
+function cbCanAttempt(streamId: string): boolean {
+  const cb = getCB(streamId);
+  if (!cb.openedAt) return true; // circuit closed
+  const now = Date.now();
+  if (now - cb.openedAt >= CB_OPEN_COOLDOWN_MS && !cb.probeInFlight) {
+    cb.probeInFlight = true; // allow one probe
+    return true;
+  }
+  return false; // circuit open and probe not yet due
+}
+
+function cbRecordSuccess(streamId: string): void {
+  const cb = getCB(streamId);
+  cb.failures = [];
+  cb.openedAt = null;
+  cb.probeInFlight = false;
+}
+
+function cbRecordFailure(streamId: string): void {
+  const cb = getCB(streamId);
+  const now = Date.now();
+  cb.probeInFlight = false;
+  cb.failures.push(now);
+  cb.failures = cb.failures.filter((t) => now - t < CB_WINDOW_MS);
+  if (!cb.openedAt && cb.failures.length >= CB_FAILURE_THRESHOLD) {
+    cb.openedAt = now;
+    logger.warn({ streamId, failures: cb.failures.length },
+      "[circuit-breaker] OPEN — suspending URL resolution for 10 min");
+  } else if (cb.openedAt) {
+    // probe failed — reset cooldown clock
+    cb.openedAt = now;
+    logger.warn({ streamId }, "[circuit-breaker] Probe failed — extending cooldown");
+  }
+}
 
 function getBackoffDelay(streamId: string): number {
   const count = restartBackoff.get(streamId) ?? 0;
@@ -881,6 +938,52 @@ function buildFFmpegArgs(
   return args;
 }
 
+// ── Circuit-breaker-guarded URL resolver ──────────────────────────────────────
+// All code paths that need a live URL call this wrapper instead of
+// resolveInputUrl directly.  The wrapper enforces the circuit-breaker policy
+// so that a storm of resolution failures (e.g. rate-limit cascade) cannot
+// spawn unbounded yt-dlp / streamlink processes.
+async function resolveInputUrlSafe(
+  stream: StreamConfig,
+  forceRefresh: boolean,
+): Promise<{ url: string; sourceType: "tiktok" | "youtube" | "camera" | "upload" }> {
+  const { id: streamId, sourceType } = stream;
+
+  // Camera and upload sources are resolved locally — no external resolver needed
+  if (sourceType === "camera" || sourceType === "upload") {
+    return resolveInputUrl(stream, forceRefresh);
+  }
+
+  if (!cbCanAttempt(streamId)) {
+    const cb = getCB(streamId);
+    const remainMs = Math.max(0, CB_OPEN_COOLDOWN_MS - (Date.now() - (cb.openedAt ?? 0)));
+    const remainMin = Math.ceil(remainMs / 60_000);
+    throw new Error(
+      `[circuit-breaker] URL resolution suspended — too many failures. Resuming in ~${remainMin} min.`,
+    );
+  }
+
+  try {
+    const result = await resolveInputUrl(stream, forceRefresh);
+    cbRecordSuccess(streamId);
+    return result;
+  } catch (e: any) {
+    // Definitive errors (NOT_LIVE, LIVE_ENDED, etc.) are not resolver failures —
+    // they indicate the source is genuinely unavailable, not a transient problem.
+    // Don't charge them against the circuit breaker.
+    const code: string | undefined = e.code;
+    const definitiveErrors = new Set([
+      "NOT_LIVE", "LIVE_ENDED", "PRIVATE_ACCOUNT", "PRIVATE_VIDEO",
+      "REGION_RESTRICTED", "GEO_RESTRICTED", "AGE_RESTRICTED",
+      "MEMBERS_ONLY", "SCHEDULED", "UNAVAILABLE",
+    ]);
+    if (!code || !definitiveErrors.has(code)) {
+      cbRecordFailure(streamId);
+    }
+    throw e;
+  }
+}
+
 async function resolveInputUrl(
   stream: StreamConfig,
   forceRefresh = false,
@@ -1166,8 +1269,10 @@ function startProcStatsPolling(streamId: string, pid: number): NodeJS.Timeout {
   return setInterval(() => {
     exec(`ps -p ${pid} -o %cpu=,rss=`, (err, stdout) => {
       if (err) {
-        // Process gone — FFmpeg is no longer alive
-        scorerSetFFmpegAlive(streamId, false);
+        // Process gone — but only update scorer if the stream is still registered
+        // in activeStreams. If handleProcessExit already cleaned up, scorerSetFFmpegAlive
+        // would trigger a spurious recompute with no matching proc and no guards set.
+        if (activeStreams.has(streamId)) scorerSetFFmpegAlive(streamId, false);
         return; // interval cleared in cleanupStreamProc
       }
       const parts = stdout.trim().split(/\s+/);
@@ -1277,7 +1382,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       sendLog(streamId, `Using camera device: ${stream.cameraDevice}`);
     }
 
-    const { url: inputUrl, sourceType: resolvedType } = await resolveInputUrl(stream, !reuseUrl);
+    const { url: inputUrl, sourceType: resolvedType } = await resolveInputUrlSafe(stream, !reuseUrl);
 
     // Guard: user may have clicked Stop while we were waiting for URL resolution
     // (TikTok/YouTube extraction can take 20–35 s). If the stream was deleted from
@@ -1478,7 +1583,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                   try {
                     // Force a fresh resolution — bypasses any stale cache entry
                     urlCache.delete(streamId);
-                    const resolved = await resolveInputUrl(stream, false);
+                    const resolved = await resolveInputUrlSafe(stream, false);
                     urlCache.set(streamId, {
                       url: resolved.url,
                       sourceType: resolved.sourceType as "tiktok" | "youtube" | "camera",
@@ -1716,7 +1821,46 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
 
     logger.info({ streamId }, `Stream started`);
   } catch (err: any) {
-    sendLog(streamId, `Failed: ${err.message}`);
+    const code: string | undefined = err.code;
+    const msg: string = err.message || "Unknown error";
+
+    // ── Failure classification ─────────────────────────────────────────────
+    // Definitive failures: source is genuinely offline or inaccessible.
+    // Do NOT auto-restart — retrying immediately is pointless and burns rate-limit quota.
+    const isDefinitive = code && new Set([
+      "NOT_LIVE", "LIVE_ENDED", "PRIVATE_ACCOUNT", "PRIVATE_VIDEO",
+      "REGION_RESTRICTED", "GEO_RESTRICTED", "AGE_RESTRICTED",
+      "MEMBERS_ONLY", "SCHEDULED", "UNAVAILABLE",
+    ]).has(code);
+
+    if (isDefinitive) {
+      sendLog(streamId, `[resolve] ${msg}`);
+      sendLog(streamId, `[resolve] Stopping auto-restart — source is definitively unavailable (${code})`);
+      manuallyStopped.add(streamId); // block all further auto-restart paths
+      sendStatus(streamId, "error");
+      return;
+    }
+
+    // Rate-limited: apply an extra backoff bump so we back off aggressively
+    // before the retry timer fires.  The backoff already in restartBackoff applies
+    // but we add an extra bump here so RATE_LIMITED → longer pause than a plain crash.
+    if (code === "RATE_LIMITED") {
+      sendLog(streamId, `[resolve] ${msg}`);
+      sendLog(streamId, `[resolve] Rate-limited — applying extended backoff before retry`);
+      bumpBackoff(streamId); // extra bump on top of the one in handleProcessExit
+      sendStatus(streamId, "error");
+      return;
+    }
+
+    // Circuit breaker open: don't log the full error, just report the suspension
+    if (msg.includes("[circuit-breaker]")) {
+      sendLog(streamId, msg);
+      sendStatus(streamId, "error");
+      return;
+    }
+
+    // Generic transient failure
+    sendLog(streamId, `Failed: ${msg}`);
     sendStatus(streamId, "error");
   }
 }
@@ -1731,24 +1875,40 @@ function hardKillAndRestart(streamId: string, _delayMs: number, forceNewUrl = fa
   const proc = activeStreams.get(streamId);
   if (!proc) return;
   // ── Guard: only one restart timer per stream at a time ───────────────────
+  // This must be the FIRST guard check.  Everything after this point runs
+  // at most once per stream — no concurrent entry from health-recovery.
   if (restartScheduled.has(streamId)) return;
 
-  // Track reconnect BEFORE cleanup so the counter persists into the next proc
+  // Track reconnect counter on the proc so it persists into the new proc
   proc.reconnectCount = (proc.reconnectCount ?? 0) + 1;
-  scorerRecordReconnect(streamId);
-  markSourceFailed(streamId);
 
+  // ── CRITICAL ORDER ────────────────────────────────────────────────────────
+  // 1. Disable auto-restart flag on the proc to prevent re-entry via health-recovery
+  // 2. Delete from activeStreams so health-recovery bails at its own guard
+  // 3. Set restartScheduled so any late-firing timers bail
+  // 4. THEN call scorerRecordReconnect — it triggers recompute() synchronously
+  //    which calls the health-recovery callback; both activeStreams and
+  //    restartScheduled guards will be in place by that point.
+  // This ordering was the root cause of the duplicate-restart death spiral:
+  // the old code called scorerRecordReconnect BEFORE activeStreams.delete and
+  // restartScheduled.add, allowing health-recovery to re-enter here and
+  // schedule a second restart timer concurrently.
   proc.autoRestart = false;
-  activeStreams.delete(streamId);   // delete FIRST so health-recovery re-entry bails early
-  cleanupStreamProc(streamId, proc);
-
-  try { proc.ffmpegProcess?.kill("SIGKILL"); } catch {}
-  if (!keepStatus) sendStatus(streamId, "reconnecting");
+  activeStreams.delete(streamId);    // guard #1: health-recovery bails on !has
+  markSourceFailed(streamId);
 
   // Exponential backoff — grows with each consecutive failure, resets on first frame
   const delay = getBackoffDelay(streamId);
   bumpBackoff(streamId);
-  restartScheduled.add(streamId);
+  restartScheduled.add(streamId);    // guard #2: any concurrent path bails on has
+
+  // NOW safe to call — recompute() fires here but both guards are already set
+  scorerRecordReconnect(streamId);
+
+  cleanupStreamProc(streamId, proc);
+  try { proc.ffmpegProcess?.kill("SIGKILL"); } catch {}
+  if (!keepStatus) sendStatus(streamId, "reconnecting");
+
   if (delay > 5_000) sendLog(streamId, `Backing off — retrying in ${delay / 1000}s...`);
 
   setTimeout(() => {
@@ -1834,6 +1994,10 @@ export function stopStream(streamId: string) {
   // Remove from activeStreams NOW so handleProcessExit doesn't fire when FFmpeg
   // finally exits — we don't want it to re-broadcast "deleted" or try to auto-restart.
   activeStreams.delete(streamId);
+  // Clean up all per-stream restart/circuit-breaker state so a re-added stream starts fresh
+  resolverCBs.delete(streamId);
+  restartScheduled.delete(streamId);
+  restartBackoff.delete(streamId);
 
   // SIGKILL immediately — no graceful drain.
   // SIGTERM causes FFmpeg to flush its encoder buffer and send RTMP finalization

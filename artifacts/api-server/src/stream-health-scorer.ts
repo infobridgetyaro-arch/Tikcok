@@ -63,6 +63,7 @@ interface StreamState {
   recoveryTriggeredAt: number | null;
   warningEmittedAt: number | null;
   registeredAt: number;   // when the stream was (re-)registered; gates startup grace
+  lastRecomputeAt: number; // throttle metric-driven recomputes to RECOMPUTE_THROTTLE_MS
 }
 
 // ── Scoring constants ─────────────────────────────────────────────────────────
@@ -79,6 +80,11 @@ const RTMP_ERROR_WINDOW_MS = 30_000;     // RTMP error cooldown
 const BITRATE_DEVIATION_MAX = 0.30;      // > 30% deviation → 0 pts
 const FPS_MIN_RATIO = 0.70;              // < 70% of target fps → 0 pts
 const RECONNECT_MAX_IN_WINDOW = 5;       // >= 5 reconnects → 0 pts
+
+// Throttle recompute() on high-frequency metric events (bitrate/fps arrive
+// at 1–30 Hz from FFmpeg -stats output).  Priority events (ffmpegAlive,
+// reconnect, rtmpError) always trigger an immediate recompute regardless.
+const RECOMPUTE_THROTTLE_MS = 5_000; // at most one metric-driven recompute per 5s
 
 // Component max scores
 const PTS_FFMPEG    = 30;
@@ -125,6 +131,7 @@ export function scorerRegisterStream(streamId: string, targetBitrateKbps: number
     recoveryTriggeredAt: null,
     warningEmittedAt: null,
     registeredAt: Date.now(),
+    lastRecomputeAt: 0,
   });
   logger.debug({ streamId, targetBitrateKbps }, "[health] Stream registered");
 }
@@ -150,7 +157,9 @@ export function scorerRecordBitrate(streamId: string, bitrateKbps: number): void
   // Keep only last BITRATE_WINDOW_MS worth of samples
   const cutoff = now - BITRATE_WINDOW_MS;
   s.bitrateHistory = s.bitrateHistory.filter((e) => e.at >= cutoff);
-  recompute(streamId);
+  // Throttled: bitrate arrives at ~1 Hz from FFmpeg -stats; only recompute every 5s
+  // to prevent hundreds of synchronous recovery-callback invocations per minute.
+  recomputeThrottled(streamId, now);
 }
 
 export function scorerRecordFps(streamId: string, fps: number): void {
@@ -160,7 +169,8 @@ export function scorerRecordFps(streamId: string, fps: number): void {
   s.fpsHistory.push({ value: fps, at: now });
   const cutoff = now - FPS_WINDOW_MS;
   s.fpsHistory = s.fpsHistory.filter((e) => e.at >= cutoff);
-  recompute(streamId);
+  // Throttled: same reasoning as scorerRecordBitrate above
+  recomputeThrottled(streamId, now);
 }
 
 export function scorerRecordReconnect(streamId: string): void {
@@ -170,6 +180,7 @@ export function scorerRecordReconnect(streamId: string): void {
   s.reconnects.push(now);
   const cutoff = now - RECONNECT_WINDOW_MS;
   s.reconnects = s.reconnects.filter((t) => t >= cutoff);
+  // Priority: reconnect events are infrequent and critical — always immediate
   recompute(streamId);
 }
 
@@ -177,10 +188,20 @@ export function scorerRecordRtmpError(streamId: string): void {
   const s = states.get(streamId);
   if (!s) return;
   s.lastRtmpErrorAt = Date.now();
+  // Priority: RTMP errors are critical — always immediate
   recompute(streamId);
 }
 
 // ── Scoring engine ────────────────────────────────────────────────────────────
+
+// recomputeThrottled skips the full recompute if one ran recently (for metric
+// events that arrive at high frequency from FFmpeg -stats lines).
+function recomputeThrottled(streamId: string, now: number): void {
+  const s = states.get(streamId);
+  if (!s) return;
+  if (now - s.lastRecomputeAt < RECOMPUTE_THROTTLE_MS) return;
+  recompute(streamId);
+}
 
 function computeScore(s: StreamState): { score: number; components: StreamHealthSnapshot["components"] } {
   const now = Date.now();
@@ -262,6 +283,7 @@ function recompute(streamId: string): void {
   if (!s) return;
 
   const now = Date.now();
+  s.lastRecomputeAt = now; // stamp so throttled callers can skip
 
   // During the startup grace window, scoring is suppressed entirely.
   // FFmpeg needs time to negotiate the HLS playlist and produce output — a
