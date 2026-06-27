@@ -1428,11 +1428,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
     if (sourceType === "tiktok") {
       sendLog(streamId, `Fetching TikTok live stream for @${stream.tiktokUsername}...`);
     } else if (sourceType === "youtube") {
-      if (getCookiesConfigured()) {
-        sendLog(streamId, `YouTube source: using yt-dlp pipe mode (cookies configured — CDN auth handled internally)...`);
-      } else {
-        sendLog(streamId, `Resolving YouTube live URL: ${stream.youtubeSourceUrl}...`);
-      }
+      sendLog(streamId, `YouTube source: yt-dlp pipe mode (tv_embedded/ios/android — no PO Token needed)...`);
     } else if (sourceType === "xspace") {
       sendLog(streamId, `Extracting X Space audio: ${stream.xspaceUrl}...`);
     } else if (sourceType === "upload") {
@@ -1444,10 +1440,11 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       sendLog(streamId, `Using camera device: ${stream.cameraDevice}`);
     }
 
-    // YouTube + cookies: use yt-dlp pipe mode — skip URL resolution entirely.
-    // yt-dlp will be spawned after FFmpeg and will pipe the MPEG-TS stream directly to
-    // FFmpeg stdin, keeping all CDN auth (POT, session tokens) inside yt-dlp.
-    const useYtPipe = sourceType === "youtube" && getCookiesConfigured();
+    // YouTube: always use yt-dlp pipe mode — skip direct URL resolution entirely.
+    // yt-dlp pipes MPEG-TS directly to FFmpeg stdin using tv_embedded/ios/android
+    // clients that don't require a Proof-of-Origin Token (POT). This keeps all CDN
+    // auth inside yt-dlp so FFmpeg never touches googlevideo.com directly.
+    const useYtPipe = sourceType === "youtube";
 
     let inputUrl: string;
     let resolvedType: "tiktok" | "youtube" | "camera" | "upload";

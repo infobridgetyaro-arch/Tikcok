@@ -611,7 +611,14 @@ export async function registerBintunetRoutes(
             res.status(400).json({ message: "No YouTube URL set", isLive: false }); return;
           }
           try {
-            const url = await getYouTubeStreamUrl(stream.youtubeSourceUrl);
+            // Race against a 6-second timeout so the frontend can fall back to
+            // YouTube's built-in embed quickly instead of waiting for all yt-dlp tiers.
+            const url = await Promise.race<string>([
+              getYouTubeStreamUrl(stream.youtubeSourceUrl),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("Preview timeout — using YouTube embed player")), 6000)
+              ),
+            ]);
             const isHls = url.includes(".m3u8");
             res.json({ isLive: true, hlsUrl: isHls ? url : null, flvUrl: isHls ? null : url, sourceType: "youtube" });
           } catch (e: any) {

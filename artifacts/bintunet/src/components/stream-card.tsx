@@ -746,14 +746,11 @@ export function StreamCard({
               {logsOpen && (
                 <ScrollArea className="h-40 border-t border-border/40">
                   <div className="p-3 space-y-0.5">
-                    {logs.filter((line) => {
+                    {logs.map((line, i) => {
                       const isErr = /error|fail|fatal/i.test(line);
-                      const isFrame = /frame=/i.test(line) || /Progress:/i.test(line);
-                      return isErr || isFrame;
-                    }).map((line, i) => {
-                      const isErr = /error|fail|fatal/i.test(line);
+                      const isWarn = /warn/i.test(line);
                       return (
-                        <p key={i} className={`text-[10px] font-mono leading-relaxed ${isErr ? "text-red-400" : "text-muted-foreground"}`}>{line}</p>
+                        <p key={i} className={`text-[10px] font-mono leading-relaxed ${isErr ? "text-red-400" : isWarn ? "text-amber-400" : "text-muted-foreground"}`}>{line}</p>
                       );
                     })}
                     <div ref={logEndRef} />
