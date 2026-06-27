@@ -176,7 +176,7 @@ export default function CameraPage() {
         if (msg.type === "cam_auth_fail") setAuthError(msg.message || "Invalid or expired camera link.");
         if (msg.type === "cam_error") { setStreamStatus("error"); setStatusMessage(`Error: ${msg.message}`); }
         if (msg.type === "cam_stopped") { setStreamStatus("idle"); isStreamingRef.current = false; setStatusMessage("Stream stopped by host."); }
-        if (msg.type === "cam_pending") { setPhase("waiting"); }
+        if (msg.type === "cam_pending") { setPhase("studio"); }
         if (msg.type === "cam_approved") { setPhase("studio"); }
         if (msg.type === "cam_rejected") {
           setPhase("lobby");
@@ -212,8 +212,8 @@ export default function CameraPage() {
 
   const joinRoom = useCallback(async () => {
     if (!mediaStreamRef.current) await startCamera();
-    // Transition to waiting — host must approve before studio opens
-    setPhase("waiting");
+    // Go straight to studio — server auto-approves, no host approval step
+    setPhase("studio");
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "cam_join", guestName: guestName.trim() || "Guest" }));

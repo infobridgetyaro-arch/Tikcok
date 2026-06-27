@@ -86,23 +86,17 @@ function canStart(stream: StreamConfig): boolean {
 function CameraLinkButton({ streamId }: { streamId: string }) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
-  const [cameraUrl, setCameraUrl] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
 
-  const generate = async () => {
+  const openCamera = async () => {
     setLoading(true);
     try {
       const token = getAuthToken();
       const headers: Record<string, string> = {};
       if (token) headers["Authorization"] = `Bearer ${token}`;
       const res = await fetch(`/api/streams/${streamId}/camera-token`, { credentials: "include", headers });
-      if (!res.ok) throw new Error("Failed to generate link");
+      if (!res.ok) throw new Error("Failed to generate camera link");
       const data = await res.json();
-      setCameraUrl(data.url);
-      await navigator.clipboard.writeText(data.url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 3000);
-      toast({ title: "Camera link ready!", description: "Copied to clipboard." });
+      window.open(data.url, "_blank", "noopener,noreferrer");
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     }
@@ -110,21 +104,14 @@ function CameraLinkButton({ streamId }: { streamId: string }) {
   };
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">Share link with your guest — opens in any browser.</p>
-        <Button variant="outline" size="sm" onClick={generate} disabled={loading} className="gap-1.5 text-xs h-7 shrink-0">
-          {loading ? <><Link2 className="w-3 h-3 animate-pulse" />Generating…</> : <><Link2 className="w-3 h-3" />Get Link</>}
-        </Button>
-      </div>
-      {cameraUrl && (
-        <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-2.5 py-2">
-          <span className="flex-1 text-xs font-mono text-muted-foreground truncate">{cameraUrl}</span>
-          <button onClick={() => { navigator.clipboard.writeText(cameraUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="shrink-0">
-            {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground" />}
-          </button>
-        </div>
-      )}
+    <div>
+      <Button
+        onClick={openCamera}
+        disabled={loading}
+        className="w-full gap-2 font-bold tracking-wide uppercase text-xs h-9 bg-red-600 hover:bg-red-700 text-white border-0"
+      >
+        {loading ? <><Link2 className="w-3.5 h-3.5 animate-pulse" />Opening…</> : <><Radio className="w-3.5 h-3.5" />Open the Camera to Start Live Stream</>}
+      </Button>
     </div>
   );
 }

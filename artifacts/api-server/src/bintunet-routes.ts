@@ -1504,14 +1504,14 @@ export async function registerBintunetRoutes(
 
         if (!authenticated || !camStreamId) return;
 
-        // Guest announces they're joining — goes into pending waiting room
+        // Guest announces they're joining — auto-approved immediately, no host approval needed
         if (msg.type === "cam_join") {
           const guestId = crypto.randomUUID();
           currentGuestId = guestId;
           const guestName = String(msg.guestName || "Guest").slice(0, 50);
-          pendingCamGuests.set(guestId, { ws, streamId: camStreamId, guestName });
-          broadcastToAdmins({ type: "cam_guest_pending", guestId, streamId: camStreamId, guestName });
-          ws.send(JSON.stringify({ type: "cam_pending", guestId }));
+          connectedCamGuests.set(guestId, { ws, streamId: camStreamId, guestName });
+          broadcastToAdmins({ type: "cam_guest_joined", guestId, streamId: camStreamId, guestName });
+          ws.send(JSON.stringify({ type: "cam_approved", guestId }));
           return;
         }
 
