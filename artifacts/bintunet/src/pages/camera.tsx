@@ -211,7 +211,7 @@ export default function CameraPage() {
   }, []);
 
   const joinRoom = useCallback(async () => {
-    await startCamera();
+    if (!mediaStreamRef.current) await startCamera();
     // Transition to waiting — host must approve before studio opens
     setPhase("waiting");
     const ws = wsRef.current;
@@ -232,13 +232,13 @@ export default function CameraPage() {
       : MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
         ? "video/webm;codecs=vp9,opus" : "video/webm";
     try {
-      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 1_500_000, audioBitsPerSecond: 96_000 });
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2_000_000, audioBitsPerSecond: 128_000 });
       mediaRecorderRef.current = recorder;
       recorder.ondataavailable = (e) => { if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data); };
       recorder.onstart = () => { ws.send(JSON.stringify({ type: "cam_start" })); setStreamStatus("streaming"); isStreamingRef.current = true; setStatusMessage(""); };
       recorder.onerror = (e: any) => { setStreamStatus("error"); setStatusMessage(`Recorder error: ${e.error?.message || "Unknown"}`); };
       recorder.onstop = () => { if (isStreamingRef.current) { isStreamingRef.current = false; setStreamStatus("idle"); } };
-      recorder.start(500);
+      recorder.start(100);
     } catch (e: any) { setStreamStatus("error"); setStatusMessage(`Failed: ${e.message}`); }
   }, [connectWs]);
 
@@ -310,6 +310,8 @@ export default function CameraPage() {
 
   useEffect(() => {
     if (!authDone) return;
+    // Start camera preview immediately so the user can see themselves before joining
+    startCamera().catch(() => {});
     fetchChat();
     fetchStats();
     pollRef.current = setInterval(fetchChat, 5000);
@@ -318,7 +320,7 @@ export default function CameraPage() {
       if (pollRef.current) clearInterval(pollRef.current);
       if (statsPollRef.current) clearInterval(statsPollRef.current);
     };
-  }, [authDone, fetchChat, fetchStats]);
+  }, [authDone, fetchChat, fetchStats, startCamera]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -350,6 +352,35 @@ export default function CameraPage() {
           <h1 style={{ fontSize: 24, fontWeight: 900, color: "#fff", margin: "0 0 6px", letterSpacing: "-0.5px" }}>BintuNet Live Studio</h1>
           <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", margin: 0, letterSpacing: "0.02em" }}>Guest camera input</p>
         </div>
+
+        {/* Live camera preview */}
+        {authDone && (
+          <div style={{
+            width: "100%", maxWidth: 420, marginBottom: 20,
+            borderRadius: 20, overflow: "hidden",
+            background: "rgba(0,0,0,0.5)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            aspectRatio: "16/9",
+            position: "relative",
+          }}>
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)", display: "block" }}
+            />
+            <div style={{
+              position: "absolute", top: 10, left: 10,
+              padding: "3px 10px", borderRadius: 999,
+              background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)",
+              fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.6)",
+              letterSpacing: "0.08em", textTransform: "uppercase",
+            }}>
+              Preview
+            </div>
+          </div>
+        )}
 
         {/* Card */}
         <div style={{
@@ -417,13 +448,13 @@ export default function CameraPage() {
               transition: "all 0.2s ease", letterSpacing: "0.01em",
             }}
           >
-            {wsConnected && authDone ? "Enable Camera & Join" : "Connecting…"}
+            {wsConnected && authDone ? "Join Room" : "Connecting…"}
           </button>
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 18 }}>
             <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.06)" }} />
             <p style={{ fontSize: 11, color: "rgba(255,255,255,0.22)", margin: 0 }}>
-              Browser will ask for camera + mic permission
+              Camera preview shows above — tap Join to go live
             </p>
             <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.06)" }} />
           </div>

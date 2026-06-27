@@ -8,10 +8,9 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthToken } from "@/lib/queryClient";
 import { StreamCard } from "@/components/stream-card";
 import { ControlRoom } from "@/components/control-room/control-room";
-import { Plus, Radio, LogOut, Wifi, WifiOff, Link, Copy, RefreshCw, X, Settings, RotateCcw, Save } from "lucide-react";
+import { Plus, Radio, LogOut, Wifi, WifiOff, Link, Copy, RefreshCw, X, RotateCcw, Save } from "lucide-react";
 import type { StreamConfig } from "@/types/schema";
 import { YoutubePanel } from "@/components/youtube-panel";
-import { SettingsModal } from "@/components/settings-modal";
 import { useStreamDrafts } from "@/hooks/use-stream-drafts";
 
 interface ChatMessage {
@@ -147,7 +146,6 @@ export default function Dashboard() {
   const [streamChat, setStreamChat] = useState<Record<string, ChatMessage[]>>({});
   const [streamProcStats, setStreamProcStats] = useState<Record<string, { cpu: number; mem: number; frames?: number; uptime?: number }>>({});
   const [showInvite, setShowInvite] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [startingStreams, setStartingStreams] = useState<Set<string>>(new Set());
   const [ytMonitor, setYtMonitor] = useState<{ url: string; label: string; streamId: string } | null>(null);
   const [featuredMsgId, setFeaturedMsgId] = useState<string | null>(null);
@@ -412,7 +410,6 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-background">
       {showInvite && <InviteModal onClose={() => setShowInvite(false)} />}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {ytMonitor && (
         <YoutubePanel
           url={ytMonitor.url}
@@ -527,16 +524,6 @@ export default function Dashboard() {
               data-testid="button-invite-mobile"
             >
               <Link className="w-3.5 h-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowSettings(true)}
-              className="w-7 h-7"
-              title="Settings"
-              data-testid="button-settings"
-            >
-              <Settings className="w-3.5 h-3.5" />
             </Button>
             <Button
               variant="ghost"

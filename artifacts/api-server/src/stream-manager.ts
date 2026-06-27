@@ -792,6 +792,19 @@ function buildFFmpegArgs(
     "-i", "pipe:6",
   );
 
+  // ── Input 7: X Space background image (optional) ─────────────────────────
+  // Only added when sourceType === "xspace" and xspaceImageUrl is provided.
+  // -loop 1: keep reading the still image indefinitely so FFmpeg never runs out
+  // of frames for the video stream.
+  const xspaceImageUrl = sourceType === "xspace" ? (stream.xspaceImageUrl ?? "").trim() : "";
+  if (xspaceImageUrl) {
+    args.push(
+      "-loop", "1",
+      "-thread_queue_size", "8",
+      "-i", xspaceImageUrl,
+    );
+  }
+
   // threads=0: auto-detect (all available cores).
   // The filter graph has 7 inputs, 4 overlay operations, scale/pad/crop chains,
   // and an x264 encode — all running in real-time.  Capping at 2 threads on a
@@ -869,13 +882,27 @@ function buildFFmpegArgs(
 
   if (isXSpace) {
     // X Space is audio-only — no [0:v] exists. Build video from gradient/black only.
-    filterGraph = [
-      `[3:v]format=rgba,scale=${scaleW}:${scaleH}[_bg]`,
-      `[1:v][_bg]overlay=0:0:format=auto[_base]`,
-      `[4:v]scale=${scaleW}:${scaleH}[_ui]`,
-      `[_base][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[_final]`,
-      audioFilter,
-    ].join(";");
+    if (xspaceImageUrl) {
+      // With a background image (input 7): scale & pad it to fill frame, overlay
+      // above the gradient but below the UI overlay so the image is visible behind chat.
+      filterGraph = [
+        `[3:v]format=rgba,scale=${scaleW}:${scaleH}[_bg]`,
+        `[1:v][_bg]overlay=0:0:format=auto[_base]`,
+        `[7:v]scale=${scaleW}:${scaleH}:force_original_aspect_ratio=decrease,pad=${scaleW}:${scaleH}:(ow-iw)/2:(oh-ih)/2,format=rgba[_img]`,
+        `[_base][_img]overlay=0:0:format=auto[_baseImg]`,
+        `[4:v]scale=${scaleW}:${scaleH}[_ui]`,
+        `[_baseImg][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[_final]`,
+        audioFilter,
+      ].join(";");
+    } else {
+      filterGraph = [
+        `[3:v]format=rgba,scale=${scaleW}:${scaleH}[_bg]`,
+        `[1:v][_bg]overlay=0:0:format=auto[_base]`,
+        `[4:v]scale=${scaleW}:${scaleH}[_ui]`,
+        `[_base][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[_final]`,
+        audioFilter,
+      ].join(";");
+    }
   } else {
     // Scale video to fill the OUTPUT WIDTH exactly, then:
     //   • pad top/bottom with transparent pixels when the scaled height < frame height
@@ -1771,7 +1798,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
             if (proc && !proc.urlExpired) {
               proc.urlExpired = true;
               sendLog(streamId, `[youtube] Rate-limited (429) — backing off 15s then reconnecting with fresh URL...`);
-              sendLog(streamId, `[tip] Upload cookies.txt in Settings → YouTube Cookies to prevent 429s.`);
+              sendLog(streamId, `[tip] Try switching to a different YouTube source (channel page vs watch URL) to reduce rate-limiting.`);
               if (proc.ffmpegProcess === ffmpegProc) hardKillAndRestart(streamId, 15_000, true);
             }
           }

@@ -11,7 +11,7 @@ import {
   Volume2, VolumeX, Monitor, Smartphone, Settings2, Terminal,
   Camera, Youtube, Link2, Copy, Check, BarChart2, Loader2,
   Lock, Unlock, ShieldAlert, Wifi, Usb, Radio, Upload, Film,
-  RefreshCw, X as XIcon, RepeatIcon, ChevronDown, ChevronUp, Info,
+  RefreshCw, X as XIcon, RepeatIcon, ChevronDown, ChevronUp, Info, Image,
 } from "lucide-react";
 import { SiTiktok, SiX } from "react-icons/si";
 import type { StreamConfig } from "@/types/schema";
@@ -495,7 +495,7 @@ export function StreamCard({
                           "Username without @ — account must be live right now",
                           "Uses streamlink + yt-dlp with automatic failover",
                           "Enable 24/7 (Auto-Restart) for reconnect on drops",
-                          "If blocked by region: upload tiktok-cookies.txt via Settings",
+                          "Ensure streamlink is installed on the server for best reliability",
                         ].map((tip, i) => (
                           <li key={i} className="text-[11px] text-muted-foreground flex gap-1.5">
                             <span className="shrink-0 text-pink-400 font-bold">{i + 1}.</span>
@@ -527,9 +527,9 @@ export function StreamCard({
                       <ul className="space-y-1.5">
                         {[
                           "Channel must be live — uses 4-tier yt-dlp fallback chain",
-                          "tv_embedded client avoids bot detection & Proof-of-Origin token issues",
-                          "Enable 24/7 for auto-reconnect when source drops",
-                          "Members-only streams need cookies.txt uploaded via Settings",
+                          "tv_embedded client avoids bot detection & Proof-of-Origin issues",
+                          "No cookies required — works with public live streams",
+                          "Enable 24/7 (Auto-Restart) for auto-reconnect when source drops",
                         ].map((tip, i) => (
                           <li key={i} className="text-[11px] text-muted-foreground flex gap-1.5">
                             <span className="shrink-0 text-red-400 font-bold">{i + 1}.</span>
@@ -556,7 +556,18 @@ export function StreamCard({
                       className="h-8 text-sm"
                       data-testid={`input-xspace-${stream.id}`}
                     />
-                    <p className="text-[11px] text-muted-foreground">Audio-only restream — video output uses a gradient background. Space must be live.</p>
+                    <Label htmlFor={`xspace-img-${stream.id}`} className="text-xs flex items-center gap-1.5 pt-1">
+                      <Image className="w-3 h-3 text-zinc-400" /> Background Image URL <span className="text-muted-foreground font-normal">(optional — shown behind audio)</span>
+                    </Label>
+                    <Input
+                      id={`xspace-img-${stream.id}`}
+                      placeholder="https://… or /api/uploads/filename.jpg"
+                      value={stream.xspaceImageUrl ?? ""}
+                      onChange={(e) => onUpdate(stream.id, { xspaceImageUrl: e.target.value })}
+                      disabled={isActive}
+                      className="h-8 text-sm"
+                    />
+                    <p className="text-[11px] text-muted-foreground">Audio-only restream. Add an image URL (X logo, profile photo, etc.) to show on the video background instead of the gradient. Space must be live.</p>
                   </div>
                 )}
 
@@ -735,11 +746,14 @@ export function StreamCard({
               {logsOpen && (
                 <ScrollArea className="h-40 border-t border-border/40">
                   <div className="p-3 space-y-0.5">
-                    {logs.map((line, i) => {
+                    {logs.filter((line) => {
                       const isErr = /error|fail|fatal/i.test(line);
-                      const isWarn = /warn/i.test(line);
+                      const isFrame = /frame=/i.test(line) || /Progress:/i.test(line);
+                      return isErr || isFrame;
+                    }).map((line, i) => {
+                      const isErr = /error|fail|fatal/i.test(line);
                       return (
-                        <p key={i} className={`text-[10px] font-mono leading-relaxed ${isErr ? "text-red-400" : isWarn ? "text-amber-400" : "text-muted-foreground"}`}>{line}</p>
+                        <p key={i} className={`text-[10px] font-mono leading-relaxed ${isErr ? "text-red-400" : "text-muted-foreground"}`}>{line}</p>
                       );
                     })}
                     <div ref={logEndRef} />
