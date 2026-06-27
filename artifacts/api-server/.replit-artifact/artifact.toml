@@ -14,7 +14,7 @@ PORT = "8080"
 NODE_ENV = "development"
 
 [services.development]
-run = "fuser -k 8080/tcp 2>/dev/null || true; pnpm --filter @workspace/api-server run dev"
+run = "pnpm --filter @workspace/api-server run dev"
 
 [services.production]
 
