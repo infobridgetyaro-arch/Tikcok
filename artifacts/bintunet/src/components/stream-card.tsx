@@ -773,6 +773,19 @@ export function StreamCard({
                         <SelectItem value="24">24</SelectItem>
                         <SelectItem value="25">25</SelectItem>
                         <SelectItem value="30">30</SelectItem>
+                        <SelectItem value="60">60</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Encoder Speed</Label>
+                    <Select value={(stream as any).encoderPreset ?? "veryfast"} onValueChange={(v) => onUpdate(stream.id, { encoderPreset: v } as any)} disabled={isActive}>
+                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ultrafast">ultrafast (lowest CPU)</SelectItem>
+                        <SelectItem value="veryfast">veryfast (recommended)</SelectItem>
+                        <SelectItem value="faster">faster (better quality)</SelectItem>
+                        <SelectItem value="fast">fast (best quality)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

@@ -25,6 +25,12 @@ import { logger } from "./lib/logger";
 
 export type HealthStatus = "excellent" | "good" | "warning" | "unstable" | "failed";
 
+// Exported for stream-manager to include dropped frames in health broadcast
+export interface DroppedFrameInfo {
+  totalDropped: number;
+  dropRate: number;   // drops per second averaged over FPS_WINDOW_MS
+}
+
 export interface StreamHealthSnapshot {
   streamId: string;
   score: number;
@@ -35,6 +41,7 @@ export interface StreamHealthSnapshot {
     fpsStable: number;
     reconnectRate: number;
     rtmpErrors: number;
+    droppedFrames: number;
   };
   metrics: {
     currentBitrateKbps: number;
@@ -56,6 +63,7 @@ interface StreamState {
   streamId: string;
   ffmpegAlive: boolean;
   targetBitrateKbps: number;
+  targetFps: number;                                 // set via scorerSetTargetFps
   bitrateHistory: { value: number; at: number }[];   // last 60s of samples
   fpsHistory: { value: number; at: number }[];
   reconnects: number[];                               // timestamps of each reconnect
@@ -64,6 +72,9 @@ interface StreamState {
   warningEmittedAt: number | null;
   registeredAt: number;   // when the stream was (re-)registered; gates startup grace
   lastRecomputeAt: number; // throttle metric-driven recomputes to RECOMPUTE_THROTTLE_MS
+  // Dropped frames tracking — FFmpeg reports cumulative drop= count in stats lines
+  droppedFramesTotal: number;  // last reported cumulative total from FFmpeg
+  dropHistory: { delta: number; at: number }[];      // per-sample drop deltas in window
 }
 
 // ── Scoring constants ─────────────────────────────────────────────────────────
@@ -72,26 +83,32 @@ const MAX_SCORE = 100;
 const RECOVERY_THRESHOLD = 50;
 const WARNING_THRESHOLD = 80;
 
-const BITRATE_WINDOW_MS = 30_000;          // measure bitrate stability over 30s
-const FPS_WINDOW_MS = 15_000;             // fps stability over 15s
-const RECONNECT_WINDOW_MS = 10 * 60_000; // count reconnects in last 10 min
-const RTMP_ERROR_WINDOW_MS = 30_000;     // RTMP error cooldown
+const BITRATE_WINDOW_MS   = 30_000;          // measure bitrate stability over 30s
+const FPS_WINDOW_MS       = 15_000;          // fps stability over 15s
+const DROP_WINDOW_MS      = 30_000;          // dropped-frame window (same as RTMP error)
+const RECONNECT_WINDOW_MS = 10 * 60_000;     // count reconnects in last 10 min
+const RTMP_ERROR_WINDOW_MS = 30_000;         // RTMP error cooldown
 
-const BITRATE_DEVIATION_MAX = 0.30;      // > 30% deviation → 0 pts
-const FPS_MIN_RATIO = 0.70;              // < 70% of target fps → 0 pts
-const RECONNECT_MAX_IN_WINDOW = 5;       // >= 5 reconnects → 0 pts
+const BITRATE_DEVIATION_MAX = 0.30;          // > 30% deviation → 0 pts
+const FPS_MIN_RATIO = 0.70;                  // < 70% of target fps → 0 pts
+const RECONNECT_MAX_IN_WINDOW = 5;           // >= 5 reconnects → 0 pts
+// Drop rate threshold: > 1 drop/sec over the window → 0 pts for drops component.
+// YouTube Studio flags streams with sustained drop rates above ~0.5–1 fps/sec.
+const DROP_RATE_MAX = 1.0;                   // drops/sec → 0 pts
 
 // Throttle recompute() on high-frequency metric events (bitrate/fps arrive
 // at 1–30 Hz from FFmpeg -stats output).  Priority events (ffmpegAlive,
 // reconnect, rtmpError) always trigger an immediate recompute regardless.
 const RECOMPUTE_THROTTLE_MS = 5_000; // at most one metric-driven recompute per 5s
 
-// Component max scores
+// Component max scores — total must equal 100
+// Dropped frames replaces the old monolithic RTMP-errors-only component.
 const PTS_FFMPEG    = 30;
 const PTS_BITRATE   = 25;
-const PTS_FPS       = 20;
+const PTS_FPS       = 15;
 const PTS_RECONNECT = 15;
-const PTS_RTMP      = 10;
+const PTS_RTMP      = 8;
+const PTS_DROPS     = 7;   // NEW: penalise sustained dropped-frame rates
 
 // Recovery cooldown: don't trigger recovery more than once per 30s
 const RECOVERY_COOLDOWN_MS = 30_000;
@@ -124,6 +141,7 @@ export function scorerRegisterStream(streamId: string, targetBitrateKbps: number
     streamId,
     ffmpegAlive: false,
     targetBitrateKbps: targetBitrateKbps || 2500,
+    targetFps: 30,
     bitrateHistory: [],
     fpsHistory: [],
     reconnects: [],
@@ -132,12 +150,40 @@ export function scorerRegisterStream(streamId: string, targetBitrateKbps: number
     warningEmittedAt: null,
     registeredAt: Date.now(),
     lastRecomputeAt: 0,
+    droppedFramesTotal: 0,
+    dropHistory: [],
   });
   logger.debug({ streamId, targetBitrateKbps }, "[health] Stream registered");
 }
 
 export function scorerRemoveStream(streamId: string): void {
   states.delete(streamId);
+}
+
+// ── New: set the actual FPS target so FPS scoring uses the real value ─────────
+export function scorerSetTargetFps(streamId: string, fps: number): void {
+  const s = states.get(streamId);
+  if (!s) return;
+  s.targetFps = fps > 0 ? fps : 30;
+}
+
+// ── New: record cumulative dropped frames from FFmpeg drop= stats ─────────────
+// FFmpeg reports a cumulative total in each stats line. We compute the delta
+// since the last sample and store it in a sliding window to calculate drop rate.
+export function scorerRecordDroppedFrames(streamId: string, totalDropped: number): void {
+  const s = states.get(streamId);
+  if (!s) return;
+  const now = Date.now();
+  const delta = Math.max(0, totalDropped - s.droppedFramesTotal);
+  s.droppedFramesTotal = totalDropped;
+  if (delta > 0) {
+    s.dropHistory.push({ delta, at: now });
+  }
+  // Trim to window
+  const cutoff = now - DROP_WINDOW_MS;
+  s.dropHistory = s.dropHistory.filter((e) => e.at >= cutoff);
+  // Only recompute on actual drops — zero-drop ticks are ignored
+  if (delta > 0) recomputeThrottled(streamId, now);
 }
 
 // ── Feed events ───────────────────────────────────────────────────────────────
@@ -210,6 +256,8 @@ function computeScore(s: StreamState): { score: number; components: StreamHealth
   const ptsFFmpeg = s.ffmpegAlive ? PTS_FFMPEG : 0;
 
   // ── Component 2: Bitrate stability ───────────────────────────────────────
+  // Penalise both inter-sample deviation (unstable CBR) and sustained under-target
+  // encoding (encoder can't keep up with the requested bitrate).
   let ptsBitrate = PTS_BITRATE;
   if (s.bitrateHistory.length >= 3) {
     const values = s.bitrateHistory.map((e) => e.value);
@@ -218,7 +266,7 @@ function computeScore(s: StreamState): { score: number; components: StreamHealth
     if (maxDev > BITRATE_DEVIATION_MAX) {
       ptsBitrate = Math.round(PTS_BITRATE * Math.max(0, 1 - (maxDev - BITRATE_DEVIATION_MAX) * 2));
     }
-    // Also penalise if bitrate is far below target
+    // Also penalise if bitrate is far below target (encoder under-utilised or CPU-bound)
     const latest = values[values.length - 1];
     const targetDev = Math.abs(latest - s.targetBitrateKbps) / s.targetBitrateKbps;
     if (targetDev > 0.5) {
@@ -229,11 +277,12 @@ function computeScore(s: StreamState): { score: number; components: StreamHealth
   }
 
   // ── Component 3: FPS stability ────────────────────────────────────────────
+  // Use the actual configured FPS target (set via scorerSetTargetFps) so that a
+  // 30fps stream isn't penalised for not hitting 60fps, and vice versa.
   let ptsFps = PTS_FPS;
   if (s.fpsHistory.length >= 2) {
     const avgFps = s.fpsHistory.reduce((a, b) => a + b.value, 0) / s.fpsHistory.length;
-    // Assume target is 30fps — we'll adjust score proportionally
-    const targetFps = 25;
+    const targetFps = s.targetFps || 30;
     const ratio = avgFps / targetFps;
     if (ratio < FPS_MIN_RATIO) {
       ptsFps = Math.round(PTS_FPS * Math.max(0, ratio / FPS_MIN_RATIO));
@@ -257,7 +306,23 @@ function computeScore(s: StreamState): { score: number; components: StreamHealth
     ptsRtmp = 0;
   }
 
-  const total = ptsFFmpeg + ptsBitrate + ptsFps + ptsReconnect + ptsRtmp;
+  // ── Component 6: Dropped frames ──────────────────────────────────────────
+  // Compute drop rate (drops/sec) over the DROP_WINDOW_MS sliding window.
+  // YouTube Studio treats sustained dropped frames as a signal of encoder overload
+  // or network congestion — it directly affects the "connection" rating.
+  let ptsDrops = PTS_DROPS;
+  if (s.dropHistory.length > 0) {
+    const windowSec = DROP_WINDOW_MS / 1000;
+    const totalDrops = s.dropHistory.reduce((sum, e) => sum + e.delta, 0);
+    const dropRate = totalDrops / windowSec;  // drops per second
+    if (dropRate >= DROP_RATE_MAX) {
+      ptsDrops = 0;
+    } else if (dropRate > 0) {
+      ptsDrops = Math.round(PTS_DROPS * (1 - dropRate / DROP_RATE_MAX));
+    }
+  }
+
+  const total = ptsFFmpeg + ptsBitrate + ptsFps + ptsReconnect + ptsRtmp + ptsDrops;
   return {
     score: Math.max(0, Math.min(MAX_SCORE, total)),
     components: {
@@ -266,6 +331,7 @@ function computeScore(s: StreamState): { score: number; components: StreamHealth
       fpsStable: ptsFps,
       reconnectRate: ptsReconnect,
       rtmpErrors: ptsRtmp,
+      droppedFrames: ptsDrops,
     },
   };
 }

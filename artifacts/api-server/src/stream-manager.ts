@@ -20,6 +20,8 @@ import {
   scorerRecordFps,
   scorerRecordReconnect,
   scorerRecordRtmpError,
+  scorerSetTargetFps,
+  scorerRecordDroppedFrames,
   getHealthSnapshot,
   getAllHealthSnapshots,
 } from "./stream-health-scorer";
@@ -154,17 +156,19 @@ export function feedMicAudio(pcm: Buffer): void {
 }
 
 // ── VolumeControlPipe ──────────────────────────────────────────────────────────
-// Maintains a continuous f32le stereo 44100 Hz audio stream to FFmpeg pipe:6.
+// Maintains a continuous f32le stereo 48000 Hz audio stream to FFmpeg pipe:6.
 // All samples equal `gain` (0.0 = silence / muted, 1.0 = full pass-through).
 // FFmpeg's `amultiply` filter multiplies source audio sample-by-sample by this
 // signal — allowing real-time volume/mute control with ZERO stream reconnection.
+// NOTE: 48000 Hz matches the YouTube-recommended audio sample rate so the
+// amultiply operation runs in the same sample domain as the rest of the pipeline.
 class VolumeControlPipe {
   private gain: number;
   private intervalId: NodeJS.Timeout | null = null;
 
-  // 50 ms of stereo f32le at 44100 Hz = 2205 frames × 2 ch × 4 bytes = 17640 bytes
+  // 50 ms of stereo f32le at 48000 Hz = 2400 frames × 2 ch × 4 bytes = 19200 bytes
   static readonly INTERVAL_MS = 50;
-  static readonly CHUNK_FRAMES = Math.floor(44100 * 0.05);
+  static readonly CHUNK_FRAMES = Math.floor(48000 * 0.05);
   static readonly CHUNK_BYTES = VolumeControlPipe.CHUNK_FRAMES * 2 * 4;
 
   constructor(initialGain: number) {
@@ -581,19 +585,37 @@ function buildFFmpegArgs(
   const scaleH = isVertical ? (isHDQuality ? 1280 : 854) : (isHDQuality ? 720 : 480);
 
   // ── Bitrate ladder ────────────────────────────────────────────────────────
-  // YouTube requires a minimum of 2500 kbps for 720p30 to avoid "poor stream"
-  // warnings in YouTube Studio. bufsize = 2× bitrate per YouTube's CBR guidance
-  // so the encoder can absorb burst complexity without starving the ingest server.
-  let bitrate = "2500k";
-  let maxrate = "3000k";
-  let bufsize = "5000k";
+  // YouTube recommended bitrates for "Excellent connection" status:
+  //   1080p30 → 4,500 kbps  |  1080p60 → 6,000 kbps
+  //   720p30  → 2,500 kbps  |  720p60  → 3,500 kbps
+  //   480p30  → 1,500 kbps  |  480p60  → 2,000 kbps
+  //
+  // CBR enforcement:
+  //   maxrate = 110% of bitrate → tight ceiling; prevents burst overflows that
+  //     cause YouTube Studio to flag "bitrate instability"
+  //   bufsize = 2× bitrate (exactly) → YouTube's own CBR guidance; the encoder
+  //     can absorb burst complexity within a 2-second window without starving
+  //     the ingest server or triggering the "buffering" warning
+  //
+  // -x264-params nal-hrd=cbr:force-cfr=1 enforces NAL-level CBR (the only mode
+  //   YouTube's ingestion pipeline treats as truly constant bitrate).
+  const is60fps = fps === 60;
+  let bitrate: string;
+  let maxrate: string;
+  let bufsize: string;
 
   if (stream.quality === "best") {
-    bitrate = "4000k"; maxrate = "4500k"; bufsize = "8000k";
+    bitrate  = is60fps ? "6000k" : "4500k";
+    maxrate  = is60fps ? "6600k" : "5000k";
+    bufsize  = is60fps ? "12000k" : "9000k";
   } else if (stream.quality === "720p") {
-    bitrate = "2500k"; maxrate = "3000k"; bufsize = "5000k";
+    bitrate  = is60fps ? "3500k" : "2500k";
+    maxrate  = is60fps ? "3850k" : "2750k";
+    bufsize  = is60fps ? "7000k"  : "5000k";
   } else {
-    bitrate = "1500k"; maxrate = "1800k"; bufsize = "3000k";
+    bitrate  = is60fps ? "2000k" : "1500k";
+    maxrate  = is60fps ? "2200k" : "1650k";
+    bufsize  = is60fps ? "4000k"  : "3000k";
   }
 
   // Browser camera (__browser__) reads from stdin (pipe:0).
@@ -755,10 +777,13 @@ function buildFFmpegArgs(
   );
 
   // ── Input 2: lavfi silence — audio fallback ───────────────────────────────
+  // 48000 Hz matches YouTube's recommended audio sample rate. Using the correct
+  // sample rate here avoids a hidden resampling step in the codec pipeline that
+  // can introduce cumulative A/V drift during 24/7 streams.
   args.push(
     "-f", "lavfi",
     "-thread_queue_size", "64",
-    "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+    "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
   );
 
   // ── Input 3: background gradient raw-RGBA pipe (fd 3) ────────────────────
@@ -795,13 +820,15 @@ function buildFFmpegArgs(
     "-i", "pipe:5",
   );
 
-  // ── Input 6: volume control signal — f32le stereo 44100 Hz via pipe:6 ────
+  // ── Input 6: volume control signal — f32le stereo 48000 Hz via pipe:6 ────
   // VolumeControlPipe writes constant-amplitude samples (0.0 = muted, 1.0 = full).
   // amultiply in the filter graph multiplies source audio sample-by-sample by this
   // signal, enabling real-time volume/mute with ZERO stream reconnection.
+  // 48000 Hz matches the rest of the pipeline so FFmpeg never needs to internally
+  // resample this control signal, eliminating a latency source.
   args.push(
     "-f", "f32le",
-    "-ar", "44100",
+    "-ar", "48000",
     "-ac", "2",
     "-thread_queue_size", "512",
     "-i", "pipe:6",
@@ -869,9 +896,11 @@ function buildFFmpegArgs(
 
   const isXSpace = sourceType === "xspace";
 
-  // Mic noise reduction: highpass removes low-frequency rumble, noise gate suppresses
-  // background noise between words. Applied before mixing so it doesn't affect source audio.
-  const micClean = `[5:a]highpass=f=80,agate=threshold=0.015:ratio=8:attack=0.01:release=0.15[_mic]`;
+  // Mic noise reduction: aresample=48000 converts the 44.1kHz browser mic input to
+  // the 48kHz pipeline sample rate BEFORE highpass/gate so all downstream filters
+  // run in the same domain, preventing hidden auto-resamples that skew timings.
+  // highpass removes low-frequency rumble, noise gate suppresses background noise.
+  const micClean = `[5:a]aresample=48000,highpass=f=80,agate=threshold=0.015:ratio=8:attack=0.01:release=0.15[_mic]`;
 
   // Volume is controlled dynamically via VolumeControlPipe on pipe:6 — no restart needed.
   // [6:a] is a constant-amplitude f32le stereo signal; amultiply scales source audio by it.
@@ -975,15 +1004,33 @@ function buildFFmpegArgs(
   args.push("-map", "[_final]");
   args.push("-map", "[_audio]");
 
+  // ── Video encoder — YouTube "Excellent connection" settings ──────────────
+  // preset: "veryfast" is the YouTube-balanced default — 15-20% better quality
+  //   vs "ultrafast" at the same bitrate with still-real-time CPU load on modern VPS.
+  //   "ultrafast" is kept as an option for underpowered servers.
+  // tune=zerolatency: keeps the encoder delay to 0 frames — critical for live
+  //   streaming where any encoder buffer means higher end-to-end latency.
+  // profile=high + level=4.1: maximum compatibility with YouTube's ingest decoder.
+  //   level 4.1 allows up to 1080p60 at ~50 Mbps — well above our target bitrates.
+  // bf=0: no B-frames; YouTube Live's ingest pipeline does not support B-frames
+  //   and will incorrectly re-order packets if they are present.
+  // nal-hrd=cbr:force-cfr=1: NAL-level Constant Bitrate — the only encoding mode
+  //   YouTube's infrastructure treats as truly constant (VBR causes bitrate spikes
+  //   that trigger the "not receiving enough video" Studio warning).
+  // g=fps*2: 2-second keyframe interval — YouTube's required GOP size for live.
+  // sc_threshold=0: disable scene-change detection for fixed GOP (consistent keyframes).
+  // fps_mode=cfr: Constant Frame Rate — ensures YouTube never sees timestamp gaps
+  //   that trigger dropped-frame warnings in Studio.
+  const encoderPreset = (stream.encoderPreset as string) || "veryfast";
   args.push(
     "-c:v", "libx264",
-    "-preset", "ultrafast",
+    "-preset", encoderPreset,
     "-tune", "zerolatency",
     "-b:v", bitrate,
     "-maxrate", maxrate,
     "-bufsize", bufsize,
     "-profile:v", "high",
-    "-level", "4.0",
+    "-level", "4.1",
     "-bf", "0",
     "-x264-params", "nal-hrd=cbr:force-cfr=1",
     "-pix_fmt", "yuv420p",
@@ -995,11 +1042,17 @@ function buildFFmpegArgs(
     "-flags", "+global_header",
   );
 
+  // AAC at 48 kHz stereo — YouTube's required audio specification.
+  // 48000 Hz is the YouTube Live ingest standard; 44100 Hz causes YouTube's
+  // encoder to internally resample, introducing per-frame timing jitter that
+  // accumulates into A/V drift over multi-hour streams.
+  // 160 kbps is the YouTube-recommended bitrate ceiling for stereo AAC.
   args.push(
     "-c:a", "aac",
     "-b:a", "160k",
-    "-ar", "44100",
+    "-ar", "48000",
     "-ac", "2",
+    "-profile:a", "aac_low",
   );
 
   // ── RTMP output(s) — always tee for resilience ───────────────────────────
@@ -1508,14 +1561,24 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
 
   stopStream(streamId);
 
-  // Register with health scorer — compute target bitrate from quality setting
-  const qualityBitrateKbps = stream.quality === "best" ? 4000 : stream.quality === "720p" ? 2500 : 1500;
+  // Register with health scorer — compute target bitrate from quality + fps settings.
+  // 60fps tiers use higher bitrates because YouTube's ingest requires more headroom
+  // to sustain "Excellent connection" at double the frame rate.
+  const streamFps = parseInt(stream.fps || "30", 10);
+  const is60fps = streamFps >= 60;
+  const qualityBitrateKbps = stream.quality === "best"
+    ? (is60fps ? 6000 : 4000)
+    : stream.quality === "720p"
+    ? (is60fps ? 3500 : 2500)
+    : (is60fps ? 2000 : 1500);
   scorerRegisterStream(streamId, qualityBitrateKbps);
+  scorerSetTargetFps(streamId, streamFps);
 
+  const encoderPresetLabel = (stream.encoderPreset as string) || "veryfast";
   sendLog(streamId, `--- Starting stream ---`);
-  sendLog(streamId, `Quality: ${stream.quality} | FPS: ${stream.fps} | Layout: ${stream.ratio}`);
-  sendLog(streamId, `Audio: ${stream.muted ? "Muted" : "On"} | Auto-restart: ${stream.autoRestart ? "On" : "Off"}`);
-  sendLog(streamId, `Overlay: burn-in enabled (canvas → FFmpeg pipe)`);
+  sendLog(streamId, `Quality: ${stream.quality}${is60fps ? " 60fps" : ""} | FPS: ${stream.fps} | Layout: ${stream.ratio} | Preset: ${encoderPresetLabel}`);
+  sendLog(streamId, `Audio: ${stream.muted ? "Muted" : "On"} | Auto-restart: ${stream.autoRestart ? "On" : "Off"} | Sample rate: 48000 Hz`);
+  sendLog(streamId, `Video: H.264 High profile L4.1 | CBR | 2s keyframes | yuv420p`);
   if (!keepStatus) sendStatus(streamId, "reconnecting");
 
   try {
@@ -1744,6 +1807,19 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
             }
           }
 
+          // ── Dropped frames monitoring ───────────────────────────────────────
+          // FFmpeg stats lines include "drop=N" — a cumulative dropped-frame count.
+          // We record every sample (even zeros) so the scorer can compute rate over
+          // its sliding window. Sustained drop rates > 1 fps/sec reduce health score,
+          // which can trigger auto-recovery before YouTube Studio flags the stream.
+          const dropMatch = trimmed.match(/drop=\s*(\d+)/);
+          if (dropMatch) {
+            const totalDropped = parseInt(dropMatch[1], 10);
+            if (!isNaN(totalDropped)) {
+              scorerRecordDroppedFrames(streamId, totalDropped);
+            }
+          }
+
           // ── Slow-encode watchdog ────────────────────────────────────────────
           // At 0.95x speed, the encoder accumulates 0.05s of lag per real second.
           // After ~60-90 seconds the lag exceeds YouTube's tolerance (~3-5s) and
@@ -1786,7 +1862,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                     lagSec >= 2.5 &&
                     cooldownOk &&
                     !restartScheduled.has(streamId) &&
-                    !explicitlyStopped.has(streamId)
+                    !manuallyStopped.has(streamId)
                   ) {
                     currentProc.accumulatedLagSec = 0;
                     currentProc.lastSlowReconnectAt = nowMs;

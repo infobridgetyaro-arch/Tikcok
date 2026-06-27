@@ -75,6 +75,7 @@ export class MemStorage implements IStorage {
       autoRestart: data.autoRestart ?? false,
       micEnabled: data.micEnabled ?? false,
       micDevice: data.micDevice || "",
+      encoderPreset: (data as any).encoderPreset || "veryfast",
       status: "idle",
     };
     this.streams.set(id, stream);

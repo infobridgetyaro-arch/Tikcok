@@ -16,7 +16,8 @@ export type StreamConfig = {
   youtubeChannelId: string;
   ratio: "mobile" | "desktop";
   quality: "best" | "720p" | "480p";
-  fps: "20" | "24" | "25" | "30";
+  fps: "20" | "24" | "25" | "30" | "60";
+  encoderPreset: "ultrafast" | "veryfast" | "faster" | "fast";
   muted: boolean;
   autoRestart: boolean;
   status: "idle" | "streaming" | "error" | "reconnecting";
