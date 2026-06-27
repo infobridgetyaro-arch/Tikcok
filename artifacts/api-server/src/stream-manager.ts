@@ -2,7 +2,7 @@ import { ChildProcess, spawn, exec } from "child_process";
 import { storage } from "./storage";
 import { logger } from "./lib/logger";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
-import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl } from "./youtube-source";
+import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader } from "./youtube-source";
 import type { WebSocket } from "ws";
 import type { StreamConfig } from "./schema";
 import { OverlayRenderer, defaultOverlayState, type OverlayState } from "./overlay-renderer";
@@ -640,13 +640,25 @@ function buildFFmpegArgs(
       }
     }
   } else if (sourceType === "youtube") {
-    // Direct HLS URL — user supplies the public .m3u8 URL; FFmpeg reads it directly.
+    // Direct HLS — yt-dlp resolved the signed CDN URL; FFmpeg reads segments directly.
+    // Browser-like headers are required: YouTube CDN returns 429 for bare HTTP requests
+    // (no User-Agent, no Referer, no session cookies).
+    const cookieHeader = getYouTubeFFmpegCookieHeader();
+    const ytHeaders = [
+      "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+      "Accept: */*",
+      "Accept-Language: en-US,en;q=0.9",
+      "Referer: https://www.youtube.com/",
+      ...(cookieHeader ? [cookieHeader.trimEnd()] : []),
+    ].join("\r\n") + "\r\n";
     args.push(
+      "-headers", ytHeaders,
       "-reconnect", "1",
       "-reconnect_streamed", "1",
       "-reconnect_on_network_error", "1",
       "-reconnect_at_eof", "1",
       "-reconnect_delay_max", "5",
+      "-tls_verify", "0",
       "-rw_timeout", "10000000",
       "-thread_queue_size", "4096",
       "-fflags", "+genpts+discardcorrupt",
