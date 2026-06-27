@@ -146,11 +146,11 @@ function classifyYouTubeError(stderr: string, fallback: string, method: string):
     low.includes("please log in") ||
     low.includes("login required")
   ) {
-    return new YouTubeStreamError(
-      "YouTube is requiring sign-in. Use Settings → YouTube Sign-In to authenticate once with your Google account (no cookies file needed).",
-      "LOGIN_REQUIRED",
-      method,
-    );
+    const hasCookiesNow = fs.existsSync(path.join(process.cwd(), "cookies.txt"));
+    const cookiesHint = hasCookiesNow
+      ? "Your cookies.txt is uploaded but YouTube still requires sign-in — the cookies may be expired or missing auth tokens (SID, SAPISID). Export fresh cookies from a logged-in Chrome/Firefox session using a browser extension like 'Get cookies.txt LOCALLY'."
+      : "YouTube requires sign-in. Upload a cookies.txt file (Netscape format) from a logged-in YouTube account via Settings → Cookies, or use Settings → YouTube Sign-In to authenticate once with your Google account.";
+    return new YouTubeStreamError(cookiesHint, "LOGIN_REQUIRED", method);
   }
   if (
     low.includes("429") ||
@@ -347,15 +347,40 @@ function spawnYtdlp(
   });
 }
 
+// ── Tier 0: yt-dlp web client with cookies (only when cookies configured) ────
+// The "web" player client is the most authentic YouTube client and works best
+// with cookies.txt — it mimics a real browser session. Placed first so that
+// when the user has uploaded cookies this is the very first attempt.
+
+function tier0_webWithCookies(pageUrl: string, format: string, isLive: boolean): Promise<string> {
+  const args = [
+    "--no-playlist",
+    "-f", format,
+    "--get-url",
+    "--no-check-certificate",
+    "--socket-timeout", "20",
+    "--extractor-args", "youtube:player_client=web",
+    "--add-header", "Accept-Language:en-US,en;q=0.9",
+    ...getAuthArgs(),
+  ];
+  if (isLive) args.push("--no-live-from-start");
+  args.push(pageUrl);
+  return spawnYtdlp(args, "yt-dlp:web+cookies", 35_000);
+}
+
 // ── Tier 1: streamlink ────────────────────────────────────────────────────────
 
 function tier1_streamlink(pageUrl: string): Promise<string> {
+  const cookiesPath = path.join(process.cwd(), "cookies.txt");
+  const hasCookies = fs.existsSync(cookiesPath);
+
   return new Promise((resolve, reject) => {
     const proc = spawn("streamlink", [
       "--stream-url",
       "--http-timeout", "20",
       "--http-header", "User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       "--http-header", "Accept-Language=en-US,en;q=0.9",
+      ...(hasCookies ? ["--http-cookie-jar", cookiesPath] : []),
       pageUrl,
       "best",
     ]);
@@ -651,9 +676,13 @@ export async function getYouTubeStreamUrl(input: string): Promise<string> {
   ]);
 
   const format = "b[protocol^=m3u8]/b[ext=mp4]/b";
+  const hasCookies = getCookiesConfigured() || getAuthArgs().length > 0;
 
   type Tier = { name: string; fn: () => Promise<string> };
   const tiers: Tier[] = [
+    // When cookies/OAuth2 are configured, try the web client first — it is the
+    // most authentic client and works best with a real logged-in session.
+    ...(hasCookies ? [{ name: "web+cookies", fn: () => tier0_webWithCookies(pageUrl, format, true) }] : []),
     { name: "streamlink",        fn: () => tier1_streamlink(pageUrl) },
     { name: "tv_embedded",       fn: () => tier2_tvEmbedded(pageUrl, format, true) },
     { name: "mweb",              fn: () => tier3_mweb(pageUrl, format, true) },
