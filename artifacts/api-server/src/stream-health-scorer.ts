@@ -116,9 +116,9 @@ const RECOVERY_COOLDOWN_MS = 30_000;
 // Startup grace period: don't score (or trigger recovery) until FFmpeg has had
 // time to connect to the source and produce data. During this window a score
 // of 0 is completely expected — FFmpeg is still negotiating the HLS playlist.
-// 60 s covers slow HLS sources (streamlink can take 5-15 s to hand off, then
-// FFmpeg needs time to buffer and begin encoding output frames).
-const STARTUP_GRACE_MS = 60_000;
+// 15 s is enough for fast RTSP/camera sources; HLS (streamlink/yt-dlp) that
+// hasn't produced a frame by 15 s will simply show a low score until it does.
+const STARTUP_GRACE_MS = 15_000;
 
 // ── Module state ──────────────────────────────────────────────────────────────
 

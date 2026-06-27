@@ -31,6 +31,7 @@ interface HealthComponents {
   fpsStable: number;
   reconnectRate: number;
   rtmpErrors: number;
+  droppedFrames: number;
 }
 
 interface HealthMetrics {
@@ -239,9 +240,10 @@ function HealthCard({ health }: { health: HealthSnapshot }) {
   const bars = [
     { label: "FFmpeg alive", pts: components.ffmpegAlive, max: 30 },
     { label: "Bitrate stable", pts: components.bitrateStable, max: 25 },
-    { label: "FPS stable", pts: components.fpsStable, max: 20 },
+    { label: "FPS stable", pts: components.fpsStable, max: 15 },
     { label: "Reconnect rate", pts: components.reconnectRate, max: 15 },
-    { label: "RTMP errors", pts: components.rtmpErrors, max: 10 },
+    { label: "RTMP errors", pts: components.rtmpErrors, max: 8 },
+    { label: "Dropped frames", pts: components.droppedFrames ?? 0, max: 7 },
   ];
 
   const bitrateOk = metrics.targetBitrateKbps > 0
