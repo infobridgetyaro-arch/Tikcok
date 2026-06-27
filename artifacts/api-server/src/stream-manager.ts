@@ -2,7 +2,7 @@ import { ChildProcess, spawn, exec } from "child_process";
 import { storage } from "./storage";
 import { logger } from "./lib/logger";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
-import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader } from "./youtube-source";
+import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader, getYouTubeYtdlpPipeArgs } from "./youtube-source";
 import { YTDLP_BIN } from "./lib/ytdlp";
 import type { WebSocket } from "ws";
 import type { StreamConfig } from "./schema";
@@ -641,9 +641,7 @@ function buildFFmpegArgs(
       }
     }
   } else if (sourceType === "youtube") {
-    // Direct HLS — yt-dlp resolved the signed CDN URL; FFmpeg reads segments directly.
-    // Browser-like headers are required: YouTube CDN returns 429 for bare HTTP requests
-    // (no User-Agent, no Referer, no session cookies).
+    // Direct HLS (.m3u8 URL pasted by user) — FFmpeg reads segments directly.
     const cookieHeader = getYouTubeFFmpegCookieHeader();
     const ytHeaders = [
       "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
@@ -664,6 +662,17 @@ function buildFFmpegArgs(
       "-thread_queue_size", "4096",
       "-fflags", "+genpts+discardcorrupt",
       "-i", inputUrl,
+    );
+  } else if (sourceType === "youtube_pipe") {
+    // yt-dlp pipe mode: yt-dlp streams MPEG-TS to FFmpeg stdin.
+    // yt-dlp handles all HLS segment fetches and POT token rotation internally
+    // so YouTube CDN never sees bare unauthenticated requests (no 429).
+    args.push(
+      "-analyzeduration", "10000000",
+      "-probesize", "10000000",
+      "-thread_queue_size", "4096",
+      "-fflags", "+genpts+discardcorrupt",
+      "-i", "pipe:0",
     );
   } else if (sourceType === "xspace") {
     // X Space: yt-dlp extracts the HLS audio URL; FFmpeg reads audio-only.
@@ -1086,15 +1095,18 @@ async function resolveInputUrl(
     const input = (stream.youtubeSourceUrl || "").trim();
     if (!input) throw new Error("YouTube source URL or handle is required");
 
-    // If the user already pasted a direct HLS URL, pass it straight to FFmpeg.
-    // Otherwise resolve the YouTube page URL / handle / video ID via yt-dlp.
+    // If the user pasted a direct HLS .m3u8 URL, pass it to FFmpeg as-is.
+    // For all other YouTube URLs (page/channel/handle), use yt-dlp pipe mode:
+    // yt-dlp streams MPEG-TS to FFmpeg stdin, keeping all CDN requests (including
+    // POT token rotation) inside yt-dlp's session — this avoids the 429 errors
+    // that occur when FFmpeg tries to fetch HLS segments directly from YouTube CDN.
     const isDirect = input.includes(".m3u8");
-    const hlsUrl = isDirect
-      ? input
-      : await getYouTubeStreamUrl(normaliseYouTubeUrl(input));
-
-    urlCache.set(stream.id, { url: hlsUrl, sourceType: "youtube", resolvedAt: Date.now() });
-    return { url: hlsUrl, sourceType: "youtube" };
+    if (isDirect) {
+      urlCache.set(stream.id, { url: input, sourceType: "youtube", resolvedAt: Date.now() });
+      return { url: input, sourceType: "youtube" };
+    }
+    // Return pipe:0 — yt-dlp will be spawned in startStream and piped to FFmpeg stdin.
+    return { url: "pipe:0", sourceType: "youtube_pipe" as any };
   }
 
   if (sourceType === "xspace") {
@@ -1498,7 +1510,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
 
     const resolved = await resolveInputUrlSafe(stream, !reuseUrl);
     const inputUrl = resolved.url;
-    const resolvedType = resolved.sourceType;
+    const resolvedType = resolved.sourceType as string;
 
     // Guard: user may have clicked Stop while we were waiting for URL resolution
     // (TikTok/X Space extraction can take 10–35 s). If the stream was deleted from
@@ -1511,8 +1523,9 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
     if (sourceType === "tiktok") {
       const inputType = inputUrl.includes(".m3u8") ? "HLS" : "FLV";
       sendLog(streamId, `Using ${inputType} stream input`);
-    } else if (sourceType === "youtube") {
-      sendLog(streamId, `YouTube HLS ready — launching FFmpeg...`);
+    } else if (sourceType === "youtube" || resolvedType === "youtube_pipe") {
+      const modeLabel = resolvedType === "youtube_pipe" ? "pipe mode (yt-dlp → stdin)" : "direct HLS";
+      sendLog(streamId, `YouTube source ready [${modeLabel}] — launching FFmpeg...`);
     }
 
     const outputs: string[] = [];
@@ -1590,6 +1603,53 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
           buffered.forEach((d) => { try { stdinPipe.write(d); } catch {} });
         }
       }
+    }
+
+    // YouTube pipe mode: spawn yt-dlp and pipe its stdout to FFmpeg stdin.
+    // yt-dlp handles all HLS segment fetches including POT token rotation,
+    // so YouTube CDN never rate-limits the connection (no 429 on segments).
+    if (resolvedType === "youtube_pipe") {
+      const ytArgs = getYouTubeYtdlpPipeArgs(normaliseYouTubeUrl((stream.youtubeSourceUrl || "").trim()));
+      sendLog(streamId, `[yt-dlp] Spawning pipe: ${YTDLP_BIN} ${ytArgs.slice(-2).join(" ")}`);
+      const ytProc = spawn(YTDLP_BIN, ytArgs, { stdio: ["ignore", "pipe", "pipe"] });
+
+      const stdinPipe = ffmpegProc.stdin as NodeJS.WritableStream | null;
+      if (stdinPipe) {
+        stdinPipe.on("error", () => {});
+        ytProc.stdout?.pipe(stdinPipe);
+      }
+
+      let ytErrBuf = "";
+      ytProc.stderr?.on("data", (d: Buffer) => {
+        ytErrBuf += d.toString();
+        const lines = ytErrBuf.split("\n");
+        ytErrBuf = lines.pop() ?? "";
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t) continue;
+          sendLog(streamId, `[yt-dlp] ${t}`);
+          logger.info({ streamId, line: t }, "[youtube-pipe] yt-dlp stderr");
+        }
+      });
+
+      ytProc.on("error", (err: NodeJS.ErrnoException) => {
+        logger.error({ streamId, err: err.message }, "[youtube-pipe] yt-dlp spawn error");
+        if (err.code === "ENOENT") {
+          sendLog(streamId, "[yt-dlp] Binary not found — check server setup");
+        } else {
+          sendLog(streamId, `[yt-dlp] Error: ${err.message}`);
+        }
+      });
+
+      ytProc.on("exit", (code, signal) => {
+        logger.info({ streamId, code, signal }, "[youtube-pipe] yt-dlp exited");
+        const currentProc = activeStreams.get(streamId);
+        if (currentProc) currentProc.ytSourceProcess = undefined;
+      });
+
+      // Store so cleanupStreamProc can kill it on stop
+      const currentProc = activeStreams.get(streamId);
+      if (currentProc) currentProc.ytSourceProcess = ytProc;
     }
 
     let gotFrames = false;

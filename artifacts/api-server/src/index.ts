@@ -3,6 +3,7 @@ import { exec } from "child_process";
 import app from "./app";
 import { registerBintunetRoutes } from "./bintunet-routes";
 import { logger } from "./lib/logger";
+import { ensureYtdlpVersion } from "./lib/ytdlp";
 import { hybridStorage } from "./state/redis-storage";
 import { startHeartbeat } from "./state/heartbeat";
 import { wsBus } from "./state/ws-bus";
@@ -33,6 +34,9 @@ async function bootstrap() {
     exec("pkill -9 -x ffmpeg 2>/dev/null; pkill -9 -f yt-dlp 2>/dev/null; true", () => resolve());
   });
   logger.info("Killed any orphaned ffmpeg/yt-dlp processes from previous run");
+
+  // ── Ensure yt-dlp binary is present and up to date ─────────────────────
+  await ensureYtdlpVersion();
 
   // ── Load stream configs from Redis (if configured) ─────────────────────
   await hybridStorage.init();
