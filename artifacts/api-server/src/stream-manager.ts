@@ -784,9 +784,21 @@ function buildFFmpegArgs(
     "-i", "pipe:6",
   );
 
+  // threads=0: auto-detect (all available cores).
+  // The filter graph has 7 inputs, 4 overlay operations, scale/pad/crop chains,
+  // and an x264 encode — all running in real-time.  Capping at 2 threads on a
+  // shared CPU means the encoder falls behind real-time, drops frames, and
+  // YouTube sees gaps that trigger "not receiving enough video" warnings.
+  // filter_threads=4: the filter graph runs in a separate thread pool from the
+  // codec; giving it explicit threads prevents the overlays from starving x264.
+  // max_interleave_delta=0: don't buffer A/V waiting to interleave — emit each
+  // packet as soon as it's ready so RTMP data flows at a constant rate.
   args.push(
-    "-threads", "2",
-    "-max_muxing_queue_size", "1024",
+    "-threads", "0",
+    "-filter_threads", "4",
+    "-filter_complex_threads", "4",
+    "-max_muxing_queue_size", "2048",
+    "-max_interleave_delta", "0",
   );
 
   // ── Filter graph ──────────────────────────────────────────────────────────
@@ -824,7 +836,11 @@ function buildFFmpegArgs(
       `[2:a][_vol]amultiply[_srcFin]`,
       micClean,
       `[_srcFin][_mic]amix=inputs=2:dropout_transition=2:normalize=0[_rawA]`,
-      `[_rawA]aresample=async=1000[_audio]`,
+      // async=8000: gentle drift correction — 8000 sample window (≈180ms at 44100Hz)
+      // lets audio lag/lead up to that amount before FFmpeg corrects it.  The
+      // aggressive async=1000 caused high-frequency corrections that spiked CPU and
+      // momentarily stalled the muxer, contributing to YouTube buffering complaints.
+      `[_rawA]aresample=async=8000[_audio]`,
     ].join(";");
   } else {
     // Live source (TikTok / YouTube / X Space / RTSP / browser camera) has audio.
@@ -837,7 +853,7 @@ function buildFFmpegArgs(
       `[_srcRaw][_vol]amultiply[_srcFin]`,
       micClean,
       `[_srcFin][_mic]amix=inputs=2:dropout_transition=10:normalize=0[_rawA]`,
-      `[_rawA]aresample=async=1000[_audio]`,
+      `[_rawA]aresample=async=8000[_audio]`,
     ].join(";");
   }
 
@@ -929,9 +945,16 @@ function buildFFmpegArgs(
   // reconnects, causing YouTube "not receiving data" errors. We instead detect
   // the failure via the stderr "Ignoring failure for output" message and do a
   // clean hardKillAndRestart so the full RTMP session is re-established.
+  //
+  // rtmp_buffer=5000 (5 seconds): a client-side RTMP send buffer between
+  // FFmpeg and YouTube's ingest server.  Without it, any encoder pause
+  // (HLS segment boundary, CPU burst, brief filter stall) sends nothing to
+  // YouTube for that interval, triggering the "not receiving enough video to
+  // maintain smooth streaming" warning.  A 5-second buffer absorbs those
+  // pauses and keeps data flowing at a constant rate to the ingest server.
   args.push("-avoid_negative_ts", "make_zero");
   const teeOutputs = outputs
-    .map((o) => `[f=flv:flvflags=no_duration_filesize:rtmp_live=1:rw_timeout=20000000]${o}`)
+    .map((o) => `[f=flv:flvflags=no_duration_filesize:rtmp_live=1:rtmp_buffer=5000:rw_timeout=20000000]${o}`)
     .join("|");
   args.push("-f", "tee", teeOutputs);
 
