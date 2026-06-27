@@ -1,6 +1,7 @@
 import { ChildProcess, spawn, exec } from "child_process";
 import { storage } from "./storage";
 import { logger } from "./lib/logger";
+import { getLiveStats } from "./youtube-counter";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
 import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader, getYouTubeYtdlpPipeArgs, getYouTubeStreamlinkPipeArgs } from "./youtube-source";
 import { YTDLP_BIN } from "./lib/ytdlp";
@@ -408,7 +409,19 @@ function broadcast(msg: { type: string; streamId: string; data: any }) {
 const streamLogBuffers = new Map<string, string[]>();
 const LOG_BUFFER_SIZE = 50;
 
+const LOG_SUPPRESS_PATTERNS = [
+  "Late SEI is not implemented",
+  "If you want to help, upload a sample",
+  "ffmpeg-devel@ffmpeg.org",
+  "streams.videolan.org/upload",
+];
+
+function shouldSuppressLog(line: string): boolean {
+  return LOG_SUPPRESS_PATTERNS.some((p) => line.includes(p));
+}
+
 function sendLog(streamId: string, line: string) {
+  if (shouldSuppressLog(line)) return;
   const timestamp = new Date().toLocaleTimeString("en-US", {
     hour: "2-digit",
     minute: "2-digit",
@@ -1393,6 +1406,7 @@ function purgeUploadsDir(): void {
 }
 
 function startProcStatsPolling(streamId: string, pid: number): NodeJS.Timeout {
+  let statsTick = 0;
   return setInterval(() => {
     exec(`ps -p ${pid} -o %cpu=,rss=`, (err, stdout) => {
       if (err) {
@@ -1424,6 +1438,13 @@ function startProcStatsPolling(streamId: string, pid: number): NodeJS.Timeout {
         });
         // Mark source stable every polling cycle so failover can auto-reset
         markSourceStable(streamId);
+      }
+
+      // Push audience stats (subs/viewers) every ~15s (every 5th proc_stats tick)
+      statsTick++;
+      if (statsTick % 5 === 0) {
+        const { subs, viewers } = getLiveStats(streamId);
+        broadcastStream(streamId, "stats", { subs, viewers, hasChat: subs !== null || viewers !== null });
       }
     });
   }, 3000);

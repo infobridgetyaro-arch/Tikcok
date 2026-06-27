@@ -10,14 +10,19 @@ export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const listenersRef = useRef<Map<string, Set<(msg: WSMessage) => void>>>(new Map());
+  const retryDelayRef = useRef(1000);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
-    ws.onopen = () => setIsConnected(true);
+    ws.onopen = () => {
+      setIsConnected(true);
+      retryDelayRef.current = 1000;
+    };
 
     ws.onmessage = (event) => {
       try {
@@ -37,7 +42,9 @@ export function useWebSocket() {
 
     ws.onclose = () => {
       setIsConnected(false);
-      setTimeout(connect, 3000);
+      const delay = retryDelayRef.current + Math.random() * 500;
+      retryDelayRef.current = Math.min(retryDelayRef.current * 2, 30000);
+      retryTimerRef.current = setTimeout(connect, delay);
     };
 
     ws.onerror = () => {
@@ -67,6 +74,7 @@ export function useWebSocket() {
   useEffect(() => {
     connect();
     return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       wsRef.current?.close();
     };
   }, [connect]);

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import {
   X, Upload, Trash2, CheckCircle2, AlertCircle, Cookie,
-  ExternalLink, ShieldCheck, ShieldX, ShieldAlert, Loader2,
+  ExternalLink, ShieldCheck, ShieldX, ShieldAlert, Loader2, Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -17,6 +17,8 @@ interface CookieValidation {
 interface CookiesStatus {
   configured: boolean;
   validation?: CookieValidation;
+  lastModified?: string;
+  ageDays?: number;
 }
 
 type UploadState =
@@ -265,6 +267,21 @@ function CookiesSection({
 
       {currentValidation && uploadState.phase !== "uploading" && uploadState.phase !== "validating" && (
         <ValidationCard validation={currentValidation} />
+      )}
+
+      {status?.ageDays !== undefined && status.ageDays >= 21 && uploadState.phase === "idle" && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 flex items-start gap-2">
+          <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-semibold text-amber-600">
+              Cookies are {status.ageDays} days old — may be expired
+            </p>
+            <p className="text-xs text-amber-700/80 dark:text-amber-400/80 leading-relaxed mt-0.5">
+              YouTube cookies typically expire every 3–4 weeks. If you're seeing bot-detection errors,
+              export fresh cookies from a logged-in browser session and replace the file below.
+            </p>
+          </div>
+        </div>
       )}
 
       <div className="flex gap-2 flex-wrap">

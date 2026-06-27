@@ -1307,7 +1307,9 @@ export async function registerBintunetRoutes(
     const configured = fs.existsSync(cookiesPath);
     if (configured) {
       const validation = validateNetscapeCookies(cookiesPath, YT_REQUIRED_TOKENS, "youtube");
-      res.json({ configured, validation });
+      const mtime = fs.statSync(cookiesPath).mtime;
+      const ageDays = Math.floor((Date.now() - mtime.getTime()) / 86_400_000);
+      res.json({ configured, validation, lastModified: mtime.toISOString(), ageDays });
     } else {
       res.json({ configured });
     }
@@ -1345,7 +1347,9 @@ export async function registerBintunetRoutes(
     const configured = fs.existsSync(tikTokCookiesPath);
     if (configured) {
       const validation = validateNetscapeCookies(tikTokCookiesPath, TIKTOK_REQUIRED_TOKENS, "tiktok");
-      res.json({ configured, validation });
+      const mtime = fs.statSync(tikTokCookiesPath).mtime;
+      const ageDays = Math.floor((Date.now() - mtime.getTime()) / 86_400_000);
+      res.json({ configured, validation, lastModified: mtime.toISOString(), ageDays });
     } else {
       res.json({ configured });
     }
@@ -1383,7 +1387,9 @@ export async function registerBintunetRoutes(
     const configured = fs.existsSync(xCookiesPath);
     if (configured) {
       const validation = validateNetscapeCookies(xCookiesPath, X_REQUIRED_TOKENS, "x.com");
-      res.json({ configured, validation });
+      const mtime = fs.statSync(xCookiesPath).mtime;
+      const ageDays = Math.floor((Date.now() - mtime.getTime()) / 86_400_000);
+      res.json({ configured, validation, lastModified: mtime.toISOString(), ageDays });
     } else {
       res.json({ configured });
     }

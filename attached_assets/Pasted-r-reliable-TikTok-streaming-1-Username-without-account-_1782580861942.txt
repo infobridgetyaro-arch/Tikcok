@@ -1,0 +1,434 @@
+r reliable TikTok streaming
+
+1.
+Username without @ — account must be live right now
+2.
+Uses streamlink + yt-dlp with automatic failover
+3.
+Enable 24/7 (Auto-Restart) for reconnect on drops
+4.
+Ensure streamlink is installed on the server for best reliability
+Output Destinations
+YouTube Key
+••••••••••••••••••••••••
+fb
+Facebook Key
+(opt.)
+Optional
+Instagram Key
+(opt.)
+Instagram stream key
+TikTok Key
+(opt.)
+TikTok Live Studio stream key
+YouTube Channel ID
+(for stats & chat)
+UCus-z4PcHiyQsaxYZnk2WrA
+Layout
+Desktop
+Quality
+Best
+FPS
+25
+
+Logs
+200
+[17:15:28] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:29] Progress: 20216 frames | N/A | 00:13:28.60
+
+[17:15:30] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:30] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:32] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:32] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:34] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:34] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:36] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:36] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:38] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:38] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:40] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:40] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:42] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:42] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:44] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:44] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:46] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:46] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:48] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:48] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:50] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:50] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:52] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:52] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:54] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:54] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:56] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:56] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:58] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:15:58] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:15:59] Progress: 20961 frames | N/A | 00:13:58.40
+
+[17:16:00] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:00] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:02] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:02] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:04] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:04] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:06] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:06] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:08] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:08] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:11] [ffmpeg] [h264 @ 0x5651f4de2fc0]
+
+[17:16:11] [ffmpeg] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:11] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:13] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:13] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:15] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:15] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:17] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:17] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:19] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:19] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:21] [ffmpeg] [h264 @ 0x5651f4de2fc0]
+
+[17:16:21] [ffmpeg] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:21] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:23] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:23] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:25] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:25] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:27] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:27] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:29] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:29] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:30] Progress: 21701 frames | N/A | 00:14:28.00
+
+[17:16:31] [ffmpeg] [h264 @ 0x5651f4de2fc0]
+
+[17:16:31] [ffmpeg] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:31] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:33] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:33] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:35] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:35] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:37] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:37] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:39] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:39] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:41] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:41] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:43] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:43] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:45] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:45] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:47] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:47] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:49] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:49] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:51] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:51] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:53] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:53] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:55] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:55] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:57] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:57] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:16:59] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:16:59] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:00] Progress: 22446 frames | N/A | 00:14:57.80
+
+[17:17:02] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:02] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:04] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:04] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:06] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:06] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:08] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:08] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:10] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:10] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:12] [ffmpeg] [h264 @ 0x5651f4de2fc0]
+
+[17:17:12] [ffmpeg] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:12] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:14] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:14] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:16] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:16] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:18] [ffmpeg] [h264 @ 0x5651f4de2fc0]
+
+[17:17:18] [ffmpeg] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:18] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:20] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:20] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:22] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:22] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:24] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:24] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:26] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:26] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:28] [ffmpeg] [h264 @ 0x5651f4de2fc0]
+
+[17:17:28] [ffmpeg] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:28] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:30] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:30] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:30] Progress: 23189 frames | N/A | 00:15:27.52
+
+[17:17:32] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:32] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:34] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:34] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:36] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:36] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:38] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:38] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:40] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:40] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:42] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:42] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:44] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:44] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:46] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:46] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:49] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:49] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:51] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:51] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:53] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:53] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:55] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:55] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:57] [ffmpeg] [h264 @ 0x5651f4de2fc0]
+
+[17:17:57] [ffmpeg] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:57] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:17:59] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:17:59] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:18:01] Progress: 23931 frames | N/A | 00:15:57.24
+
+[17:18:01] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:18:01] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:18:03] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:18:03] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:18:05] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:18:05] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:18:07] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:18:07] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:18:09] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:18:09] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:18:11] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:18:11] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:18:13] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:18:13] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:18:15] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:18:15] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:18:17] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:18:17] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:18:19] [ffmpeg] [h264 @ 0x5651f4de2fc0]
+
+[17:18:19] [ffmpeg] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:18:19] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:18:21] [ffmpeg] [h264 @ 0x5651f4de2fc0] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:18:21] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:18:23] [ffmpeg] [h264 @ 0x5651f4de2fc0]
+
+[17:18:23] [ffmpeg] Late SEI is not implemented. Update your FFmpeg version to the newest one from Git. If the problem still occurs, it means that your file has a feature which has not been implemented.
+
+[17:18:23] [ffmpeg] [h264 @ 0x5651f4de2fc0] If you want to help, upload a sample of this file to https://streams.videolan.org/upload/ and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)
+
+[17:18:24] [ffmpeg] [tee @ 0x5651f51bed40] All tee outputs failed.
+
+[17:18:24] [ffmpeg] RTMP output failed — reconnecting in 2s...
+
+[17:18:24] [ffmpeg] [out#0/tee @ 0x5651f51bec00] Error muxing a packet
+
+[17:18:24] FFmpeg exited (code: null, signal: SIGKILL)
+
+[17:18:29] --- Starting stream ---
+
+[17:18:29] Quality: best | FPS: 25 | Layout: desktop
+
+[17:18:29] Audio: On | Auto-restart: On
+
+[17:18:29] Overlay: burn-in enabled (canvas → FFmpeg pipe)
+
+[17:18:29] Fetching TikTok live stream for @jetstream.uk...
+
+[17:18:29] Using FLV stream input
+
+[17:18:29] Output: YouTube
+
+[17:18:29] Launching FFmpeg (1s GOP, 5s RTMP timeout, stall watchdog active)...
