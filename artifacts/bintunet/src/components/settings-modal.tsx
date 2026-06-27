@@ -1,25 +1,138 @@
 import { useState, useRef, useEffect } from "react";
-import { X, Upload, Trash2, CheckCircle2, AlertCircle, Cookie, ExternalLink } from "lucide-react";
+import {
+  X, Upload, Trash2, CheckCircle2, AlertCircle, Cookie,
+  ExternalLink, ShieldCheck, ShieldX, ShieldAlert, Loader2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+
+interface CookieValidation {
+  valid: boolean;
+  format: boolean;
+  found: string[];
+  missing: string[];
+  message: string;
+  detail?: string;
+}
 
 interface CookiesStatus {
   configured: boolean;
+  validation?: CookieValidation;
+}
+
+type UploadState =
+  | { phase: "idle" }
+  | { phase: "uploading"; percent: number }
+  | { phase: "validating" }
+  | { phase: "done"; validation: CookieValidation }
+  | { phase: "error"; message: string };
+
+function TokenPill({ name, found }: { name: string; found: boolean }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded-md border ${
+        found
+          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+          : "border-destructive/40 bg-destructive/10 text-destructive"
+      }`}
+    >
+      {found ? (
+        <CheckCircle2 className="w-2.5 h-2.5 shrink-0" />
+      ) : (
+        <AlertCircle className="w-2.5 h-2.5 shrink-0" />
+      )}
+      {name}
+    </span>
+  );
+}
+
+function ValidationCard({ validation }: { validation: CookieValidation }) {
+  const allTokens = [...validation.found, ...validation.missing];
+  return (
+    <div
+      className={`rounded-xl border p-3.5 space-y-2.5 ${
+        validation.valid
+          ? "border-emerald-500/30 bg-emerald-500/8"
+          : "border-destructive/30 bg-destructive/8"
+      }`}
+    >
+      <div className="flex items-start gap-2.5">
+        {validation.valid ? (
+          <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+        ) : validation.format ? (
+          <ShieldAlert className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+        ) : (
+          <ShieldX className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+        )}
+        <div className="space-y-1 min-w-0">
+          <p
+            className={`text-xs font-semibold leading-snug ${
+              validation.valid ? "text-emerald-700 dark:text-emerald-400" : "text-destructive"
+            }`}
+          >
+            {validation.valid ? "Validation passed" : "Validation failed"}
+          </p>
+          <p className="text-xs text-muted-foreground leading-relaxed">{validation.message}</p>
+          {validation.detail && (
+            <p className="text-xs text-muted-foreground/80 leading-relaxed italic">
+              {validation.detail}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {allTokens.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+            Auth tokens
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {validation.found.map((t) => (
+              <TokenPill key={t} name={t} found />
+            ))}
+            {validation.missing.map((t) => (
+              <TokenPill key={t} name={t} found={false} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UploadProgress({ percent }: { percent: number }) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          Uploading…
+        </span>
+        <span className="font-mono font-semibold tabular-nums">{percent}%</span>
+      </div>
+      <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+        <div
+          className="h-full rounded-full bg-primary transition-all duration-150 ease-out"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+    </div>
+  );
 }
 
 function CookiesSection({
   label,
   endpoint,
   hint,
+  requiredTokens,
 }: {
   label: string;
   endpoint: string;
   hint: string;
+  requiredTokens: string[];
 }) {
   const [status, setStatus] = useState<CookiesStatus | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [uploadState, setUploadState] = useState<UploadState>({ phase: "idle" });
   const [removing, setRemoving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const fetchStatus = async () => {
@@ -29,54 +142,80 @@ function CookiesSection({
     } catch {}
   };
 
-  useEffect(() => { fetchStatus(); }, [endpoint]);
+  useEffect(() => {
+    fetchStatus();
+  }, [endpoint]);
 
-  const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setUploading(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      const form = new FormData();
-      form.append("cookies", file);
-      const res = await fetch(endpoint, {
-        method: "POST",
-        credentials: "include",
-        body: form,
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setSuccess(data.message || "Cookies uploaded successfully.");
-        await fetchStatus();
-      } else {
-        setError(data.message || "Upload failed.");
-      }
-    } catch {
-      setError("Upload failed — check your connection.");
-    }
-    setUploading(false);
     if (fileRef.current) fileRef.current.value = "";
+
+    const form = new FormData();
+    form.append("cookies", file);
+
+    const xhr = new XMLHttpRequest();
+
+    xhr.upload.addEventListener("progress", (ev) => {
+      if (ev.lengthComputable) {
+        const pct = Math.round((ev.loaded / ev.total) * 100);
+        setUploadState({ phase: "uploading", percent: pct });
+      }
+    });
+
+    xhr.upload.addEventListener("load", () => {
+      setUploadState({ phase: "validating" });
+    });
+
+    xhr.addEventListener("load", async () => {
+      try {
+        const data = JSON.parse(xhr.responseText) as {
+          ok?: boolean;
+          saved?: boolean;
+          validation?: CookieValidation;
+          message?: string;
+        };
+        if (xhr.status >= 200 && xhr.status < 300 && data.validation) {
+          setUploadState({ phase: "done", validation: data.validation });
+          await fetchStatus();
+        } else {
+          setUploadState({
+            phase: "error",
+            message: data.message || `Upload failed (HTTP ${xhr.status}).`,
+          });
+        }
+      } catch {
+        setUploadState({ phase: "error", message: "Unexpected server response." });
+      }
+    });
+
+    xhr.addEventListener("error", () => {
+      setUploadState({ phase: "error", message: "Upload failed — check your connection." });
+    });
+
+    xhr.open("POST", endpoint);
+    xhr.withCredentials = true;
+    setUploadState({ phase: "uploading", percent: 0 });
+    xhr.send(form);
   };
 
   const onRemove = async () => {
     setRemoving(true);
-    setError(null);
-    setSuccess(null);
+    setUploadState({ phase: "idle" });
     try {
-      const res = await fetch(endpoint, { method: "DELETE", credentials: "include" });
-      const data = await res.json();
-      if (res.ok) {
-        setSuccess(data.message || "Cookies removed.");
-        await fetchStatus();
-      } else {
-        setError(data.message || "Remove failed.");
-      }
-    } catch {
-      setError("Remove failed — check your connection.");
-    }
+      await fetch(endpoint, { method: "DELETE", credentials: "include" });
+      await fetchStatus();
+    } catch {}
     setRemoving(false);
   };
+
+  const isUploading =
+    uploadState.phase === "uploading" || uploadState.phase === "validating";
+
+  const currentValidation =
+    uploadState.phase === "done"
+      ? uploadState.validation
+      : status?.validation ?? null;
 
   return (
     <div className="rounded-xl border bg-muted/20 p-4 space-y-3">
@@ -84,41 +223,73 @@ function CookiesSection({
         <Cookie className="w-4 h-4 text-primary shrink-0" />
         <span className="font-semibold text-sm">{label}</span>
         {status && (
-          <span className={`ml-auto text-xs font-medium flex items-center gap-1 ${status.configured ? "text-emerald-500" : "text-muted-foreground"}`}>
-            {status.configured
-              ? <><CheckCircle2 className="w-3.5 h-3.5" /> Configured</>
-              : <><AlertCircle className="w-3.5 h-3.5" /> Not configured</>
-            }
+          <span
+            className={`ml-auto text-xs font-medium flex items-center gap-1 ${
+              status.configured && currentValidation?.valid
+                ? "text-emerald-500"
+                : status.configured
+                ? "text-amber-500"
+                : "text-muted-foreground"
+            }`}
+          >
+            {status.configured && currentValidation?.valid ? (
+              <><CheckCircle2 className="w-3.5 h-3.5" /> Verified</>
+            ) : status.configured ? (
+              <><AlertCircle className="w-3.5 h-3.5" /> Needs attention</>
+            ) : (
+              <><AlertCircle className="w-3.5 h-3.5" /> Not configured</>
+            )}
           </span>
         )}
       </div>
 
       <p className="text-xs text-muted-foreground leading-relaxed">{hint}</p>
 
-      {error && (
-        <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">{error}</p>
-      )}
-      {success && (
-        <p className="text-xs text-emerald-600 bg-emerald-500/10 rounded-lg px-3 py-2">{success}</p>
+      {uploadState.phase === "uploading" && (
+        <UploadProgress percent={uploadState.percent} />
       )}
 
-      <div className="flex gap-2">
+      {uploadState.phase === "validating" && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+          Validating cookies…
+        </div>
+      )}
+
+      {uploadState.phase === "error" && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/8 px-3 py-2.5 flex items-start gap-2">
+          <AlertCircle className="w-3.5 h-3.5 text-destructive shrink-0 mt-0.5" />
+          <p className="text-xs text-destructive leading-relaxed">{uploadState.message}</p>
+        </div>
+      )}
+
+      {currentValidation && uploadState.phase !== "uploading" && uploadState.phase !== "validating" && (
+        <ValidationCard validation={currentValidation} />
+      )}
+
+      <div className="flex gap-2 flex-wrap">
         <Button
           variant="outline"
           size="sm"
           className="gap-2 text-xs"
-          disabled={uploading}
+          disabled={isUploading || removing}
           onClick={() => fileRef.current?.click()}
         >
           <Upload className="w-3.5 h-3.5" />
-          {uploading ? "Uploading…" : status?.configured ? "Replace cookies.txt" : "Upload cookies.txt"}
+          {isUploading
+            ? uploadState.phase === "validating"
+              ? "Validating…"
+              : "Uploading…"
+            : status?.configured
+            ? "Replace cookies.txt"
+            : "Upload cookies.txt"}
         </Button>
         {status?.configured && (
           <Button
             variant="ghost"
             size="sm"
             className="gap-2 text-xs text-destructive hover:text-destructive"
-            disabled={removing}
+            disabled={isUploading || removing}
             onClick={onRemove}
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -165,17 +336,28 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 space-y-2">
           <p className="text-sm font-semibold text-amber-600">Why cookies are required for YouTube</p>
           <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
-            YouTube enforces a <strong>Proof of Origin Token (rqh/1)</strong> on all live stream segments. Without a valid browser session, every segment download returns 403 Forbidden — regardless of User-Agent or IP. Uploading cookies from your logged-in YouTube session gives the server a valid token and unblocks streaming.
+            YouTube enforces a <strong>Proof of Origin Token (rqh/1)</strong> on all live stream
+            segments. Without a valid browser session, every segment download returns 403 Forbidden
+            — regardless of User-Agent or IP. Uploading cookies from your logged-in YouTube session
+            gives the server a valid token and unblocks streaming.
           </p>
         </div>
 
         <div className="space-y-2">
           <h3 className="text-sm font-semibold">How to export cookies.txt</h3>
           <ol className="text-xs text-muted-foreground space-y-1.5 list-decimal list-inside leading-relaxed">
-            <li>Install the <strong>"Get cookies.txt LOCALLY"</strong> extension for Chrome/Edge/Firefox</li>
-            <li>Log into YouTube in your browser</li>
-            <li>Navigate to <code className="bg-muted rounded px-1">youtube.com</code></li>
-            <li>Click the extension icon → Export → <strong>Export as Netscape HTTP Cookie File</strong></li>
+            <li>
+              Install the <strong>"Get cookies.txt LOCALLY"</strong> extension for Chrome/Edge/Firefox
+            </li>
+            <li>Log into YouTube (or TikTok) in your browser</li>
+            <li>
+              Navigate to <code className="bg-muted rounded px-1">youtube.com</code> or{" "}
+              <code className="bg-muted rounded px-1">tiktok.com</code>
+            </li>
+            <li>
+              Click the extension icon → Export →{" "}
+              <strong>Export as Netscape HTTP Cookie File</strong>
+            </li>
             <li>Save the file and upload it below</li>
           </ol>
           <a
@@ -193,12 +375,14 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           label="YouTube Cookies"
           endpoint="/api/settings/cookies"
           hint="Required for YouTube live sources. These cookies let yt-dlp authenticate with YouTube's CDN so segment downloads succeed."
+          requiredTokens={["SID", "SAPISID", "SSID", "HSID", "APISID"]}
         />
 
         <CookiesSection
           label="TikTok Cookies"
           endpoint="/api/settings/tiktok-cookies"
           hint="Optional — improves TikTok live stream access. Log in to TikTok in your browser, then export and upload cookies.txt."
+          requiredTokens={["sessionid"]}
         />
       </div>
     </div>

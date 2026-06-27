@@ -1153,14 +1153,95 @@ export async function registerBintunetRoutes(
     res.sendFile(filePath);
   });
 
+  // ── Cookie file validator ──────────────────────────────────────────────────
+  type CookieValidationResult = {
+    valid: boolean;
+    format: boolean;
+    found: string[];
+    missing: string[];
+    message: string;
+    detail?: string;
+  };
+
+  function validateNetscapeCookies(
+    filePath: string,
+    requiredTokens: string[],
+    platform: "youtube" | "tiktok"
+  ): CookieValidationResult {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(filePath, "utf-8");
+    } catch {
+      return { valid: false, format: false, found: [], missing: requiredTokens, message: "Could not read the uploaded file." };
+    }
+
+    const lines = raw.split("\n");
+    const hasHeader = lines.some((l) => l.trim().startsWith("# Netscape HTTP Cookie File") || l.trim().startsWith("# HTTP Cookie File"));
+
+    if (!hasHeader) {
+      return {
+        valid: false,
+        format: false,
+        found: [],
+        missing: requiredTokens,
+        message: "Invalid file format — this does not appear to be a Netscape HTTP Cookie File.",
+        detail: "The file must start with '# Netscape HTTP Cookie File'. Use the 'Get cookies.txt LOCALLY' browser extension to export the correct format.",
+      };
+    }
+
+    const cookieNames = new Set<string>();
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const parts = t.split("\t");
+      if (parts.length >= 7) {
+        cookieNames.add(parts[5].trim());
+      }
+    }
+
+    const found = requiredTokens.filter((t) => cookieNames.has(t));
+    const missing = requiredTokens.filter((t) => !cookieNames.has(t));
+    const valid = missing.length === 0;
+
+    if (!valid) {
+      const platformLabel = platform === "youtube" ? "YouTube" : "TikTok";
+      return {
+        valid: false,
+        format: true,
+        found,
+        missing,
+        message: `Your cookies.txt is uploaded but ${platformLabel} still requires sign-in — the cookies may be expired or missing auth tokens (${missing.join(", ")}).`,
+        detail: "Export fresh cookies from a logged-in Chrome/Firefox session using a browser extension like 'Get cookies.txt LOCALLY'. Make sure you are signed in before exporting.",
+      };
+    }
+
+    return {
+      valid: true,
+      format: true,
+      found,
+      missing: [],
+      message: platform === "youtube"
+        ? "YouTube cookies verified — auth tokens found and applied."
+        : "TikTok cookies verified — auth tokens found and applied.",
+    };
+  }
+
   // ── YouTube Cookies management ─────────────────────────────────────────────
   // Cookies are stored as cookies.txt (Netscape format) at <cwd>/cookies.txt.
   // They allow yt-dlp to bypass bot detection and age restrictions on YouTube.
   const cookiesUpload = multer({ dest: uploadDir });
   const cookiesPath = path.join(process.cwd(), "cookies.txt");
 
+  const YT_REQUIRED_TOKENS = ["SID", "SAPISID", "SSID", "HSID", "APISID"];
+
   app.get("/api/settings/cookies", requireAuth, (_req: Request, res: Response): void => {
-    res.json({ configured: fs.existsSync(cookiesPath) });
+    const configured = fs.existsSync(cookiesPath);
+    if (configured) {
+      const validation = validateNetscapeCookies(cookiesPath, YT_REQUIRED_TOKENS, "youtube");
+      res.json({ configured, validation });
+    } else {
+      res.json({ configured });
+    }
   });
 
   app.post(
@@ -1172,9 +1253,9 @@ export async function registerBintunetRoutes(
         res.status(400).json({ message: "No cookies file provided" });
         return;
       }
-      // Move temp upload to the dedicated cookies.txt path
       fs.renameSync(req.file.path, cookiesPath);
-      res.json({ ok: true, message: "Cookies saved — YouTube URLs will now use them" });
+      const validation = validateNetscapeCookies(cookiesPath, YT_REQUIRED_TOKENS, "youtube");
+      res.json({ ok: validation.valid, saved: true, validation });
     }
   );
 
@@ -1189,8 +1270,16 @@ export async function registerBintunetRoutes(
   const tikTokCookiesUpload = multer({ dest: uploadDir });
   const tikTokCookiesPath = path.join(process.cwd(), "tiktok-cookies.txt");
 
+  const TIKTOK_REQUIRED_TOKENS = ["sessionid"];
+
   app.get("/api/settings/tiktok-cookies", requireAuth, (_req: Request, res: Response): void => {
-    res.json({ configured: fs.existsSync(tikTokCookiesPath) });
+    const configured = fs.existsSync(tikTokCookiesPath);
+    if (configured) {
+      const validation = validateNetscapeCookies(tikTokCookiesPath, TIKTOK_REQUIRED_TOKENS, "tiktok");
+      res.json({ configured, validation });
+    } else {
+      res.json({ configured });
+    }
   });
 
   app.post(
@@ -1203,7 +1292,8 @@ export async function registerBintunetRoutes(
         return;
       }
       fs.renameSync(req.file.path, tikTokCookiesPath);
-      res.json({ ok: true, message: "TikTok cookies saved" });
+      const validation = validateNetscapeCookies(tikTokCookiesPath, TIKTOK_REQUIRED_TOKENS, "tiktok");
+      res.json({ ok: validation.valid, saved: true, validation });
     }
   );
 
