@@ -49,6 +49,7 @@ export interface OverlayState {
 
   // ── Live stats bar ───────────────────────────────────────────────────────
   statsActive: boolean;
+  statsStyle: string;   // "TV" | "Neon" | "Glass" | "YouTube" | "Sport"
   statsPosition: OverlayPosition;
   subs: string | null;
   viewers: string | null;
@@ -171,6 +172,7 @@ export function defaultOverlayState(): OverlayState {
     breakText: "Be right back — taking a short break!",
     breakStyle: "Countdown",
     statsActive: true,
+    statsStyle: "TV",
     statsPosition: { x: 2, y: 2 },
     subs: null,
     viewers: null,
@@ -1021,49 +1023,336 @@ export class OverlayRenderer {
   // ── STATS BAR ──────────────────────────────────────────────────────────────
 
   private drawStats() {
+    const style = (this.state.statsStyle ?? "TV");
+    switch (style) {
+      case "Neon":    return this.drawStatsNeon();
+      case "Glass":   return this.drawStatsGlass();
+      case "YouTube": return this.drawStatsYouTube();
+      case "Sport":   return this.drawStatsSport();
+      case "TV":
+      default:        return this.drawStatsTV();
+    }
+  }
+
+  private drawStatsTV() {
     const { ctx, W, H, state } = this;
     if (!state.subs && !state.viewers) return;
-
     const effPos = this.pos(state.statsPosition, state.mobileStatsPosition);
     const x = this.px(effPos.x, W) || 14;
     const y = this.px(effPos.y, H) || 14;
-    const bh = Math.max(22, Math.round(H * 0.038));
-    const liveWFrac = this.isVertical ? 0.13 : 0.085;
-    const statWFrac = this.isVertical ? 0.16 : 0.115;
-    let cx = x;
+    const bh = Math.max(24, Math.round(H * 0.040));
+    const r = Math.round(bh * 0.30);
+    const fs = Math.round(bh * 0.50);
+    const labelFs = Math.round(bh * 0.33);
+    const dotR = Math.round(bh * 0.18);
+    const padX = Math.round(bh * 0.55);
 
-    const liveW = Math.round(W * liveWFrac);
-    ctx.fillStyle = "rgba(0,0,0,0.82)";
-    ctx.fillRect(cx, y, liveW, bh);
+    ctx.font = `bold ${fs}px sans-serif`;
+    const liveTxtW = ctx.measureText("LIVE").width;
+    const liveW = liveTxtW + padX * 2 + dotR * 2 + 8;
+    ctx.fillStyle = "rgba(8,8,14,0.92)";
+    this.fillRR(x, y, liveW, bh, r);
+    ctx.strokeStyle = "rgba(255,255,255,0.12)";
+    ctx.lineWidth = 1;
+    this.strokeRR(x, y, liveW, bh, r);
     ctx.fillStyle = "#e53e3e";
     ctx.beginPath();
-    ctx.arc(cx + bh * 0.42, y + bh / 2, bh * 0.22, 0, Math.PI * 2);
+    ctx.arc(x + padX, y + bh / 2, dotR, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = "#fff";
-    ctx.font = `bold ${Math.round(bh * 0.5)}px sans-serif`;
+    ctx.font = `bold ${fs}px sans-serif`;
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
-    ctx.fillText("LIVE", cx + bh * 0.82, y + bh / 2);
-    cx += liveW + 4;
+    ctx.fillText("LIVE", x + padX + dotR + 6, y + bh / 2);
 
+    let cx = x + liveW + 5;
     const statBadge = (val: string, label: string, color: string) => {
-      const bw = Math.round(W * statWFrac);
-      ctx.fillStyle = "rgba(0,0,0,0.82)";
-      ctx.fillRect(cx, y, bw, bh);
-      ctx.fillStyle = color;
       ctx.font = `bold ${Math.round(bh * 0.52)}px sans-serif`;
+      const valW = ctx.measureText(val).width;
+      ctx.font = `${labelFs}px sans-serif`;
+      const lblW = ctx.measureText(label).width;
+      const bw2 = valW + lblW + padX * 2 + 10;
+      ctx.fillStyle = "rgba(8,8,14,0.92)";
+      this.fillRR(cx, y, bw2, bh, r);
+      ctx.strokeStyle = "rgba(255,255,255,0.10)";
+      ctx.lineWidth = 1;
+      this.strokeRR(cx, y, bw2, bh, r);
+      ctx.font = `bold ${Math.round(bh * 0.52)}px sans-serif`;
+      ctx.fillStyle = color;
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
-      ctx.fillText(val, cx + 6, y + bh / 2);
-      const tw = ctx.measureText(val).width + 10;
-      ctx.fillStyle = "rgba(255,255,255,0.5)";
-      ctx.font = `${Math.round(bh * 0.38)}px sans-serif`;
-      ctx.fillText(label, cx + 6 + tw, y + bh / 2);
-      cx += bw + 4;
+      ctx.fillText(val, cx + padX, y + bh / 2);
+      ctx.font = `${labelFs}px sans-serif`;
+      ctx.fillStyle = "rgba(255,255,255,0.45)";
+      ctx.fillText(label, cx + padX + valW + 5, y + bh / 2);
+      cx += bw2 + 4;
     };
 
     if (state.subs) statBadge(state.subs, "subs", "#a78bfa");
     if (state.viewers) statBadge(state.viewers, "viewers", "#34d399");
+    ctx.textBaseline = "alphabetic";
+  }
+
+  private drawStatsNeon() {
+    const { ctx, W, H, state } = this;
+    if (!state.subs && !state.viewers) return;
+    const effPos = this.pos(state.statsPosition, state.mobileStatsPosition);
+    const x = this.px(effPos.x, W) || 14;
+    const y = this.px(effPos.y, H) || 14;
+    const bh = Math.max(24, Math.round(H * 0.042));
+    const r = Math.round(bh * 0.35);
+    const fs = Math.round(bh * 0.50);
+    const labelFs = Math.round(bh * 0.32);
+    const padX = Math.round(bh * 0.50);
+    const t2 = this.elapsed();
+    const pulse = 0.5 + 0.5 * Math.sin(t2 * 2);
+
+    // Measure widths to size the combined badge
+    ctx.font = `bold ${fs}px sans-serif`;
+    let totalW = padX + ctx.measureText("LIVE").width + padX;
+    if (state.subs) {
+      totalW += ctx.measureText(state.subs).width + 6;
+      ctx.font = `${labelFs}px sans-serif`;
+      totalW += ctx.measureText(" subs").width + padX;
+      ctx.font = `bold ${fs}px sans-serif`;
+    }
+    if (state.viewers) {
+      totalW += ctx.measureText(state.viewers).width + 6;
+      ctx.font = `${labelFs}px sans-serif`;
+      totalW += ctx.measureText(" viewers").width + padX;
+      ctx.font = `bold ${fs}px sans-serif`;
+    }
+
+    const bg = ctx.createLinearGradient(x, y, x + totalW, y);
+    bg.addColorStop(0, "rgba(30,0,60,0.94)");
+    bg.addColorStop(0.5, "rgba(0,20,50,0.94)");
+    bg.addColorStop(1, "rgba(30,0,60,0.94)");
+    ctx.fillStyle = bg;
+    this.fillRR(x, y, totalW, bh, r);
+    ctx.strokeStyle = `rgba(0,200,255,${0.45 + pulse * 0.40})`;
+    ctx.lineWidth = 1.5;
+    this.strokeRR(x, y, totalW, bh, r);
+
+    let cx = x + padX;
+    ctx.font = `bold ${fs}px sans-serif`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.shadowColor = `rgba(255,60,60,${0.7 + pulse * 0.3})`;
+    ctx.shadowBlur = 8 + pulse * 5;
+    ctx.fillStyle = "#ff5555";
+    ctx.fillText("LIVE", cx, y + bh / 2);
+    ctx.shadowBlur = 0;
+    cx += ctx.measureText("LIVE").width + padX;
+
+    if (state.subs) {
+      const vw = ctx.measureText(state.subs).width;
+      ctx.shadowColor = "rgba(167,139,250,0.7)";
+      ctx.shadowBlur = 5;
+      ctx.fillStyle = "#c4b5fd";
+      ctx.fillText(state.subs, cx, y + bh / 2);
+      ctx.shadowBlur = 0;
+      cx += vw + 4;
+      ctx.font = `${labelFs}px sans-serif`;
+      ctx.fillStyle = "rgba(255,255,255,0.38)";
+      ctx.fillText(" subs", cx, y + bh / 2);
+      cx += ctx.measureText(" subs").width + padX;
+      ctx.font = `bold ${fs}px sans-serif`;
+    }
+    if (state.viewers) {
+      const vw = ctx.measureText(state.viewers).width;
+      ctx.shadowColor = "rgba(52,211,153,0.7)";
+      ctx.shadowBlur = 5;
+      ctx.fillStyle = "#6ee7b7";
+      ctx.fillText(state.viewers, cx, y + bh / 2);
+      ctx.shadowBlur = 0;
+      cx += vw + 4;
+      ctx.font = `${labelFs}px sans-serif`;
+      ctx.fillStyle = "rgba(255,255,255,0.38)";
+      ctx.fillText(" viewers", cx, y + bh / 2);
+    }
+    ctx.textBaseline = "alphabetic";
+  }
+
+  private drawStatsGlass() {
+    const { ctx, W, H, state } = this;
+    if (!state.subs && !state.viewers) return;
+    const effPos = this.pos(state.statsPosition, state.mobileStatsPosition);
+    const x = this.px(effPos.x, W) || 14;
+    const y = this.px(effPos.y, H) || 14;
+    const bh = Math.max(26, Math.round(H * 0.042));
+    const r = Math.round(bh * 0.38);
+    const fs = Math.round(bh * 0.48);
+    const labelFs = Math.round(bh * 0.30);
+    const padX = Math.round(bh * 0.50);
+    const dotR = Math.round(bh * 0.15);
+
+    ctx.font = `bold ${fs}px sans-serif`;
+    const liveW = ctx.measureText("LIVE").width + dotR * 2 + 10 + padX * 2;
+    ctx.fillStyle = "rgba(255,255,255,0.15)";
+    this.fillRR(x, y, liveW, bh, r);
+    ctx.save();
+    this.clipRR(x, y, liveW, bh, r);
+    const shine = ctx.createLinearGradient(x, y, x, y + bh * 0.4);
+    shine.addColorStop(0, "rgba(255,255,255,0.30)");
+    shine.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = shine;
+    ctx.fillRect(x, y, liveW, bh);
+    ctx.restore();
+    ctx.strokeStyle = "rgba(255,255,255,0.30)";
+    ctx.lineWidth = 1;
+    this.strokeRR(x, y, liveW, bh, r);
+    ctx.fillStyle = "#ff4444";
+    ctx.beginPath();
+    ctx.arc(x + padX + dotR, y + bh / 2, dotR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.font = `bold ${fs}px sans-serif`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText("LIVE", x + padX + dotR * 2 + 6, y + bh / 2);
+
+    let cx = x + liveW + 4;
+    const statPill = (val: string, label: string, color: string) => {
+      ctx.font = `bold ${fs}px sans-serif`;
+      const valW = ctx.measureText(val).width;
+      ctx.font = `${labelFs}px sans-serif`;
+      const lblW = ctx.measureText(label).width;
+      const bw2 = valW + lblW + padX * 2 + 8;
+      ctx.fillStyle = "rgba(255,255,255,0.12)";
+      this.fillRR(cx, y, bw2, bh, r);
+      ctx.save();
+      this.clipRR(cx, y, bw2, bh, r);
+      const sg = ctx.createLinearGradient(cx, y, cx, y + bh * 0.4);
+      sg.addColorStop(0, "rgba(255,255,255,0.22)");
+      sg.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = sg;
+      ctx.fillRect(cx, y, bw2, bh);
+      ctx.restore();
+      ctx.strokeStyle = "rgba(255,255,255,0.28)";
+      ctx.lineWidth = 1;
+      this.strokeRR(cx, y, bw2, bh, r);
+      ctx.font = `bold ${fs}px sans-serif`;
+      ctx.fillStyle = color;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(val, cx + padX, y + bh / 2);
+      ctx.font = `${labelFs}px sans-serif`;
+      ctx.fillStyle = "rgba(255,255,255,0.50)";
+      ctx.fillText(label, cx + padX + valW + 4, y + bh / 2);
+      cx += bw2 + 4;
+    };
+
+    if (state.subs) statPill(state.subs, " subs", "#e9d5ff");
+    if (state.viewers) statPill(state.viewers, " viewers", "#a7f3d0");
+    ctx.textBaseline = "alphabetic";
+  }
+
+  private drawStatsYouTube() {
+    const { ctx, W, H, state } = this;
+    if (!state.subs && !state.viewers) return;
+    const effPos = this.pos(state.statsPosition, state.mobileStatsPosition);
+    const x = this.px(effPos.x, W) || 14;
+    const y = this.px(effPos.y, H) || 14;
+    const bh = Math.max(24, Math.round(H * 0.040));
+    const r = Math.round(bh * 0.22);
+    const fs = Math.round(bh * 0.50);
+    const labelFs = Math.round(bh * 0.32);
+    const padX = Math.round(bh * 0.50);
+
+    ctx.font = `bold ${fs}px sans-serif`;
+    const liveW = ctx.measureText("● LIVE").width + padX * 2;
+    const liveGrad = ctx.createLinearGradient(x, y, x, y + bh);
+    liveGrad.addColorStop(0, "#cc0000");
+    liveGrad.addColorStop(1, "#990000");
+    ctx.fillStyle = liveGrad;
+    this.fillRR(x, y, liveW, bh, r);
+    ctx.fillStyle = "#fff";
+    ctx.font = `bold ${fs}px sans-serif`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText("● LIVE", x + padX, y + bh / 2);
+
+    let cx = x + liveW + 4;
+    const ytBadge = (val: string, label: string, color: string) => {
+      ctx.font = `bold ${Math.round(bh * 0.52)}px sans-serif`;
+      const valW = ctx.measureText(val).width;
+      ctx.font = `${labelFs}px sans-serif`;
+      const lblW = ctx.measureText(label).width;
+      const bw2 = valW + lblW + padX * 2 + 10;
+      ctx.fillStyle = "rgba(255,255,255,0.95)";
+      this.fillRR(cx, y, bw2, bh, r);
+      ctx.strokeStyle = "rgba(0,0,0,0.08)";
+      ctx.lineWidth = 1;
+      this.strokeRR(cx, y, bw2, bh, r);
+      ctx.font = `bold ${Math.round(bh * 0.52)}px sans-serif`;
+      ctx.fillStyle = color;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(val, cx + padX, y + bh / 2);
+      ctx.font = `${labelFs}px sans-serif`;
+      ctx.fillStyle = "rgba(30,30,30,0.65)";
+      ctx.fillText(label, cx + padX + valW + 5, y + bh / 2);
+      cx += bw2 + 4;
+    };
+
+    if (state.subs) ytBadge(state.subs, " subs", "#6d28d9");
+    if (state.viewers) ytBadge(state.viewers, " viewers", "#065f46");
+    ctx.textBaseline = "alphabetic";
+  }
+
+  private drawStatsSport() {
+    const { ctx, W, H, state } = this;
+    if (!state.subs && !state.viewers) return;
+    const effPos = this.pos(state.statsPosition, state.mobileStatsPosition);
+    const x = this.px(effPos.x, W) || 14;
+    const y = this.px(effPos.y, H) || 14;
+    const bh = Math.max(24, Math.round(H * 0.042));
+    const r = Math.round(bh * 0.18);
+    const fs = Math.round(bh * 0.48);
+    const labelFs = Math.round(bh * 0.30);
+    const padX = Math.round(bh * 0.45);
+    const t2 = this.elapsed();
+    const pulse = 0.5 + 0.5 * Math.sin(t2 * 2.0);
+
+    ctx.font = `bold ${fs}px sans-serif`;
+    const liveW = ctx.measureText("LIVE").width + padX * 2.5;
+    const og = ctx.createLinearGradient(x, y, x + liveW, y);
+    og.addColorStop(0, "#ea580c");
+    og.addColorStop(1, "#dc2626");
+    ctx.fillStyle = og;
+    this.fillRR(x, y, liveW, bh, r);
+    ctx.fillStyle = `rgba(255,255,255,${0.85 + pulse * 0.15})`;
+    ctx.font = `bold ${fs}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("LIVE", x + liveW / 2, y + bh / 2);
+
+    let cx = x + liveW + 4;
+    const sportBadge = (val: string, label: string, color: string) => {
+      ctx.font = `bold ${fs}px sans-serif`;
+      const valW = ctx.measureText(val).width;
+      ctx.font = `${labelFs}px sans-serif`;
+      const lblW = ctx.measureText(label).width;
+      const bw2 = valW + lblW + padX * 2 + 8;
+      ctx.fillStyle = "rgba(255,255,255,0.92)";
+      this.fillRR(cx, y, bw2, bh, r);
+      ctx.strokeStyle = color + "55";
+      ctx.lineWidth = 2;
+      this.strokeRR(cx, y, bw2, bh, r);
+      ctx.font = `bold ${fs}px sans-serif`;
+      ctx.fillStyle = color;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(val, cx + padX, y + bh / 2);
+      ctx.font = `${labelFs}px sans-serif`;
+      ctx.fillStyle = "rgba(0,0,0,0.50)";
+      ctx.fillText(label, cx + padX + valW + 4, y + bh / 2);
+      cx += bw2 + 4;
+    };
+
+    if (state.subs) sportBadge(state.subs, " SUBS", "#7c3aed");
+    if (state.viewers) sportBadge(state.viewers, " VIEWS", "#065f46");
+    ctx.textBaseline = "alphabetic";
   }
 
   // ── SUBSCRIBER COUNT OVERLAY ───────────────────────────────────────────────
@@ -1128,6 +1417,10 @@ export class OverlayRenderer {
       case "Animated": return this.drawAnimatedCounter(t);
       case "Card":     return this.drawCardBadge();
       case "Goal":     return this.drawGoalBar();
+      case "Neon":     return this.drawNeonSubCounter(t);
+      case "Glass":    return this.drawGlassSubCounter();
+      case "Sport":    return this.drawSportSubCounter(t);
+      case "Cinema":   return this.drawCinemaSubCounter(t);
       case "HUD":
       default:         return this.drawHUDCounter();
     }
@@ -1418,6 +1711,246 @@ export class OverlayRenderer {
     ctx.textAlign = "left";
     ctx.textBaseline = "bottom";
     ctx.fillText("SUBSCRIBERS", x + pad, y + bh - Math.round(bh * 0.06));
+    ctx.textBaseline = "alphabetic";
+  }
+
+  // ── NEW SUB OVERLAY STYLES ─────────────────────────────────────────────────
+
+  private drawNeonSubCounter(t: number) {
+    const { ctx, W, H, state } = this;
+    if (!state.subs) return;
+    const effPos = this.pos(state.subsPosition, state.mobileSubsPosition);
+    const x = this.px(effPos.x, W);
+    const y = this.px(effPos.y, H);
+    const bw = Math.round(W * (this.isVertical ? 0.44 : 0.24));
+    const bh = Math.round(H * (this.isVertical ? 0.10 : 0.09));
+    const radius = Math.round(bh * 0.30);
+    const pulse  = 0.5 + 0.5 * Math.sin(t * 1.8);
+    const pulse2 = 0.5 + 0.5 * Math.sin(t * 2.4 + 1);
+
+    // Neon gradient background
+    const bgGrad = ctx.createLinearGradient(x, y, x + bw, y + bh);
+    bgGrad.addColorStop(0, `rgba(88,28,220,${0.82 + pulse * 0.08})`);
+    bgGrad.addColorStop(0.5, `rgba(0,160,255,${0.78 + pulse2 * 0.08})`);
+    bgGrad.addColorStop(1, `rgba(88,28,220,${0.82 + pulse * 0.08})`);
+    ctx.fillStyle = bgGrad;
+    this.fillRR(x, y, bw, bh, radius);
+
+    // Inner glow border
+    ctx.strokeStyle = `rgba(0,220,255,${0.5 + pulse * 0.4})`;
+    ctx.lineWidth = 1.5;
+    this.strokeRR(x, y, bw, bh, radius);
+    // Outer soft glow
+    ctx.strokeStyle = `rgba(140,80,255,${0.20 + pulse2 * 0.18})`;
+    ctx.lineWidth = 5;
+    this.strokeRR(x - 2, y - 2, bw + 4, bh + 4, radius + 2);
+
+    // Count
+    const numFs = Math.round(bh * 0.44);
+    ctx.shadowColor = `rgba(0,220,255,${0.7 + pulse * 0.3})`;
+    ctx.shadowBlur = 10 + pulse * 7;
+    ctx.fillStyle = "#fff";
+    ctx.font = `bold ${numFs}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(state.subs, x + bw / 2, y + bh * 0.41);
+    ctx.shadowBlur = 0;
+
+    // Label
+    const labelFs = Math.round(bh * 0.22);
+    ctx.font = `bold ${labelFs}px sans-serif`;
+    ctx.fillStyle = `rgba(180,230,255,0.80)`;
+    ctx.fillText("SUBSCRIBERS", x + bw / 2, y + bh * 0.78);
+    ctx.textBaseline = "alphabetic";
+  }
+
+  private drawGlassSubCounter() {
+    const { ctx, W, H, state } = this;
+    if (!state.subs) return;
+    const effPos = this.pos(state.subsPosition, state.mobileSubsPosition);
+    const x = this.px(effPos.x, W);
+    const y = this.px(effPos.y, H);
+    const bw = Math.round(W * (this.isVertical ? 0.46 : 0.26));
+    const bh = Math.round(H * (this.isVertical ? 0.10 : 0.09));
+    const radius = Math.round(bh * 0.30);
+    const pad    = Math.round(bh * 0.15);
+    const iconD  = Math.round(bh * 0.55);
+
+    // Frosted glass background
+    const bgGrad = ctx.createLinearGradient(x, y, x, y + bh);
+    bgGrad.addColorStop(0, "rgba(255,255,255,0.22)");
+    bgGrad.addColorStop(1, "rgba(255,255,255,0.07)");
+    ctx.fillStyle = bgGrad;
+    this.fillRR(x, y, bw, bh, radius);
+
+    // Top shine for glass effect
+    ctx.save();
+    this.clipRR(x, y, bw, bh, radius);
+    const shine = ctx.createLinearGradient(x, y, x, y + bh * 0.38);
+    shine.addColorStop(0, "rgba(255,255,255,0.35)");
+    shine.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = shine;
+    ctx.fillRect(x, y, bw, bh);
+    ctx.restore();
+
+    // Glass border
+    ctx.strokeStyle = "rgba(255,255,255,0.35)";
+    ctx.lineWidth = 1.5;
+    this.strokeRR(x, y, bw, bh, radius);
+
+    // Purple icon circle
+    const cxI = x + pad + iconD / 2;
+    const cyI = y + bh / 2;
+    ctx.fillStyle = "rgba(139,92,246,0.88)";
+    ctx.beginPath();
+    ctx.arc(cxI, cyI, iconD / 2, 0, Math.PI * 2);
+    ctx.fill();
+    // Person icon
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(cxI, cyI - iconD * 0.15, iconD * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cxI, cyI + iconD * 0.20, iconD * 0.25, iconD * 0.20, 0, 0, Math.PI);
+    ctx.fill();
+
+    // Text area
+    const tx = x + pad + iconD + Math.round(bh * 0.10);
+    const labelFs = Math.round(bh * 0.20);
+    ctx.fillStyle = "rgba(255,255,255,0.58)";
+    ctx.font = `${labelFs}px sans-serif`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText("SUBSCRIBERS", tx, y + bh * 0.12);
+    const numFs = Math.round(bh * 0.44);
+    ctx.fillStyle = "#fff";
+    ctx.font = `bold ${numFs}px sans-serif`;
+    ctx.shadowColor = "rgba(139,92,246,0.55)";
+    ctx.shadowBlur = 6;
+    ctx.textBaseline = "middle";
+    ctx.fillText(state.subs, tx, y + bh * 0.63);
+    ctx.shadowBlur = 0;
+    ctx.textBaseline = "alphabetic";
+  }
+
+  private drawSportSubCounter(t: number) {
+    const { ctx, W, H, state } = this;
+    if (!state.subs) return;
+    const effPos = this.pos(state.subsPosition, state.mobileSubsPosition);
+    const x = this.px(effPos.x, W);
+    const y = this.px(effPos.y, H);
+    const bw = Math.round(W * (this.isVertical ? 0.48 : 0.28));
+    const bh = Math.round(H * (this.isVertical ? 0.075 : 0.068));
+    const radius  = Math.round(bh * 0.22);
+    const pulse   = 0.5 + 0.5 * Math.sin(t * 1.5);
+    const stripeW = Math.round(bw * 0.32);
+
+    // Orange gradient background
+    const bgGrad = ctx.createLinearGradient(x, y, x + bw, y);
+    bgGrad.addColorStop(0, "#e65100");
+    bgGrad.addColorStop(0.5, "#ff6d00");
+    bgGrad.addColorStop(1, "#e65100");
+    ctx.fillStyle = bgGrad;
+    this.fillRR(x, y, bw, bh, radius);
+
+    // Left dark stripe (clipped)
+    ctx.save();
+    this.clipRR(x, y, bw, bh, radius);
+    // Top sheen
+    const sheenGrad = ctx.createLinearGradient(x, y, x, y + bh);
+    sheenGrad.addColorStop(0, "rgba(255,255,255,0.18)");
+    sheenGrad.addColorStop(0.45, "rgba(255,255,255,0)");
+    ctx.fillStyle = sheenGrad;
+    ctx.fillRect(x, y, bw, bh);
+    // Dark stripe
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    ctx.fillRect(x, y, stripeW, bh);
+    ctx.restore();
+
+    // Divider
+    ctx.strokeStyle = "rgba(255,255,255,0.28)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x + stripeW, y + bh * 0.15);
+    ctx.lineTo(x + stripeW, y + bh * 0.85);
+    ctx.stroke();
+
+    // Border
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.lineWidth = 1;
+    this.strokeRR(x, y, bw, bh, radius);
+
+    // SUBS label + dot in left stripe
+    const liveFs = Math.round(bh * 0.38);
+    const dotR   = Math.round(bh * 0.09);
+    ctx.fillStyle = `rgba(255,255,255,${0.80 + pulse * 0.20})`;
+    ctx.beginPath();
+    ctx.arc(x + stripeW * 0.22, y + bh / 2, dotR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.font = `bold ${liveFs}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("SUBS", x + stripeW * 0.62, y + bh / 2);
+
+    // Count in right section
+    const numFs = Math.round(bh * 0.44);
+    ctx.font = `bold ${numFs}px sans-serif`;
+    ctx.fillStyle = "#fff";
+    ctx.fillText(state.subs, x + stripeW + (bw - stripeW) / 2, y + bh / 2);
+    ctx.textBaseline = "alphabetic";
+  }
+
+  private drawCinemaSubCounter(t: number) {
+    const { ctx, W, H, state } = this;
+    if (!state.subs) return;
+    const effPos = this.pos(state.subsPosition, state.mobileSubsPosition);
+    const x = this.px(effPos.x, W);
+    const y = this.px(effPos.y, H);
+    const bw = Math.round(W * (this.isVertical ? 0.46 : 0.26));
+    const bh = Math.round(H * (this.isVertical ? 0.10 : 0.09));
+    const radius = Math.round(bh * 0.25);
+    const pulse  = 0.5 + 0.5 * Math.sin(t * 1.2);
+
+    // Dark cinema background
+    const bgGrad = ctx.createLinearGradient(x, y, x + bw, y + bh);
+    bgGrad.addColorStop(0, "rgba(20,15,5,0.97)");
+    bgGrad.addColorStop(1, "rgba(10,8,3,0.99)");
+    ctx.fillStyle = bgGrad;
+    this.fillRR(x, y, bw, bh, radius);
+
+    // Gold glow border
+    ctx.strokeStyle = `rgba(255,196,0,${0.45 + pulse * 0.40})`;
+    ctx.lineWidth = 2;
+    this.strokeRR(x, y, bw, bh, radius);
+
+    // Gold top accent stripe (clipped)
+    ctx.save();
+    this.clipRR(x, y, bw, bh, radius);
+    const goldGrad = ctx.createLinearGradient(x, y, x + bw, y);
+    goldGrad.addColorStop(0, `rgba(255,215,0,${0.9 + pulse * 0.1})`);
+    goldGrad.addColorStop(0.5, "rgba(255,230,100,0.95)");
+    goldGrad.addColorStop(1, `rgba(200,160,0,0.9)`);
+    ctx.fillStyle = goldGrad;
+    ctx.fillRect(x, y, bw, 3);
+    ctx.restore();
+
+    // Gold count with glow
+    const numFs = Math.round(bh * 0.42);
+    ctx.shadowColor = `rgba(255,196,0,${0.4 + pulse * 0.35})`;
+    ctx.shadowBlur = 8 + pulse * 5;
+    ctx.fillStyle = "#ffd700";
+    ctx.font = `bold ${numFs}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(state.subs, x + bw / 2, y + bh * 0.41);
+    ctx.shadowBlur = 0;
+
+    // Stars + SUBSCRIBERS label
+    const labelFs = Math.round(bh * 0.21);
+    ctx.font = `${labelFs}px sans-serif`;
+    ctx.fillStyle = `rgba(255,196,0,${0.50 + pulse * 0.15})`;
+    ctx.fillText("★ SUBSCRIBERS ★", x + bw / 2, y + bh * 0.78);
     ctx.textBaseline = "alphabetic";
   }
 

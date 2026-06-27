@@ -20,7 +20,7 @@ interface QueuedMessage extends ChatMessage {
 }
 
 const MAX_VISIBLE = 10;
-const DISPLAY_RATE_MS = 350;
+const BASE_DISPLAY_RATE_MS = 350;
 
 const STYLE_NAMES = ["Queue Feed", "Bubble", "Neon", "Glass", "Compact", "Toast"] as const;
 type ChatStyle = typeof STYLE_NAMES[number];
@@ -64,6 +64,7 @@ function Avatar({ msg, size = 32 }: { msg: ChatMessage; size?: number }) {
 function useMessageQueue(incoming: ChatMessage[]) {
   const queueRef = useRef<QueuedMessage[]>([]);
   const seenRef = useRef<Set<string>>(new Set());
+  const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [displayed, setDisplayed] = useState<QueuedMessage[]>([]);
   const [queueLen, setQueueLen] = useState(0);
 
@@ -84,10 +85,11 @@ function useMessageQueue(incoming: ChatMessage[]) {
   }, [incoming]);
 
   useEffect(() => {
-    const interval = setInterval(() => {
+    const tick = () => {
       if (!queueRef.current.length) return;
       const next = queueRef.current.shift()!;
-      setQueueLen(queueRef.current.length);
+      const remaining = queueRef.current.length;
+      setQueueLen(remaining);
       setDisplayed((prev) => {
         const withNew = [...prev, { ...next, entering: true }];
         const trimmed = withNew.length > MAX_VISIBLE ? withNew.slice(withNew.length - MAX_VISIBLE) : withNew;
@@ -96,8 +98,12 @@ function useMessageQueue(incoming: ChatMessage[]) {
         }, 450);
         return trimmed;
       });
-    }, DISPLAY_RATE_MS);
-    return () => clearInterval(interval);
+      // auto-speed: schedule the next tick sooner when queue is building up
+      const rate = remaining > 30 ? 80 : remaining > 15 ? 150 : remaining > 5 ? 220 : BASE_DISPLAY_RATE_MS;
+      intervalRef.current = setTimeout(tick, rate);
+    };
+    intervalRef.current = setTimeout(tick, BASE_DISPLAY_RATE_MS);
+    return () => { if (intervalRef.current) clearTimeout(intervalRef.current); };
   }, []);
 
   return { displayed, queueLen };

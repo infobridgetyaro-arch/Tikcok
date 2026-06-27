@@ -71,6 +71,7 @@ interface BroadcastState {
   liveAudioMuted: boolean;
   chatStyle: string;
   statsActive: boolean;
+  statsStyle: string;
   statsPosition: OverlayPosition;
   subsOverlayActive: boolean;
   subsStyle: string;
@@ -168,7 +169,8 @@ const NEWS_ANIMATIONS   = ["None", "Fade", "→", "←", "↓", "↙", "↗", "T
 const AD_STYLES         = ["Banner", "Card", "Corner Pop", "Fullscreen", "Strip"] as const;
 const BREAK_STYLES      = ["Video Play", "Countdown", "Wave", "Glass", "Neon", "Minimal", "Gradient"] as const;
 const CHAT_STYLES       = ["TV", "Bubble", "Neon", "Glass", "Compact", "Toast"] as const;
-const SUB_STYLES        = ["HUD", "Minimal", "Animated", "Card", "Goal"] as const;
+const STATS_STYLES      = ["TV", "Neon", "Glass", "YouTube", "Sport"] as const;
+const SUB_STYLES        = ["HUD", "Minimal", "Animated", "Card", "Goal", "Neon", "Glass", "Sport", "Cinema"] as const;
 const CHAT_BURN_STYLES  = ["Bubble", "Float", "Sidebar", "Highlight", "Ticker"] as const;
 const GUEST_STYLES      = ["Classic", "Neon", "Gradient", "Minimal", "Sports"] as const;
 
@@ -788,7 +790,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
     adPosition: { x: 0, y: 0 },
     breakActive: false, breakText: "Be right back — taking a short break!", breakStyle: "Countdown", breakVideoUrl: "", breakVideoMode: "live-bg", breakVideoMuted: false, liveAudioMuted: false,
     chatStyle: "TV",
-    statsActive: true, statsPosition: { x: 2, y: 2 },
+    statsActive: true, statsStyle: "TV", statsPosition: { x: 2, y: 2 },
     subsOverlayActive: false, subsStyle: "HUD", subsPosition: { x: 72, y: 2 }, subsGoal: 1000000,
     subChartActive: false, subChartData: [], subChartPosition: { x: 68, y: 8 }, mobileSubChartPosition: { x: 5, y: 8 },
     subAlertActive: false, subAlertMessage: "",
@@ -1998,7 +2000,64 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
 
           {/* ── STATS ── */}
           {activeTab === "stats" && (
-            <StatsPanel streams={activeStreams} streamStats={streamStats} procStats={streamProcStats} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {/* ── Overlay style controls ── */}
+              <SectionDivider label="Live Stats Badge" />
+              <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, lineHeight: 1.5 }}>
+                The <strong style={{ color: "#fff" }}>LIVE · subs · viewers</strong> badge that burns into the top-left of the stream.
+              </div>
+
+              {/* Style picker */}
+              <div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.07em" }}>Badge Style</div>
+                <StylePills styles={STATS_STYLES} current={bs.statsStyle} accent="#a78bfa" onSelect={(s) => localUpdate({ statsStyle: s })} />
+              </div>
+
+              {/* Style description */}
+              <div style={{ padding: "8px 12px", borderRadius: 7, background: "rgba(255,255,255,0.04)", fontSize: 11, color: "rgba(255,255,255,0.42)", lineHeight: 1.5 }}>
+                {bs.statsStyle === "TV"      && "Pill badges with dark background and red live dot — clean broadcast look with rounded corners."}
+                {bs.statsStyle === "Neon"    && "Single glowing bar with neon cyan border — red LIVE text glows and stats shimmer in purple/green."}
+                {bs.statsStyle === "Glass"   && "Frosted glass pills with shine effect — premium transparent look that blends with any scene."}
+                {bs.statsStyle === "YouTube" && "YouTube-branded: red LIVE pill + white stat badges — instantly recognisable channel style."}
+                {bs.statsStyle === "Sport"   && "Sports-broadcast style: orange LIVE tab + white stat badges with coloured borders."}
+              </div>
+
+              {/* Position + Size */}
+              <PositionSliders
+                pos={getPos("statsPosition")}
+                label={`Badge position — ${editMode}`}
+                accent="#a78bfa"
+                onChange={setPos("statsPosition")}
+              />
+              <SizeSlider value={bs.statsScale} onChange={(v) => localUpdate({ statsScale: v })} accent="#a78bfa" />
+
+              {/* Go live */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <ToggleButton
+                  active={bs.statsActive}
+                  accent="#a78bfa"
+                  countdownSecs={countdowns["stats"]}
+                  onCancel={() => cancelGoLive("stats")}
+                  onActivate={() => goLive("stats", {
+                    statsActive: true,
+                    statsStyle: bs.statsStyle,
+                    statsPosition: bs.statsPosition,
+                    mobileStatsPosition: bs.mobileStatsPosition,
+                    statsScale: bs.statsScale,
+                  })}
+                  onDeactivate={() => stopOverlay({ statsActive: false })}
+                />
+                <LiveBadge label={`${bs.statsStyle} stats badge`} active={bs.statsActive} accent="#a78bfa" />
+              </div>
+
+              <div style={{ padding: "9px 14px", borderRadius: 8, background: "rgba(167,139,250,0.05)", border: "1px solid rgba(167,139,250,0.12)", fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
+                The badge auto-shows when a YouTube source stream is active and subs/viewers have been fetched.
+              </div>
+
+              {/* ── Analytics panel below ── */}
+              <SectionDivider label="Stream Analytics" />
+              <StatsPanel streams={activeStreams} streamStats={streamStats} procStats={streamProcStats} />
+            </div>
           )}
 
           {/* ── SUBS OVERLAY ── */}
@@ -2023,6 +2082,10 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                 {bs.subsStyle === "Animated" && "Dark card with pulsing red top bar and live dot — eye-catching but not distracting."}
                 {bs.subsStyle === "Card"     && "YouTube-style badge with play-button icon — professional channel look."}
                 {bs.subsStyle === "Goal"     && "Red progress bar toward your subscriber milestone — great for sub drives."}
+                {bs.subsStyle === "Neon"     && "Electric blue-to-purple gradient with cyan glow border and text shimmer — vibrant nightclub energy."}
+                {bs.subsStyle === "Glass"    && "Frosted glass card with top shine and purple icon circle — premium see-through look."}
+                {bs.subsStyle === "Sport"    && "Orange gradient ticker with dark SUBS stripe on the left — bold sports-broadcast panel."}
+                {bs.subsStyle === "Cinema"   && "Black card with animated gold border, gold count, and star label — luxury awards-night feel."}
               </div>
 
               {bs.subsStyle === "Goal" && (

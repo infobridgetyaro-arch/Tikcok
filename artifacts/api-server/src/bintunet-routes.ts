@@ -104,6 +104,7 @@ interface BroadcastState {
   liveAudioMuted: boolean;
   chatStyle: string;
   statsActive: boolean;
+  statsStyle: string;
   statsPosition: OverlayPosition;
   subsOverlayActive: boolean;
   subsStyle: string;
@@ -200,6 +201,7 @@ let broadcastState: BroadcastState = {
   liveAudioMuted: false,
   chatStyle: "TV",
   statsActive: true,
+  statsStyle: "TV",
   statsPosition: { x: 2, y: 2 },
   subsOverlayActive: false,
   subsStyle: "HUD",
@@ -994,6 +996,7 @@ export async function registerBintunetRoutes(
       liveAudioMuted:         broadcastState.liveAudioMuted,
       breakVideoMuted:        broadcastState.breakVideoMuted,
       statsActive:            broadcastState.statsActive,
+      statsStyle:             broadcastState.statsStyle,
       statsPosition:          broadcastState.statsPosition,
       subsOverlayActive:      broadcastState.subsOverlayActive,
       subsStyle:              broadcastState.subsStyle,
