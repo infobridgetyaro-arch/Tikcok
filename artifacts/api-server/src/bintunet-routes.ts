@@ -1229,7 +1229,7 @@ export async function registerBintunetRoutes(
   function validateNetscapeCookies(
     filePath: string,
     requiredTokens: string[],
-    platform: "youtube" | "tiktok"
+    platform: "youtube" | "tiktok" | "x.com"
   ): CookieValidationResult {
     let raw: string;
     try {

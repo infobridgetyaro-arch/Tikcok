@@ -2,7 +2,7 @@ import { ChildProcess, spawn, exec } from "child_process";
 import { storage } from "./storage";
 import { logger } from "./lib/logger";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
-import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader, getCookiesConfigured, getYouTubeYtdlpPipeArgs, getYouTubeStreamlinkPipeArgs } from "./youtube-source";
+import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache } from "./youtube-source";
 import type { WebSocket } from "ws";
 import type { StreamConfig } from "./schema";
 import { OverlayRenderer, defaultOverlayState, type OverlayState } from "./overlay-renderer";
@@ -640,41 +640,18 @@ function buildFFmpegArgs(
       }
     }
   } else if (sourceType === "youtube") {
-    if (inputUrl === "pipe:0") {
-      // yt-dlp pipe mode (cookies configured): yt-dlp downloads the live stream and
-      // writes MPEG-TS to stdout, which is piped into FFmpeg stdin here.
-      // FFmpeg never touches the CDN — all POT/session auth stays inside yt-dlp.
-      args.push(
-        "-thread_queue_size", "4096",
-        "-fflags", "+genpts+discardcorrupt",
-        "-i", "pipe:0",
-      );
-    } else {
-      // Direct HLS URL mode (no cookies configured — fallback tier cascade).
-      // YouTube CDN requires a Proof-of-Origin Token (rqh/1) for segment access.
-      // Without browser cookies all segment requests return 403.
-      const cookieHeader = getYouTubeFFmpegCookieHeader();
-      const ytHeaderLines = [
-        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36",
-        "Accept: */*",
-        "Accept-Language: en-US,en;q=0.9",
-        "Referer: https://www.youtube.com/",
-        ...(cookieHeader ? [cookieHeader.trimEnd()] : []),
-      ];
-      args.push(
-        "-headers", ytHeaderLines.join("\r\n") + "\r\n",
-        "-reconnect", "1",
-        "-reconnect_streamed", "1",
-        "-reconnect_on_network_error", "1",
-        "-reconnect_at_eof", "1",
-        "-reconnect_delay_max", "5",
-        "-tls_verify", "0",
-        "-rw_timeout", "10000000",
-        "-thread_queue_size", "4096",
-        "-fflags", "+genpts+discardcorrupt",
-        "-i", inputUrl,
-      );
-    }
+    // Direct HLS URL — user supplies the public .m3u8 URL; FFmpeg reads it directly.
+    args.push(
+      "-reconnect", "1",
+      "-reconnect_streamed", "1",
+      "-reconnect_on_network_error", "1",
+      "-reconnect_at_eof", "1",
+      "-reconnect_delay_max", "5",
+      "-rw_timeout", "10000000",
+      "-thread_queue_size", "4096",
+      "-fflags", "+genpts+discardcorrupt",
+      "-i", inputUrl,
+    );
   } else if (sourceType === "xspace") {
     // X Space: yt-dlp extracts the HLS audio URL; FFmpeg reads audio-only.
     // No video track — the filter graph uses lavfi black + gradient as video.
@@ -1093,14 +1070,13 @@ async function resolveInputUrl(
   }
 
   if (sourceType === "youtube") {
-    const input = stream.youtubeSourceUrl || "";
-    if (!input) throw new Error("YouTube username/URL is required");
-    // Resolve the live HLS URL via yt-dlp (3-tier fallback: streamlink → yt-dlp mweb → ios).
-    // Cache the result for 10 min — YouTube CDN URLs are valid ~6 hours; the 404
-    // handler in the FFmpeg stderr loop will force a fresh fetch if it expires early.
-    const hlsUrl = await getYouTubeStreamUrl(normaliseYouTubeUrl(input));
-    urlCache.set(stream.id, { url: hlsUrl, sourceType: "youtube", resolvedAt: Date.now() });
-    return { url: hlsUrl, sourceType: "youtube" };
+    const input = (stream.youtubeSourceUrl || "").trim();
+    if (!input) throw new Error("YouTube HLS URL is required");
+    if (!input.includes(".m3u8") && !input.startsWith("http")) {
+      throw new Error("YouTube source must be a public HLS URL (.m3u8). Paste the direct stream URL.");
+    }
+    urlCache.set(stream.id, { url: input, sourceType: "youtube", resolvedAt: Date.now() });
+    return { url: input, sourceType: "youtube" };
   }
 
   if (sourceType === "xspace") {
@@ -1122,29 +1098,74 @@ async function resolveInputUrl(
 async function getXSpaceAudioUrl(spaceUrl: string): Promise<string> {
   const xCookiesPath = path.join(process.cwd(), "x-cookies.txt");
   const cookiesArgs = fs.existsSync(xCookiesPath) ? ["--cookies", xCookiesPath] : [];
-  return new Promise((resolve, reject) => {
-    const ytdlp = spawn("yt-dlp", [
-      "-g",
-      "--no-playlist",
-      "-f", "bestaudio",
-      "--no-warnings",
-      ...cookiesArgs,
-      spaceUrl,
-    ]);
-    let stdout = "";
-    let stderr = "";
-    ytdlp.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
-    ytdlp.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
-    ytdlp.on("close", (code) => {
-      const url = stdout.trim().split("\n")[0]?.trim();
-      if (code === 0 && url) {
-        resolve(url);
-      } else {
-        reject(new Error(`yt-dlp failed to extract X Space audio (code ${code}): ${stderr.slice(0, 400)}`));
-      }
-    });
-    ytdlp.on("error", (err) => reject(new Error(`yt-dlp not found: ${err.message}`)));
-  });
+
+  const MAX_ATTEMPTS = 4;
+  const BACKOFF_MS = [0, 3_000, 9_000, 27_000]; // 0s, 3s, 9s, 27s
+
+  let lastError = "";
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const delay = BACKOFF_MS[attempt - 1] ?? 27_000;
+    if (delay > 0) {
+      logger.info({ spaceUrl, attempt, delayMs: delay }, "[xspace] Waiting before retry...");
+      await new Promise<void>((r) => setTimeout(r, delay));
+    }
+
+    try {
+      const url = await new Promise<string>((resolve, reject) => {
+        const ytdlp = spawn("yt-dlp", [
+          "-g",
+          "--no-playlist",
+          "-f", "bestaudio",
+          "--no-warnings",
+          "--socket-timeout", "20",
+          ...cookiesArgs,
+          spaceUrl,
+        ]);
+
+        let stdout = "";
+        let stderr = "";
+        ytdlp.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
+        ytdlp.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
+
+        const timer = setTimeout(() => {
+          try { ytdlp.kill("SIGKILL"); } catch {}
+          reject(new Error("yt-dlp timed out after 30s"));
+        }, 30_000);
+
+        ytdlp.on("close", (code) => {
+          clearTimeout(timer);
+          const audioUrl = stdout.trim().split("\n")[0]?.trim();
+          if (code === 0 && audioUrl) {
+            resolve(audioUrl);
+          } else {
+            reject(new Error(`yt-dlp failed (code ${code}): ${stderr.slice(0, 300)}`));
+          }
+        });
+
+        ytdlp.on("error", (err: NodeJS.ErrnoException) => {
+          clearTimeout(timer);
+          reject(new Error(err.code === "ENOENT" ? "yt-dlp is not installed on the server" : err.message));
+        });
+      });
+
+      logger.info({ spaceUrl, attempt }, "[xspace] HLS audio URL extracted successfully");
+      return url;
+    } catch (err: any) {
+      lastError = err?.message ?? String(err);
+      const isFatal =
+        lastError.includes("is not installed") ||
+        lastError.includes("Space has ended") ||
+        lastError.includes("not found") ||
+        lastError.includes("does not exist");
+
+      logger.warn({ spaceUrl, attempt, error: lastError }, `[xspace] Attempt ${attempt}/${MAX_ATTEMPTS} failed`);
+
+      if (isFatal || attempt === MAX_ATTEMPTS) break;
+    }
+  }
+
+  throw new Error(`Failed to extract X Space audio after ${MAX_ATTEMPTS} attempts. Last error: ${lastError}`);
 }
 
 // ── Frame-stall watchdog ──────────────────────────────────────────────────────
@@ -1445,7 +1466,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
     if (sourceType === "tiktok") {
       sendLog(streamId, `Fetching TikTok live stream for @${stream.tiktokUsername}...`);
     } else if (sourceType === "youtube") {
-      sendLog(streamId, `YouTube source: yt-dlp pipe mode (tv_embedded/ios/android — no PO Token needed)...`);
+      sendLog(streamId, `YouTube source: direct HLS — connecting FFmpeg to ${stream.youtubeSourceUrl}...`);
     } else if (sourceType === "xspace") {
       sendLog(streamId, `Extracting X Space audio: ${stream.xspaceUrl}...`);
     } else if (sourceType === "upload") {
@@ -1457,37 +1478,23 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       sendLog(streamId, `Using camera device: ${stream.cameraDevice}`);
     }
 
-    // YouTube: always use yt-dlp pipe mode — skip direct URL resolution entirely.
-    // yt-dlp pipes MPEG-TS directly to FFmpeg stdin using tv_embedded/ios/android
-    // clients that don't require a Proof-of-Origin Token (POT). This keeps all CDN
-    // auth inside yt-dlp so FFmpeg never touches googlevideo.com directly.
-    const useYtPipe = sourceType === "youtube";
+    const resolved = await resolveInputUrlSafe(stream, !reuseUrl);
+    const inputUrl = resolved.url;
+    const resolvedType = resolved.sourceType;
 
-    let inputUrl: string;
-    let resolvedType: "tiktok" | "youtube" | "camera" | "upload";
-
-    if (useYtPipe) {
-      inputUrl = "pipe:0";
-      resolvedType = "youtube";
-    } else {
-      const resolved = await resolveInputUrlSafe(stream, !reuseUrl);
-      inputUrl = resolved.url;
-      resolvedType = resolved.sourceType;
-
-      // Guard: user may have clicked Stop while we were waiting for URL resolution
-      // (TikTok/YouTube extraction can take 20–35 s). If the stream was deleted from
-      // storage in the meantime, abort — otherwise FFmpeg would spawn as an orphan.
-      if (!storage.getStream(streamId)) {
-        sendLog(streamId, "Stream was stopped during URL resolution — aborting.");
-        return;
-      }
+    // Guard: user may have clicked Stop while we were waiting for URL resolution
+    // (TikTok/X Space extraction can take 10–35 s). If the stream was deleted from
+    // storage in the meantime, abort — otherwise FFmpeg would spawn as an orphan.
+    if (!storage.getStream(streamId)) {
+      sendLog(streamId, "Stream was stopped during URL resolution — aborting.");
+      return;
     }
 
     if (sourceType === "tiktok") {
       const inputType = inputUrl.includes(".m3u8") ? "HLS" : "FLV";
       sendLog(streamId, `Using ${inputType} stream input`);
-    } else if (sourceType === "youtube" && !useYtPipe) {
-      sendLog(streamId, `YouTube HLS URL resolved — starting FFmpeg...`);
+    } else if (sourceType === "youtube") {
+      sendLog(streamId, `YouTube HLS ready — launching FFmpeg...`);
     }
 
     const outputs: string[] = [];
@@ -1519,46 +1526,6 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       stdio: ["pipe", "pipe", "pipe", "pipe", "pipe", "pipe", "pipe"],
       env: { ...process.env },
     });
-
-    // YouTube pipe mode: spawn streamlink and pipe its stdout directly into FFmpeg stdin.
-    // streamlink speaks YouTube's native live streaming API and does NOT require a
-    // Proof-of-Origin Token (POT), making it reliable for public live streams without
-    // browser cookies or OAuth2. yt-dlp's web/tv_embedded/ios clients all fail on
-    // server-side live streams because YouTube's CDN 403s any POT-less segment request.
-    let ytSourceProcess: ChildProcess | undefined = undefined;
-    if (useYtPipe) {
-      const slArgs = getYouTubeStreamlinkPipeArgs(normaliseYouTubeUrl(stream.youtubeSourceUrl || ""));
-      ytSourceProcess = spawn("streamlink", slArgs, { stdio: ["ignore", "pipe", "pipe"] });
-
-      const stdinPipe = ffmpegProc.stdin as NodeJS.WritableStream | null;
-      if (stdinPipe && ytSourceProcess.stdout) {
-        stdinPipe.on("error", () => {});
-        ytSourceProcess.stdout.on("error", () => {});
-        ytSourceProcess.stdout.pipe(stdinPipe);
-      }
-
-      ytSourceProcess.stderr?.on("data", (d: Buffer) => {
-        const lines = d.toString().split("\n");
-        for (const raw of lines) {
-          const line = raw.trim();
-          if (line && !line.startsWith("[download]") && !line.startsWith("frame=")) {
-            sendLog(streamId, `[streamlink] ${line.slice(0, 300)}`);
-          }
-        }
-      });
-
-      ytSourceProcess.on("exit", (code, signal) => {
-        logger.info({ streamId, code, signal }, "[streamlink] pipe process exited");
-        sendLog(streamId, `[streamlink] Pipe process exited (code: ${code}) — FFmpeg will detect EOF and reconnect`);
-      });
-
-      ytSourceProcess.on("error", (err) => {
-        logger.error({ streamId, err }, "[streamlink] pipe process spawn error");
-        sendLog(streamId, `[streamlink] Failed to spawn: ${err.message}`);
-      });
-
-      sendLog(streamId, `YouTube streamlink pipe started — streaming to FFmpeg stdin`);
-    }
 
     const isVertical = stream.ratio === "mobile";
     const isHDQuality = stream.quality === "best" || stream.quality === "720p";
@@ -1944,8 +1911,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       watchdog,
       statsInterval,
       // prefetchTimer is set later inside the gotFrames block (after ffmpegProc is running)
-      // ytSourceProcess is set below for YouTube source
-      ytSourceProcess,
+      ytSourceProcess: undefined,
       inputUrl,
       sourceType,
     });
