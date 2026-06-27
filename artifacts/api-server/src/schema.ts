@@ -18,7 +18,7 @@ export const streamConfigSchema = z.object({
   youtubeChannelId: z.string().default(""),
   ratio: z.enum(["mobile", "desktop"]).default("mobile"),
   quality: z.enum(["best", "720p", "480p"]).default("best"),
-  fps: z.enum(["20", "25", "30"]).default("30"),
+  fps: z.enum(["20", "24", "25", "30"]).default("24"),
   muted: z.boolean().default(false),
   autoRestart: z.boolean().default(false),
   status: z.enum(["idle", "streaming", "error", "reconnecting"]).default("idle"),

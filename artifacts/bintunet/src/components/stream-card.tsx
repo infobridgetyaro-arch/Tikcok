@@ -770,6 +770,7 @@ export function StreamCard({
                       <SelectTrigger className="h-8 text-xs" data-testid={`select-fps-${stream.id}`}><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="20">20</SelectItem>
+                        <SelectItem value="24">24</SelectItem>
                         <SelectItem value="25">25</SelectItem>
                         <SelectItem value="30">30</SelectItem>
                       </SelectContent>

@@ -264,6 +264,7 @@ interface StreamProcess {
   reconnectCount?: number;        // total pipeline restarts for this stream session
   lastBitrate?: number;           // most recent output bitrate in kbps (from FFmpeg -stats)
   lastFps?: number;               // most recent output fps (from FFmpeg -stats)
+  slowEncodeFirstSeenAt?: number | null; // unix ms when speed first dropped below 0.97x; null = OK
 }
 
 // ── URL cache: reuse recently resolved URLs to skip 20-35s re-resolution on restart ──
@@ -1738,6 +1739,44 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
               const currentProc = activeStreams.get(streamId);
               if (currentProc) currentProc.lastBitrate = bitrateKbps;
               scorerRecordBitrate(streamId, bitrateKbps);
+            }
+          }
+
+          // ── Slow-encode watchdog ────────────────────────────────────────────
+          // When FFmpeg encodes slower than real-time (speed < 0.97x), it
+          // accumulates a growing lag behind the live source. YouTube Studio
+          // detects the gap and shows "not receiving enough video". After 30s
+          // of sustained slow encoding we trigger a clean RTMP reconnect so
+          // YouTube sees a reconnect event (handled gracefully) rather than an
+          // ever-growing freeze.
+          const speedMatch = trimmed.match(/speed=\s*([\d.]+)x/);
+          if (speedMatch) {
+            const encSpeed = parseFloat(speedMatch[1]);
+            if (!isNaN(encSpeed) && encSpeed > 0) {
+              const currentProc = activeStreams.get(streamId);
+              if (currentProc) {
+                if (encSpeed >= 0.97) {
+                  // Encoding is keeping up — clear any slow timer
+                  currentProc.slowEncodeFirstSeenAt = null;
+                } else {
+                  const now = Date.now();
+                  if (!currentProc.slowEncodeFirstSeenAt) {
+                    currentProc.slowEncodeFirstSeenAt = now;
+                  } else if (
+                    now - currentProc.slowEncodeFirstSeenAt > 30_000 &&
+                    !restartScheduled.has(streamId) &&
+                    !explicitlyStopped.has(streamId)
+                  ) {
+                    // Slow for 30+ seconds — reconnect to keep YouTube happy
+                    currentProc.slowEncodeFirstSeenAt = null;
+                    sendLog(
+                      streamId,
+                      `[perf] Encoding speed ${encSpeed.toFixed(2)}x below real-time for 30s — reconnecting to prevent YouTube buffering...`,
+                    );
+                    hardKillAndRestart(streamId, 1500, false, true /* keepStatus */);
+                  }
+                }
+              }
             }
           }
 
