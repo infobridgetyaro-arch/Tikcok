@@ -2,7 +2,7 @@ import { ChildProcess, spawn, exec } from "child_process";
 import { storage } from "./storage";
 import { logger } from "./lib/logger";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
-import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader, getCookiesConfigured } from "./youtube-source";
+import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader, getCookiesConfigured, getYouTubeYtdlpPipeArgs } from "./youtube-source";
 import type { WebSocket } from "ws";
 import type { StreamConfig } from "./schema";
 import { OverlayRenderer, defaultOverlayState, type OverlayState } from "./overlay-renderer";
@@ -640,33 +640,41 @@ function buildFFmpegArgs(
       }
     }
   } else if (sourceType === "youtube") {
-    // HLS URL resolved by yt-dlp (googlevideo.com CDN) — FFmpeg reads directly.
-    // YouTube CDN requires a Proof-of-Origin Token (rqh/1) for segment access.
-    // Without browser cookies (uploaded via Settings → YouTube Cookies), all
-    // segment requests will return 403 regardless of User-Agent or IP address.
-    // When cookies ARE provided, yt-dlp embeds a valid POT in the URL parameters
-    // and the cookie header is forwarded to the CDN for manifest/playlist requests.
-    const cookieHeader = getYouTubeFFmpegCookieHeader();
-    const ytHeaderLines = [
-      "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36",
-      "Accept: */*",
-      "Accept-Language: en-US,en;q=0.9",
-      "Referer: https://www.youtube.com/",
-      ...(cookieHeader ? [cookieHeader.trimEnd()] : []),
-    ];
-    args.push(
-      "-headers", ytHeaderLines.join("\r\n") + "\r\n",
-      "-reconnect", "1",
-      "-reconnect_streamed", "1",
-      "-reconnect_on_network_error", "1",
-      "-reconnect_at_eof", "1",
-      "-reconnect_delay_max", "5",
-      "-tls_verify", "0",
-      "-rw_timeout", "10000000",
-      "-thread_queue_size", "4096",
-      "-fflags", "+genpts+discardcorrupt",
-      "-i", inputUrl,
-    );
+    if (inputUrl === "pipe:0") {
+      // yt-dlp pipe mode (cookies configured): yt-dlp downloads the live stream and
+      // writes MPEG-TS to stdout, which is piped into FFmpeg stdin here.
+      // FFmpeg never touches the CDN — all POT/session auth stays inside yt-dlp.
+      args.push(
+        "-thread_queue_size", "4096",
+        "-fflags", "+genpts+discardcorrupt",
+        "-i", "pipe:0",
+      );
+    } else {
+      // Direct HLS URL mode (no cookies configured — fallback tier cascade).
+      // YouTube CDN requires a Proof-of-Origin Token (rqh/1) for segment access.
+      // Without browser cookies all segment requests return 403.
+      const cookieHeader = getYouTubeFFmpegCookieHeader();
+      const ytHeaderLines = [
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36",
+        "Accept: */*",
+        "Accept-Language: en-US,en;q=0.9",
+        "Referer: https://www.youtube.com/",
+        ...(cookieHeader ? [cookieHeader.trimEnd()] : []),
+      ];
+      args.push(
+        "-headers", ytHeaderLines.join("\r\n") + "\r\n",
+        "-reconnect", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_on_network_error", "1",
+        "-reconnect_at_eof", "1",
+        "-reconnect_delay_max", "5",
+        "-tls_verify", "0",
+        "-rw_timeout", "10000000",
+        "-thread_queue_size", "4096",
+        "-fflags", "+genpts+discardcorrupt",
+        "-i", inputUrl,
+      );
+    }
   } else if (sourceType === "xspace") {
     // X Space: yt-dlp extracts the HLS audio URL; FFmpeg reads audio-only.
     // No video track — the filter graph uses lavfi black + gradient as video.
@@ -1393,7 +1401,11 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
     if (sourceType === "tiktok") {
       sendLog(streamId, `Fetching TikTok live stream for @${stream.tiktokUsername}...`);
     } else if (sourceType === "youtube") {
-      sendLog(streamId, `Resolving YouTube live URL: ${stream.youtubeSourceUrl}...`);
+      if (getCookiesConfigured()) {
+        sendLog(streamId, `YouTube source: using yt-dlp pipe mode (cookies configured — CDN auth handled internally)...`);
+      } else {
+        sendLog(streamId, `Resolving YouTube live URL: ${stream.youtubeSourceUrl}...`);
+      }
     } else if (sourceType === "xspace") {
       sendLog(streamId, `Extracting X Space audio: ${stream.xspaceUrl}...`);
     } else if (sourceType === "upload") {
@@ -1405,20 +1417,35 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       sendLog(streamId, `Using camera device: ${stream.cameraDevice}`);
     }
 
-    const { url: inputUrl, sourceType: resolvedType } = await resolveInputUrlSafe(stream, !reuseUrl);
+    // YouTube + cookies: use yt-dlp pipe mode — skip URL resolution entirely.
+    // yt-dlp will be spawned after FFmpeg and will pipe the MPEG-TS stream directly to
+    // FFmpeg stdin, keeping all CDN auth (POT, session tokens) inside yt-dlp.
+    const useYtPipe = sourceType === "youtube" && getCookiesConfigured();
 
-    // Guard: user may have clicked Stop while we were waiting for URL resolution
-    // (TikTok/YouTube extraction can take 20–35 s). If the stream was deleted from
-    // storage in the meantime, abort — otherwise FFmpeg would spawn as an orphan.
-    if (!storage.getStream(streamId)) {
-      sendLog(streamId, "Stream was stopped during URL resolution — aborting.");
-      return;
+    let inputUrl: string;
+    let resolvedType: "tiktok" | "youtube" | "camera" | "upload";
+
+    if (useYtPipe) {
+      inputUrl = "pipe:0";
+      resolvedType = "youtube";
+    } else {
+      const resolved = await resolveInputUrlSafe(stream, !reuseUrl);
+      inputUrl = resolved.url;
+      resolvedType = resolved.sourceType;
+
+      // Guard: user may have clicked Stop while we were waiting for URL resolution
+      // (TikTok/YouTube extraction can take 20–35 s). If the stream was deleted from
+      // storage in the meantime, abort — otherwise FFmpeg would spawn as an orphan.
+      if (!storage.getStream(streamId)) {
+        sendLog(streamId, "Stream was stopped during URL resolution — aborting.");
+        return;
+      }
     }
 
     if (sourceType === "tiktok") {
       const inputType = inputUrl.includes(".m3u8") ? "HLS" : "FLV";
       sendLog(streamId, `Using ${inputType} stream input`);
-    } else if (sourceType === "youtube") {
+    } else if (sourceType === "youtube" && !useYtPipe) {
       sendLog(streamId, `YouTube HLS URL resolved — starting FFmpeg...`);
     }
 
@@ -1452,9 +1479,44 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       env: { ...process.env },
     });
 
-    // YouTube source uses a direct HLS URL (resolved by yt-dlp before FFmpeg starts).
-    // No subprocess needed — FFmpeg reads the HLS playlist directly via HTTP.
-    const ytSourceProcess: ChildProcess | undefined = undefined;
+    // YouTube pipe mode: spawn yt-dlp and pipe its stdout directly into FFmpeg stdin.
+    // This keeps yt-dlp in control of all CDN requests so the POT/session tokens
+    // are always valid — FFmpeg never touches googlevideo.com directly.
+    let ytSourceProcess: ChildProcess | undefined = undefined;
+    if (useYtPipe) {
+      const ytArgs = getYouTubeYtdlpPipeArgs(normaliseYouTubeUrl(stream.youtubeSourceUrl || ""));
+      ytSourceProcess = spawn("yt-dlp", ytArgs, { stdio: ["ignore", "pipe", "pipe"] });
+
+      const stdinPipe = ffmpegProc.stdin as NodeJS.WritableStream | null;
+      if (stdinPipe && ytSourceProcess.stdout) {
+        stdinPipe.on("error", () => {});
+        ytSourceProcess.stdout.on("error", () => {});
+        ytSourceProcess.stdout.pipe(stdinPipe);
+      }
+
+      ytSourceProcess.stderr?.on("data", (d: Buffer) => {
+        const lines = d.toString().split("\n");
+        for (const raw of lines) {
+          const line = raw.trim();
+          // Only log meaningful lines — suppress verbose download progress spam
+          if (line && !line.startsWith("[download]") && !line.startsWith("frame=")) {
+            sendLog(streamId, `[yt-dlp] ${line.slice(0, 300)}`);
+          }
+        }
+      });
+
+      ytSourceProcess.on("exit", (code, signal) => {
+        logger.info({ streamId, code, signal }, "[yt-dlp] pipe process exited");
+        sendLog(streamId, `[yt-dlp] Pipe process exited (code: ${code}) — FFmpeg will detect EOF and reconnect`);
+      });
+
+      ytSourceProcess.on("error", (err) => {
+        logger.error({ streamId, err }, "[yt-dlp] pipe process spawn error");
+        sendLog(streamId, `[yt-dlp] Failed to spawn: ${err.message}`);
+      });
+
+      sendLog(streamId, `YouTube yt-dlp pipe started — streaming to FFmpeg stdin`);
+    }
 
     const isVertical = stream.ratio === "mobile";
     const isHDQuality = stream.quality === "best" || stream.quality === "720p";

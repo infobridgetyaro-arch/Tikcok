@@ -214,6 +214,31 @@ export function getCookiesConfigured(): boolean {
 }
 
 /**
+ * Returns yt-dlp args to download a YouTube live stream directly to stdout (pipe mode).
+ *
+ * WHY: yt-dlp resolves HLS URLs that embed a Proof-of-Origin Token (POT) bound to the
+ * authenticated browser session. When FFmpeg makes raw HTTP requests using that URL,
+ * YouTube's CDN rejects segment fetches because the POT/session context doesn't match a
+ * real browser. Piping yt-dlp's output to FFmpeg stdin keeps yt-dlp in control of all
+ * CDN requests (manifest refresh, segment auth, token rotation) — FFmpeg just receives
+ * a clean MPEG-TS stream and never touches the CDN directly.
+ */
+export function getYouTubeYtdlpPipeArgs(pageUrl: string): string[] {
+  return [
+    "--no-playlist",
+    "--no-part",
+    "--no-check-certificate",
+    "--socket-timeout", "30",
+    "--extractor-args", "youtube:player_client=web",
+    "--add-header", "Accept-Language:en-US,en;q=0.9",
+    "-f", "b[vcodec!*=none][acodec!*=none][protocol^=m3u8]/best[vcodec!*=none][acodec!*=none]/best",
+    "-o", "-",
+    ...getAuthArgs(),
+    pageUrl,
+  ];
+}
+
+/**
  * Returns authentication args for yt-dlp, preferring OAuth2 token over cookies.txt.
  * OAuth2 is the recommended approach — one-time browser sign-in, no file management.
  */
