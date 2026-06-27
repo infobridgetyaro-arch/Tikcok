@@ -264,7 +264,9 @@ interface StreamProcess {
   reconnectCount?: number;        // total pipeline restarts for this stream session
   lastBitrate?: number;           // most recent output bitrate in kbps (from FFmpeg -stats)
   lastFps?: number;               // most recent output fps (from FFmpeg -stats)
-  slowEncodeFirstSeenAt?: number | null; // unix ms when speed first dropped below 0.97x; null = OK
+  accumulatedLagSec?: number;     // total seconds of lag built up since last reconnect
+  lastSpeedSampleAt?: number;     // unix ms of last speed= sample for delta-time calc
+  lastSlowReconnectAt?: number;   // unix ms of last slow-encode-triggered reconnect (cooldown)
 }
 
 // ── URL cache: reuse recently resolved URLs to skip 20-35s re-resolution on restart ──
@@ -1743,37 +1745,56 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
           }
 
           // ── Slow-encode watchdog ────────────────────────────────────────────
-          // When FFmpeg encodes slower than real-time (speed < 0.97x), it
-          // accumulates a growing lag behind the live source. YouTube Studio
-          // detects the gap and shows "not receiving enough video". After 30s
-          // of sustained slow encoding we trigger a clean RTMP reconnect so
-          // YouTube sees a reconnect event (handled gracefully) rather than an
-          // ever-growing freeze.
+          // At 0.95x speed, the encoder accumulates 0.05s of lag per real second.
+          // After ~60-90 seconds the lag exceeds YouTube's tolerance (~3-5s) and
+          // Studio shows "not receiving enough video".
+          //
+          // Strategy: measure actual accumulated lag by multiplying (1 - speed)
+          // by the elapsed time between speed samples. When lag > 2.5s, trigger
+          // a clean RTMP reconnect before YouTube notices. A 3-minute cooldown
+          // prevents a reconnect loop if the CPU is permanently slow.
           const speedMatch = trimmed.match(/speed=\s*([\d.]+)x/);
           if (speedMatch) {
             const encSpeed = parseFloat(speedMatch[1]);
             if (!isNaN(encSpeed) && encSpeed > 0) {
+              const nowMs = Date.now();
               const currentProc = activeStreams.get(streamId);
               if (currentProc) {
+                const lastSampleAt = currentProc.lastSpeedSampleAt ?? nowMs;
+                const elapsedSec = Math.min((nowMs - lastSampleAt) / 1000, 10); // cap at 10s gap
+                currentProc.lastSpeedSampleAt = nowMs;
+
                 if (encSpeed >= 0.97) {
-                  // Encoding is keeping up — clear any slow timer
-                  currentProc.slowEncodeFirstSeenAt = null;
+                  // Fast enough — drain lag counter slowly so brief hiccups don't
+                  // immediately reset progress when the encoder catches back up.
+                  currentProc.accumulatedLagSec = Math.max(
+                    0,
+                    (currentProc.accumulatedLagSec ?? 0) - elapsedSec * 0.5,
+                  );
                 } else {
-                  const now = Date.now();
-                  if (!currentProc.slowEncodeFirstSeenAt) {
-                    currentProc.slowEncodeFirstSeenAt = now;
-                  } else if (
-                    now - currentProc.slowEncodeFirstSeenAt > 30_000 &&
+                  // Accumulate lag: if speed=0.94x, lag rate = 0.06s per real second
+                  const lagDelta = elapsedSec * (1 - encSpeed);
+                  currentProc.accumulatedLagSec = (currentProc.accumulatedLagSec ?? 0) + lagDelta;
+
+                  const lagSec = currentProc.accumulatedLagSec;
+                  const cooldownMs = 3 * 60 * 1000; // 3 min between auto-reconnects
+                  const cooldownOk =
+                    !currentProc.lastSlowReconnectAt ||
+                    nowMs - currentProc.lastSlowReconnectAt > cooldownMs;
+
+                  if (
+                    lagSec >= 2.5 &&
+                    cooldownOk &&
                     !restartScheduled.has(streamId) &&
                     !explicitlyStopped.has(streamId)
                   ) {
-                    // Slow for 30+ seconds — reconnect to keep YouTube happy
-                    currentProc.slowEncodeFirstSeenAt = null;
+                    currentProc.accumulatedLagSec = 0;
+                    currentProc.lastSlowReconnectAt = nowMs;
                     sendLog(
                       streamId,
-                      `[perf] Encoding speed ${encSpeed.toFixed(2)}x below real-time for 30s — reconnecting to prevent YouTube buffering...`,
+                      `[perf] ~${lagSec.toFixed(1)}s of encoding lag accumulated (speed ${encSpeed.toFixed(2)}x) — reconnecting before YouTube shows buffering error...`,
                     );
-                    hardKillAndRestart(streamId, 1500, false, true /* keepStatus */);
+                    hardKillAndRestart(streamId, 1500, false, true /* keepStatus=reconnecting */);
                   }
                 }
               }
