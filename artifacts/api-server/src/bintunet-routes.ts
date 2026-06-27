@@ -1074,6 +1074,7 @@ export async function registerBintunetRoutes(
 
     // Only fetch the title — no CDN URL needed at resolve time
     const args = [
+      "--no-config",
       "--get-title",
       "--no-playlist",
       "--no-check-certificate",
@@ -1129,6 +1130,7 @@ export async function registerBintunetRoutes(
       import("./youtube-source").then(({ getCookiesArgs }) => {
         const cookieArgs = getCookiesArgs();
         const args = [
+          "--no-config",
           "--no-playlist",
           "--format", "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best",
           "--no-check-certificate",

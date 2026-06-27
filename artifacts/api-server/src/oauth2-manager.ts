@@ -108,6 +108,7 @@ export function startOAuth2Flow(): Promise<{ deviceUrl: string; userCode: string
     // Use a short public video to trigger the auth flow — yt-dlp will pause and
     // print the device URL before downloading anything.
     const args = [
+      "--no-config",
       "--username", "oauth2",
       "--password", "",
       "--no-playlist",

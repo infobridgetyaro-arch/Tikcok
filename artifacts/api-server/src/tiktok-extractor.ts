@@ -389,6 +389,7 @@ function method1_streamlink(username: string, quality: string): Promise<string> 
 function method2_ytdlp_username(username: string, quality: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn(YTDLP_BIN, [
+      "--no-config",
       "--get-url",
       "--no-check-certificates",
       "--no-playlist",
@@ -434,6 +435,7 @@ function method2_ytdlp_username(username: string, quality: string): Promise<stri
 function method3_ytdlp_alt_api(username: string, quality: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn(YTDLP_BIN, [
+      "--no-config",
       "--get-url",
       "--no-check-certificates",
       "--no-playlist",
@@ -482,6 +484,7 @@ function method3_ytdlp_alt_api(username: string, quality: string): Promise<strin
 function method4_ytdlp_mobile(username: string, quality: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn(YTDLP_BIN, [
+      "--no-config",
       "--get-url",
       "--no-check-certificates",
       "--no-playlist",

@@ -255,9 +255,13 @@ export function getYouTubeYtdlpPipeArgs(pageUrl: string): string[] {
   //
   // Format priority: prefer pre-muxed HLS (itag 95/93/91/92/94) to avoid internal
   // A+V merge which would spawn a second FFmpeg inside yt-dlp (broken for live CDN URLs).
+  //
+  // --no-config: prevents yt-dlp from reading system/user config files that may
+  // contain unsupported --compat-options (e.g. no-keepalive) in this environment.
   const cookiesPath = path.join(process.cwd(), "cookies.txt");
   const hasCookies = fs.existsSync(cookiesPath);
   return [
+    "--no-config",
     "--no-playlist",
     "--no-check-certificate",
     "--socket-timeout", "30",
@@ -419,6 +423,7 @@ function spawnYtdlp(
 
 function tier0_webWithCookies(pageUrl: string, format: string, isLive: boolean): Promise<string> {
   const args = [
+    "--no-config",
     "--no-playlist",
     "-f", format,
     "--get-url",
@@ -485,6 +490,7 @@ function tier1_streamlink(pageUrl: string): Promise<string> {
 
 function tier2_tvEmbedded(pageUrl: string, format: string, isLive: boolean): Promise<string> {
   const args = [
+    "--no-config",
     "--no-playlist",
     "-f", format,
     "--get-url",
@@ -502,6 +508,7 @@ function tier2_tvEmbedded(pageUrl: string, format: string, isLive: boolean): Pro
 
 function tier3_mweb(pageUrl: string, format: string, isLive: boolean): Promise<string> {
   const args = [
+    "--no-config",
     "--no-playlist",
     "-f", format,
     "--get-url",
@@ -520,6 +527,7 @@ function tier3_mweb(pageUrl: string, format: string, isLive: boolean): Promise<s
 
 function tier4_ios(pageUrl: string, format: string, isLive: boolean): Promise<string> {
   const args = [
+    "--no-config",
     "--no-playlist",
     "-f", format,
     "--get-url",
@@ -542,6 +550,7 @@ function tier5_multiClient(pageUrl: string, format: string, isLive: boolean): Pr
     ? "ios,mweb,web_creator,android,android_embedded,web"
     : "ios,mweb,android,android_embedded,tv_embedded";
   const args = [
+    "--no-config",
     "--no-playlist",
     "-f", format,
     "--get-url",
@@ -561,6 +570,7 @@ function tier5_multiClient(pageUrl: string, format: string, isLive: boolean): Pr
 
 function tier6_android(pageUrl: string, format: string, isLive: boolean): Promise<string> {
   const args = [
+    "--no-config",
     "--no-playlist",
     "-f", format,
     "--get-url",
@@ -580,6 +590,7 @@ function tier6_android(pageUrl: string, format: string, isLive: boolean): Promis
 
 function tier7_androidEmbedded(pageUrl: string, format: string, isLive: boolean): Promise<string> {
   const args = [
+    "--no-config",
     "--no-playlist",
     "-f", format,
     "--get-url",
@@ -599,6 +610,7 @@ function tier7_androidEmbedded(pageUrl: string, format: string, isLive: boolean)
 
 function tier8_webCreator(pageUrl: string, format: string, isLive: boolean): Promise<string> {
   const args = [
+    "--no-config",
     "--no-playlist",
     "-f", format,
     "--get-url",
@@ -828,6 +840,7 @@ export async function getYouTubeVideoDirectUrl(input: string): Promise<string> {
     : "mweb,android";
 
   return spawnYtdlp([
+    "--no-config",
     "--no-playlist",
     "-f", vodfmt,
     "--get-url",
@@ -868,6 +881,7 @@ export async function downloadYouTubeVideoToTemp(
 
   return new Promise((resolve, reject) => {
     const proc = spawn(YTDLP_BIN, [
+      "--no-config",
       "--no-playlist",
       "-f", "b[height<=720][ext=mp4]/b[height<=480][ext=mp4]/b[height<=720]/b[height<=480]/b",
       "--merge-output-format", "mp4",

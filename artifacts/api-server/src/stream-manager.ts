@@ -1144,6 +1144,7 @@ async function getXSpaceAudioUrl(spaceUrl: string): Promise<string> {
     try {
       const url = await new Promise<string>((resolve, reject) => {
         const ytdlp = spawn(YTDLP_BIN, [
+          "--no-config",
           "-g",
           "--no-playlist",
           "-f", "bestaudio",
