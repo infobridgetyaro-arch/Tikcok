@@ -32,6 +32,7 @@ import {
   initStreamManager,
   getHealthSnapshot,
   getAllHealthSnapshots,
+  getRecoverySnapshot,
   setFailoverChain,
   getFailoverChain,
   getAllChains,
@@ -2153,6 +2154,24 @@ export async function registerBintunetRoutes(
   // ══════════════════════════════════════════════════════════════════════════
   // Health Scoring & Source Failover API
   // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * GET /api/streams/:id/recovery-status
+   * Returns the full recovery pipeline state for a stream:
+   * circuit-breaker (state, failures, cooldown), exponential backoff level,
+   * restart-lock flag, and the current health-scorer snapshot — all in one
+   * response so the dashboard can render a complete recovery panel.
+   */
+  app.get("/api/streams/:id/recovery-status", requireAuth, (req: Request, res: Response): void => {
+    const streamId = String(req.params.id);
+    const stream = storage.getStream(streamId);
+    if (!stream) { res.status(404).json({ error: "Stream not found" }); return; }
+
+    const recovery = getRecoverySnapshot(streamId);
+    const health = getHealthSnapshot(streamId);
+
+    res.json({ ...recovery, health: health ?? null });
+  });
 
   /**
    * GET /api/streams/:id/health-score

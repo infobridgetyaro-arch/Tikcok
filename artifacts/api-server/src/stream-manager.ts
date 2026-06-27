@@ -2052,6 +2052,74 @@ export function isStreamActive(streamId: string): boolean {
   return activeStreams.has(streamId);
 }
 
+// ── Recovery snapshot ─────────────────────────────────────────────────────────
+// Returns a complete read-only view of the circuit-breaker, backoff, and
+// restart-lock state for a single stream.  Used by the /recovery-status route.
+
+export interface RecoverySnapshot {
+  streamId: string;
+  timestamp: number;
+  circuitBreaker: {
+    state: "closed" | "open" | "probing";
+    failuresInWindow: number;
+    failureThreshold: number;
+    windowMs: number;
+    openedAt: number | null;
+    cooldownMs: number;
+    cooldownRemainingMs: number | null;
+    probeInFlight: boolean;
+  };
+  backoff: {
+    attemptCount: number;
+    nextDelayMs: number;
+    schedule: number[];
+    maxDelayMs: number;
+  };
+  restartPending: boolean;
+  manuallyStopped: boolean;
+  isActive: boolean;
+}
+
+export function getRecoverySnapshot(streamId: string): RecoverySnapshot {
+  const now = Date.now();
+  const cb = resolverCBs.get(streamId) ?? { failures: [], openedAt: null, probeInFlight: false };
+  const failuresInWindow = cb.failures.filter((t) => now - t < CB_WINDOW_MS).length;
+  const cooldownRemainingMs = cb.openedAt != null
+    ? Math.max(0, CB_OPEN_COOLDOWN_MS - (now - cb.openedAt))
+    : null;
+  const cbState: RecoverySnapshot["circuitBreaker"]["state"] =
+    cb.openedAt == null ? "closed"
+    : cb.probeInFlight ? "probing"
+    : "open";
+
+  const attemptCount = restartBackoff.get(streamId) ?? 0;
+  const nextDelayMs = BACKOFF_DELAYS_MS[Math.min(attemptCount, BACKOFF_DELAYS_MS.length - 1)];
+
+  return {
+    streamId,
+    timestamp: now,
+    circuitBreaker: {
+      state: cbState,
+      failuresInWindow,
+      failureThreshold: CB_FAILURE_THRESHOLD,
+      windowMs: CB_WINDOW_MS,
+      openedAt: cb.openedAt,
+      cooldownMs: CB_OPEN_COOLDOWN_MS,
+      cooldownRemainingMs,
+      probeInFlight: cb.probeInFlight,
+    },
+    backoff: {
+      attemptCount,
+      nextDelayMs,
+      schedule: BACKOFF_DELAYS_MS,
+      maxDelayMs: BACKOFF_DELAYS_MS[BACKOFF_DELAYS_MS.length - 1],
+    },
+    restartPending: restartScheduled.has(streamId),
+    manuallyStopped: manuallyStopped.has(streamId),
+    isActive: activeStreams.has(streamId),
+  };
+}
+
 // ── Control-plane initialisation ──────────────────────────────────────────────
 // Call once from the HTTP server init (registerBintunetRoutes) after all
 // functions are defined.  Sets up health-scorer callbacks and failover restart.
