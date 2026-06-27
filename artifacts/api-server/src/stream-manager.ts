@@ -1027,11 +1027,18 @@ function buildFFmpegArgs(
     "-preset", encoderPreset,
     "-tune", "zerolatency",
     "-b:v", bitrate,
+    "-minrate", bitrate,
     "-maxrate", maxrate,
     "-bufsize", bufsize,
     "-profile:v", "high",
     "-level", "4.1",
     "-bf", "0",
+    // nal-hrd=cbr requires -minrate = -maxrate for the HRD model to fill
+    // filler NAL units on low-complexity / repeated frames.  Without -minrate
+    // the VBV only enforces the ceiling — the floor is free to drop toward
+    // zero during static content (eof_action=repeat freeze frames, black
+    // background, HLS segment gaps), which is exactly what triggers YouTube
+    // Studio's "not receiving enough data" warning after ~2 minutes.
     "-x264-params", "nal-hrd=cbr:force-cfr=1",
     "-pix_fmt", "yuv420p",
     "-g", String(fps * 2),
@@ -1935,8 +1942,14 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                 if (runningProc) runningProc.prefetchTimer = timer;
               };
 
-              // First refresh at 8 minutes; subsequent ones happen via hardKillAndRestart
-              // (which calls cleanupStreamProc → clears timer, then startStream sets a new one)
+              // TikTok/xSpace CDN auth tokens can expire in as little as 90-120 s.
+              // Pre-fetch a fresh URL at 90 s so the cache is warm when the 403
+              // fires, letting the restart bypass the 5-30 s streamlink wait.
+              if (sourceType === "tiktok" || sourceType === "xspace") {
+                schedulePrefetch(90 * 1000);
+              }
+              // All non-camera sources: refresh at 8 min (YouTube CDN URLs can
+              // expire after ~6 hours but we refresh eagerly for robustness).
               schedulePrefetch(8 * 60 * 1000);
             }
 
@@ -1999,13 +2012,22 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
           // With the tv_embedded client the HLS URL has no rqh= token, so the
           // CDN doesn't require cookies — this only fires on genuine URL expiry.
           // Always refresh the URL and restart; never permanently kill the stream.
-          urlCache.delete(streamId);
           {
             const proc = activeStreams.get(streamId);
             if (proc && !proc.urlExpired) {
               proc.urlExpired = true;
-              sendLog(streamId, `[youtube] CDN URL expired (${trimmed.includes("404") ? "404" : "403"}) — fetching fresh URL and reconnecting...`);
-              if (proc.ffmpegProcess === ffmpegProc) hardKillAndRestart(streamId, 300, true);
+              // If our 90-second pre-fetch already cached a fresh URL (< 90s old),
+              // reuse it so the restart is nearly instant (no streamlink wait).
+              // Otherwise force-refresh to get a new one from scratch.
+              const cachedEntry = urlCache.get(streamId);
+              const cacheIsFresh = !!cachedEntry && Date.now() - cachedEntry.resolvedAt < 90_000;
+              if (!cacheIsFresh) urlCache.delete(streamId);
+              const label = trimmed.includes("404") ? "404" : "403";
+              sendLog(
+                streamId,
+                `[source] CDN URL expired (${label}) — ${cacheIsFresh ? "using pre-fetched URL for fast restart" : "fetching fresh URL"} and reconnecting...`,
+              );
+              if (proc.ffmpegProcess === ffmpegProc) hardKillAndRestart(streamId, 300, !cacheIsFresh);
             }
           }
           return;
