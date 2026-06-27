@@ -325,7 +325,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               Settings
             </h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Upload browser cookies to authenticate with YouTube and TikTok.
+              Upload browser cookies to authenticate with YouTube, TikTok, and X.
             </p>
           </div>
           <Button variant="ghost" size="icon" onClick={onClose}>
@@ -383,6 +383,13 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           endpoint="/api/settings/tiktok-cookies"
           hint="Optional — improves TikTok live stream access. Log in to TikTok in your browser, then export and upload cookies.txt."
           requiredTokens={["sessionid"]}
+        />
+
+        <CookiesSection
+          label="X (Twitter) Cookies"
+          endpoint="/api/settings/x-cookies"
+          hint="Required for X Spaces audio. Without this, yt-dlp gets a 'Bad guest token' error. Log in to x.com in your browser, export cookies.txt, and upload it here."
+          requiredTokens={["auth_token", "ct0"]}
         />
       </div>
     </div>

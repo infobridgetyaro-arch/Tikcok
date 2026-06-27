@@ -1365,6 +1365,44 @@ export async function registerBintunetRoutes(
     res.json({ ok: true, message: "TikTok cookies removed" });
   });
 
+  // ── X (Twitter) Cookies management ────────────────────────────────────────
+  // Separate cookies.txt for X/Twitter (x.com / twitter.com domain cookies).
+  // Used by yt-dlp (--cookies) when extracting X Space audio URLs.
+  const xCookiesUpload = multer({ dest: uploadDir });
+  const xCookiesPath = path.join(process.cwd(), "x-cookies.txt");
+
+  const X_REQUIRED_TOKENS = ["auth_token", "ct0"];
+
+  app.get("/api/settings/x-cookies", requireAuth, (_req: Request, res: Response): void => {
+    const configured = fs.existsSync(xCookiesPath);
+    if (configured) {
+      const validation = validateNetscapeCookies(xCookiesPath, X_REQUIRED_TOKENS, "x.com");
+      res.json({ configured, validation });
+    } else {
+      res.json({ configured });
+    }
+  });
+
+  app.post(
+    "/api/settings/x-cookies",
+    requireAuth,
+    xCookiesUpload.single("cookies"),
+    (req: Request, res: Response): void => {
+      if (!req.file) {
+        res.status(400).json({ message: "No cookies file provided" });
+        return;
+      }
+      fs.renameSync(req.file.path, xCookiesPath);
+      const validation = validateNetscapeCookies(xCookiesPath, X_REQUIRED_TOKENS, "x.com");
+      res.json({ ok: validation.valid, saved: true, validation });
+    }
+  );
+
+  app.delete("/api/settings/x-cookies", requireAuth, (_req: Request, res: Response): void => {
+    if (fs.existsSync(xCookiesPath)) fs.unlinkSync(xCookiesPath);
+    res.json({ ok: true, message: "X cookies removed" });
+  });
+
   // ── Connected camera guests (for WebRTC multi-view relay) ────────────────
   const connectedCamGuests = new Map<string, { ws: any; streamId: string; guestName: string }>();
   // Guests waiting for host approval

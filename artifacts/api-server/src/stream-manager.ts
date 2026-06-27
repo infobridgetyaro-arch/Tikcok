@@ -1120,12 +1120,15 @@ async function resolveInputUrl(
 }
 
 async function getXSpaceAudioUrl(spaceUrl: string): Promise<string> {
+  const xCookiesPath = path.join(process.cwd(), "x-cookies.txt");
+  const cookiesArgs = fs.existsSync(xCookiesPath) ? ["--cookies", xCookiesPath] : [];
   return new Promise((resolve, reject) => {
     const ytdlp = spawn("yt-dlp", [
       "-g",
       "--no-playlist",
       "-f", "bestaudio",
       "--no-warnings",
+      ...cookiesArgs,
       spaceUrl,
     ]);
     let stdout = "";
