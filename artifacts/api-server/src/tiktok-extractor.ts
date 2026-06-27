@@ -570,6 +570,7 @@ export async function getTikTokStreamUrl(
 
   let lastError: TikTokStreamError | null = null;
   let toolNotFoundCount = 0;
+  let streamlinkConfirmedNotLive = false; // true only if streamlink explicitly says NOT_LIVE
 
   for (const { name, fn } of methods) {
     try {
@@ -577,10 +578,17 @@ export async function getTikTokStreamUrl(
       logger.info({ username, method: name, quality }, `${logTag} URL resolved`);
 
       // ── URL health check ──────────────────────────────────────────────────
+      // NOTE: TikTok CDN URLs frequently return HTTP 403 to plain Node.js
+      // HTTP requests because the CDN validates cookies/tokens that are only
+      // present in the original streamlink/yt-dlp session context.  FFmpeg
+      // connects successfully because it inherits the signed URL.
+      // We treat 403 as "likely OK" — only hard-fail on genuine errors
+      // (manifest with no segments, connection refused, timeout).
       if (!skipHealthCheck) {
         logger.info({ username, method: name }, `${logTag} Health checking resolved URL...`);
         const health = await checkTikTokStreamHealth(url);
-        if (!health.healthy) {
+        const is403 = health.reason?.includes("403");
+        if (!health.healthy && !is403) {
           logger.warn({ username, method: name, reason: health.reason }, `${logTag} Health check failed — trying next method`);
           lastError = new TikTokStreamError(
             `URL resolved but health check failed: ${health.reason}`,
@@ -589,8 +597,13 @@ export async function getTikTokStreamUrl(
           );
           continue;
         }
-        logger.info({ username, method: name, format: health.format }, `${logTag} Health check passed`);
-        return { url, resolvedBy: name, format: health.format, healthChecked: true };
+        if (is403) {
+          logger.info({ username, method: name }, `${logTag} Health check got 403 (expected for TikTok CDN) — using URL`);
+        } else {
+          logger.info({ username, method: name, format: health.format }, `${logTag} Health check passed`);
+        }
+        const format = url.includes(".m3u8") ? "hls" : url.includes(".flv") ? "flv" : "unknown";
+        return { url, resolvedBy: name, format: health.format ?? format, healthChecked: true };
       }
 
       const format = url.includes(".m3u8") ? "hls" : url.includes(".flv") ? "flv" : "unknown";
@@ -613,21 +626,46 @@ export async function getTikTokStreamUrl(
         continue;
       }
 
-      // Short-circuit on definitive errors — no point trying other methods
+      // Short-circuit on definitive errors — but NOT_LIVE from yt-dlp is
+      // unreliable.  yt-dlp's TikTok extractor hits a different API path
+      // than streamlink and frequently returns "not live" for users who ARE
+      // actively streaming (wrong region response, API quota, extractor bug).
+      // Only treat NOT_LIVE as definitive when streamlink says it — streamlink
+      // validates against the actual TikTok Live API and is authoritative.
+      // For yt-dlp methods, log the NOT_LIVE but keep trying the cascade.
       if (definitive.has(err.code)) {
-        throw err;
+        const isYtDlpNotLive = err.code === "NOT_LIVE" && name.startsWith("yt-dlp");
+        if (!isYtDlpNotLive) {
+          // streamlink (authoritative) said NOT_LIVE — record it and stop
+          if (err.code === "NOT_LIVE" && name === "streamlink") streamlinkConfirmedNotLive = true;
+          throw err;
+        }
+        logger.info(
+          { username, method: name },
+          `${logTag} yt-dlp returned NOT_LIVE — this is often a false negative; continuing cascade`,
+        );
       }
 
       lastError = err;
     }
   }
 
-  // All methods failed
-  const finalMsg = lastError
+  // All methods failed.
+  // If every yt-dlp method returned NOT_LIVE but streamlink had a different
+  // error (UNKNOWN / TIMEOUT / bot-protection), we can't trust the NOT_LIVE
+  // verdict — the user may actually be live.  Use code UNCONFIRMED_NOT_LIVE
+  // so stream-manager knows to retry with backoff instead of hard-stopping.
+  const allYtDlpNotLive =
+    lastError?.code === "NOT_LIVE" && !streamlinkConfirmedNotLive;
+
+  const finalCode = allYtDlpNotLive ? "UNKNOWN" : (lastError?.code ?? "UNKNOWN");
+  const finalMsg = allYtDlpNotLive
+    ? `Could not resolve TikTok stream for @${username} — yt-dlp reports not live but streamlink could not confirm. The user may still be live; will retry.`
+    : lastError
     ? `Could not get TikTok stream for @${username}. ${lastError.message}`
     : `Could not get TikTok stream for @${username}. Make sure the account is currently live.`;
 
-  throw new TikTokStreamError(finalMsg, lastError?.code ?? "UNKNOWN", "all-methods");
+  throw new TikTokStreamError(finalMsg, finalCode, "all-methods");
 }
 
 /** Convenience wrapper that returns TikTokStreamInfo (legacy interface) */
