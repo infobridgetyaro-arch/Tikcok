@@ -241,6 +241,14 @@ export class SourceRelay {
   private status: RelayStatus = "starting";
   private retryTimer: NodeJS.Timeout | null = null;
   private healthTimer: NodeJS.Timeout | null = null;
+  // Cached result from the first successful streamlink quality probe.
+  // Re-probing on every reconnect adds 10–30 s of FFmpeg stdin starvation
+  // per restart cycle.  During that probe window the RTMP rw_timeout (20 s)
+  // fires, hardKillAndRestart bumps the backoff, and the stream spirals into
+  // the 120-second backoff level — causing YouTube Studio's "not receiving
+  // enough video" warning at ~2 minutes.  Caching the quality eliminates the
+  // probe delay on all reconnects after the first successful one.
+  private cachedResolvedQuality: string | null = null;
 
   constructor(opts: SourceRelayOptions) {
     this.streamId = opts.streamId;
@@ -673,38 +681,53 @@ export class SourceRelay {
     const isYouTubeSource = st === "youtube" || st === "youtube_pipe";
 
     if (isTikTokSource) {
-      const username = this.pageUrl
-        .replace(/.*tiktok\.com\/@?/, "")
-        .replace(/\/.*$/, "")
-        .replace(/^@/, "");
-      const queryUrl = `https://www.tiktok.com/@${username}/live`;
-
-      const extraArgs = [
-        "--http-header",
-        "User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "--http-header", "Referer=https://www.tiktok.com/",
-      ];
-
-      const quality = await this._resolveStreamlinkQuality(queryUrl, extraArgs);
-      if (this.stopped || this.permanentlyFailed) return;
-
-      if (quality === STREAMLINK_CONFIG_ERROR) {
-        // Bad flags or streamlink not installed — permanent failure, do NOT retry.
-        // Falling back to yt-dlp here would mask the misconfiguration and waste
-        // the retry budget on a fundamentally broken command.
-        this._fatal(
-          `[relay] Streamlink is misconfigured or not installed. ` +
-          `Fix the streamlink installation/flags, then restart the stream.`,
-        );
-        return;
-      } else if (quality === null) {
-        // Streamlink returned no streams (channel offline or plugin mismatch) —
-        // fall back to yt-dlp which has its own TikTok extractor. If the channel
-        // is truly offline, yt-dlp also fails fast and the exit handler retries.
-        this._log(`[relay] Streamlink no streams — switching to yt-dlp fallback for TikTok`);
-        resolvedQuality = SourceRelay.YTDLP_TIKTOK_FALLBACK;
+      // On reconnects, reuse the quality resolved during the first successful
+      // probe.  Re-probing via `streamlink --json` on every reconnect takes
+      // 10–30 s, which starves FFmpeg stdin long enough for the RTMP
+      // rw_timeout (20 s) to fire, triggering hardKillAndRestart and pushing
+      // the exponential backoff up to the 120-second level.  That 2-minute
+      // reconnecting gap is exactly what YouTube Studio flags as "not receiving
+      // enough video".  Skipping the probe on reconnects keeps the restart
+      // time under 2 s so YouTube never sees a significant data gap.
+      if (this.cachedResolvedQuality !== null) {
+        this._log(`[relay] Reconnect — reusing cached quality "${this.cachedResolvedQuality}" (skipping probe)`);
+        resolvedQuality = this.cachedResolvedQuality;
       } else {
-        resolvedQuality = quality;
+        const username = this.pageUrl
+          .replace(/.*tiktok\.com\/@?/, "")
+          .replace(/\/.*$/, "")
+          .replace(/^@/, "");
+        const queryUrl = `https://www.tiktok.com/@${username}/live`;
+
+        const extraArgs = [
+          "--http-header",
+          "User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          "--http-header", "Referer=https://www.tiktok.com/",
+        ];
+
+        const quality = await this._resolveStreamlinkQuality(queryUrl, extraArgs);
+        if (this.stopped || this.permanentlyFailed) return;
+
+        if (quality === STREAMLINK_CONFIG_ERROR) {
+          // Bad flags or streamlink not installed — permanent failure, do NOT retry.
+          // Falling back to yt-dlp here would mask the misconfiguration and waste
+          // the retry budget on a fundamentally broken command.
+          this._fatal(
+            `[relay] Streamlink is misconfigured or not installed. ` +
+            `Fix the streamlink installation/flags, then restart the stream.`,
+          );
+          return;
+        } else if (quality === null) {
+          // Streamlink returned no streams (channel offline or plugin mismatch) —
+          // fall back to yt-dlp which has its own TikTok extractor. If the channel
+          // is truly offline, yt-dlp also fails fast and the exit handler retries.
+          this._log(`[relay] Streamlink no streams — switching to yt-dlp fallback for TikTok`);
+          resolvedQuality = SourceRelay.YTDLP_TIKTOK_FALLBACK;
+        } else {
+          // Cache so future reconnects skip this 10–30 s probe entirely.
+          this.cachedResolvedQuality = quality;
+          resolvedQuality = quality;
+        }
       }
 
     } else if (isYouTubeSource) {
