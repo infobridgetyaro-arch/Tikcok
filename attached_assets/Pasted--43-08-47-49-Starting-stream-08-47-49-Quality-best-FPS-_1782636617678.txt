@@ -1,0 +1,87 @@
+
+43
+[08:47:49] --- Starting stream ---
+
+[08:47:49] Quality: best | FPS: 30 | Layout: mobile | Preset: veryfast
+
+[08:47:49] Audio: On | Auto-restart: Off | Sample rate: 48000 Hz
+
+[08:47:49] Video: H.264 High profile L4.1 | CBR | 2s keyframes | yuv420p
+
+[08:47:49] Starting TikTok self-healing relay for @directorlaura (pipe mode — no URL expiry)...
+
+[08:47:49] TikTok source ready [pipe mode — streamlink → stdin, self-healing] — launching FFmpeg...
+
+[08:47:49] Output: YouTube
+
+[08:47:49] Launching FFmpeg (1s GOP, 5s RTMP timeout, stall watchdog active)...
+
+[08:47:49] [relay:tiktok_pipe] Starting — URL: https://www.tiktok.com/@directorlaura/live
+
+[08:47:49] [relay] streamlink 7.1 detected
+
+[08:47:49] [relay] Querying available streams for: https://www.tiktok.com/@directorlaura/live
+
+[08:47:51] [relay] Available streams: ao, ld, hd, worst, best
+
+[08:47:51] [relay] Selected quality: best
+
+[08:47:51] [relay:tiktok_pipe] $ streamlink --stdout --loglevel warning --http-header User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 --http-header Referer=https://www.tiktok.com/ --http-header Accept-Language=en-US,en;q=0.9 --http-timeout 20 --stream-segment-timeout 15 --stream-timeout 60 --retry-streams 10 --retry-max 10 --retry-open 5 --hls-live-edge 3 https://www.tiktok.com/@directorlaura/live best
+
+[08:47:53] [relay:tiktok_pipe] ✓ Source connected — piping to FFmpeg stdin (first chunk: 8192 B)
+
+[08:47:54] [ffmpeg] [aist#5:0/pcm_s16le @ 0x22be6480] Guessed Channel Layout: mono
+
+[08:47:54] [ffmpeg] [aist#6:0/pcm_f32le @ 0x22ef6200] Guessed Channel Layout: stereo
+
+[08:47:55] Streaming! Encoding and forwarding frames...
+
+[08:47:55] Progress: 4 frames | N/A | 00:00:00.13
+
+[08:48:25] Progress: 847 frames | N/A | 00:00:28.18
+
+[08:48:55] Progress: 1627 frames | N/A | 00:00:54.23
+
+[08:49:25] Progress: 2473 frames | N/A | 00:01:22.34
+
+[08:49:45] [perf] ~8.0s of encoding lag accumulated (speed 0.90x) — reconnecting before YouTube shows buffering error...
+
+[08:49:45] FFmpeg exited (code: null, signal: SIGKILL)
+
+[08:49:50] --- Starting stream ---
+
+[08:49:50] Quality: best | FPS: 30 | Layout: mobile | Preset: veryfast
+
+[08:49:50] Audio: On | Auto-restart: Off | Sample rate: 48000 Hz
+
+[08:49:50] Video: H.264 High profile L4.1 | CBR | 2s keyframes | yuv420p
+
+[08:49:50] Starting TikTok self-healing relay for @directorlaura (pipe mode — no URL expiry)...
+
+[08:49:50] TikTok source ready [pipe mode — streamlink → stdin, self-healing] — launching FFmpeg...
+
+[08:49:50] Output: YouTube
+
+[08:49:50] Launching FFmpeg (1s GOP, 5s RTMP timeout, stall watchdog active)...
+
+[08:49:50] [relay:tiktok_pipe] Starting — URL: https://www.tiktok.com/@directorlaura/live
+
+[08:49:50] [relay] streamlink 7.1 detected
+
+[08:49:50] [relay] Querying available streams for: https://www.tiktok.com/@directorlaura/live
+
+[08:49:52] [relay] Available streams: ao, ld, hd, worst, best
+
+[08:49:52] [relay] Selected quality: best
+
+[08:49:52] [relay:tiktok_pipe] $ streamlink --stdout --loglevel warning --http-header User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 --http-header Referer=https://www.tiktok.com/ --http-header Accept-Language=en-US,en;q=0.9 --http-timeout 20 --stream-segment-timeout 15 --stream-timeout 60 --retry-streams 10 --retry-max 10 --retry-open 5 --hls-live-edge 3 https://www.tiktok.com/@directorlaura/live best
+
+[08:49:53] [relay:tiktok_pipe] ✓ Source connected — piping to FFmpeg stdin (first chunk: 8192 B)
+
+[08:49:55] [ffmpeg] [aist#5:0/pcm_s16le @ 0x17c7eb40] Guessed Channel Layout: mono
+
+[08:49:55] [ffmpeg] [aist#6:0/pcm_f32le @ 0x17c09780] Guessed Channel Layout: stereo
+
+[08:49:56] Streaming! Encoding and forwarding frames...
+
+[08:49:56] Progress: 4 frames | N/A | 00:00:00.12

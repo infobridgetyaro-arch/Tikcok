@@ -313,6 +313,11 @@ const restartScheduled = new Set<string>();
 // Consecutive restart failure count per stream → drives exponential backoff
 // so a channel that keeps failing doesn't hammer YouTube and get the server IP blocked.
 const restartBackoff = new Map<string, number>();
+
+// Resolved streamlink quality cache — persists across hardKillAndRestart so the
+// 10–30 s `streamlink --json` probe is skipped on every restart after the first.
+// Key: streamId. Value: resolved quality string (e.g. "best", "hd").
+const tiktokQualityCache = new Map<string, string>();
 // Backoff schedule: 5s → 15s → 30s → 60s → 120s → 300s cap for 6+
 const BACKOFF_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000, 300_000];
 
@@ -1029,9 +1034,11 @@ function buildFFmpegArgs(
   args.push("-map", "[_audio]");
 
   // ── Video encoder — YouTube "Excellent connection" settings ──────────────
-  // preset: "veryfast" is the YouTube-balanced default — 15-20% better quality
-  //   vs "ultrafast" at the same bitrate with still-real-time CPU load on modern VPS.
-  //   "ultrafast" is kept as an option for underpowered servers.
+  // preset: "superfast" is the default — ~30% less CPU than "veryfast" with
+  //   negligible quality loss at live-streaming bitrates. "veryfast" caused
+  //   speed=0.90x on mobile-layout TikTok restreamers, triggering the slow-
+  //   encode reconnect loop and visible viewer buffering every ~82 s.
+  //   "ultrafast" is kept as an option for severely underpowered servers.
   // tune=zerolatency: keeps the encoder delay to 0 frames — critical for live
   //   streaming where any encoder buffer means higher end-to-end latency.
   // profile=high + level=4.1: maximum compatibility with YouTube's ingest decoder.
@@ -1045,7 +1052,11 @@ function buildFFmpegArgs(
   // sc_threshold=0: disable scene-change detection for fixed GOP (consistent keyframes).
   // fps_mode=cfr: Constant Frame Rate — ensures YouTube never sees timestamp gaps
   //   that trigger dropped-frame warnings in Studio.
-  const encoderPreset = (stream.encoderPreset as string) || "veryfast";
+  // superfast vs veryfast: superfast cuts encoder CPU ~30 % with negligible
+  // quality loss at live-streaming bitrates. veryfast caused speed=0.90x on
+  // a mobile-layout TikTok restream, which accumulated 8 s of lag every ~82 s
+  // and triggered the slow-encode reconnect loop, causing visible buffering.
+  const encoderPreset = (stream.encoderPreset as string) || "superfast";
   args.push(
     "-c:v", "libx264",
     "-preset", encoderPreset,
@@ -1616,7 +1627,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
   scorerRegisterStream(streamId, qualityBitrateKbps);
   scorerSetTargetFps(streamId, streamFps);
 
-  const encoderPresetLabel = (stream.encoderPreset as string) || "veryfast";
+  const encoderPresetLabel = (stream.encoderPreset as string) || "superfast";
   sendLog(streamId, `--- Starting stream ---`);
   sendLog(streamId, `Quality: ${stream.quality}${is60fps ? " 60fps" : ""} | FPS: ${stream.fps} | Layout: ${stream.ratio} | Preset: ${encoderPresetLabel}`);
   sendLog(streamId, `Audio: ${stream.muted ? "Muted" : "On"} | Auto-restart: ${stream.autoRestart ? "On" : "Off"} | Sample rate: 48000 Hz`);
@@ -1756,11 +1767,18 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
         sourceType: resolvedType,
         pageUrl: relayPageUrl,
         quality: stream.quality || "best",
+        // Seed from the persistent cache so the 10–30 s streamlink --json probe
+        // is skipped on every restart after the first successful one.
+        cachedQuality: tiktokQualityCache.get(streamId) ?? null,
         ffmpegStdin: ffmpegProc.stdin as NodeJS.WritableStream,
         onEvent: (evt) => {
           if (evt.type === "log" && evt.message) sendLog(streamId, evt.message);
           else if (evt.type === "warn" && evt.message) sendLog(streamId, evt.message);
           else if (evt.type === "health" && evt.kbps !== undefined && evt.kbps > 0) {
+            // Persist newly resolved quality back to the module-level cache
+            // so the next hardKillAndRestart can skip the probe too.
+            const resolved = relay.getCachedQuality();
+            if (resolved) tiktokQualityCache.set(streamId, resolved);
             logger.debug(
               { streamId, kbps: evt.kbps, restarts: evt.totalRestarts },
               "[relay] health tick",
@@ -2411,6 +2429,7 @@ export function stopStream(streamId: string) {
   resolverCBs.delete(streamId);
   restartScheduled.delete(streamId);
   restartBackoff.delete(streamId);
+  tiktokQualityCache.delete(streamId);
 
   // SIGKILL immediately — no graceful drain.
   // SIGTERM causes FFmpeg to flush its encoder buffer and send RTMP finalization

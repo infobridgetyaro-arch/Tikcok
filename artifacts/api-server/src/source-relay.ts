@@ -212,6 +212,13 @@ export interface SourceRelayOptions {
   /** Quality preference: "best" | "720p" | "480p" */
   quality: string;
   /**
+   * Pre-resolved streamlink quality name from a previous session.
+   * When provided, the initial `streamlink --json` probe is skipped so the
+   * relay spawns immediately instead of spending 10–30 s on the quality query.
+   * Stored externally (stream-manager) so it survives hardKillAndRestart.
+   */
+  cachedQuality?: string | null;
+  /**
    * FFmpeg's stdin WritableStream.
    * The relay writes data here and NEVER calls .end() on it.
    */
@@ -257,6 +264,8 @@ export class SourceRelay {
     this.quality = opts.quality;
     this.ffmpegStdin = opts.ffmpegStdin;
     this.onEvent = opts.onEvent;
+    // Seed from the externally persisted cache (survives hardKillAndRestart).
+    if (opts.cachedQuality) this.cachedResolvedQuality = opts.cachedQuality;
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -298,6 +307,8 @@ export class SourceRelay {
   getStatus(): RelayStatus { return this.status; }
   getTotalRestarts(): number { return this.totalRestarts; }
   getBytesRelayed(): number { return this.bytesRelayed; }
+  /** Returns the resolved quality name once a probe has succeeded, else null. */
+  getCachedQuality(): string | null { return this.cachedResolvedQuality; }
 
   // ── Private helpers ────────────────────────────────────────────────────────
 
