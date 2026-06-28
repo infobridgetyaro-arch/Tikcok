@@ -504,7 +504,13 @@ export function StreamCard({
                       id={`yt-src-${stream.id}`}
                       placeholder="@channelname  or  youtube.com/watch?v=..."
                       value={stream.youtubeSourceUrl}
-                      onChange={(e) => onUpdate(stream.id, { youtubeSourceUrl: e.target.value })}
+                      onChange={(e) => {
+                        const url = e.target.value;
+                        const channelMatch = url.match(/\/channel\/(UC[a-zA-Z0-9_-]{21,22})/);
+                        const updates: Partial<StreamConfig> = { youtubeSourceUrl: url };
+                        if (channelMatch) updates.youtubeChannelId = channelMatch[1];
+                        onUpdate(stream.id, updates);
+                      }}
                       disabled={isActive}
                       className="h-8 text-sm"
                       data-testid={`input-youtube-source-${stream.id}`}

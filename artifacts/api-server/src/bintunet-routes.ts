@@ -462,9 +462,22 @@ export async function registerBintunetRoutes(
     res.json(storage.getStreams());
   });
 
+  // Extract a UC... channel ID from a YouTube URL (e.g. /channel/UCxxxxx/live).
+  // Returns null if the URL doesn't contain a recognisable channel ID segment.
+  function extractChannelIdFromYouTubeUrl(url: string): string | null {
+    const match = url?.match(/\/channel\/(UC[a-zA-Z0-9_-]{21,22})/);
+    return match ? match[1] : null;
+  }
+
   app.post("/api/streams", requireAuth, (req: Request, res: Response): void => {
     try {
-      const data = insertStreamSchema.parse(req.body);
+      const body = { ...req.body };
+      // Auto-fill youtubeChannelId from the source URL when not provided
+      if (body.youtubeSourceUrl && !body.youtubeChannelId) {
+        const extracted = extractChannelIdFromYouTubeUrl(body.youtubeSourceUrl);
+        if (extracted) body.youtubeChannelId = extracted;
+      }
+      const data = insertStreamSchema.parse(body);
       const stream = storage.createStream(data);
       res.json(stream);
     } catch (e: any) {
@@ -476,14 +489,20 @@ export async function registerBintunetRoutes(
     "/api/streams/:id",
     requireAuth,
     (req: Request, res: Response): void => {
-      const stream = storage.updateStream(String(req.params.id), req.body);
+      const body = { ...req.body };
+      // Auto-fill youtubeChannelId from the source URL when not explicitly provided
+      if (body.youtubeSourceUrl && !body.youtubeChannelId) {
+        const extracted = extractChannelIdFromYouTubeUrl(body.youtubeSourceUrl);
+        if (extracted) body.youtubeChannelId = extracted;
+      }
+      const stream = storage.updateStream(String(req.params.id), body);
       if (!stream) {
         res.status(404).json({ message: "Stream not found" });
         return;
       }
       // If youtubeChannelId was just set or changed, immediately resolve the
       // liveChatId so chat burn-in starts within seconds (not up to 60 s).
-      if (req.body.youtubeChannelId && stream.youtubeChannelId) {
+      if (body.youtubeChannelId && stream.youtubeChannelId) {
         triggerStatsPollNow();
       }
       res.json(stream);
