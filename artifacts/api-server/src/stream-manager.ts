@@ -2,8 +2,7 @@ import { ChildProcess, spawn, exec } from "child_process";
 import { storage } from "./storage";
 import { logger } from "./lib/logger";
 import { getLiveStats } from "./youtube-counter";
-import { getTikTokStreamUrl } from "./tiktok-extractor";
-import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader, getYouTubeYtdlpPipeArgs, getYouTubeStreamlinkPipeArgs } from "./youtube-source";
+import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader } from "./youtube-source";
 import { YTDLP_BIN } from "./lib/ytdlp";
 import type { WebSocket } from "ws";
 import type { StreamConfig } from "./schema";
@@ -11,6 +10,7 @@ import { OverlayRenderer, defaultOverlayState, type OverlayState } from "./overl
 import path from "path";
 import fs from "fs";
 import { startHlsEncoder, stopHlsEncoder } from "./hls-encoder";
+import { SourceRelay } from "./source-relay";
 import {
   initHealthScorer,
   scorerRegisterStream,
@@ -260,6 +260,7 @@ interface StreamProcess {
   prefetchTimer?: NodeJS.Timeout;      // fires before URL expires — pre-fetches a fresh URL, then seamlessly restarts
   sessionRefreshTimer?: NodeJS.Timeout; // TikTok/xSpace: forced restart every SESSION_REFRESH_MS to prevent session expiry
   ytSourceProcess?: ChildProcess; // streamlink process piped to FFmpeg stdin for YouTube source
+  sourceRelay?: SourceRelay;      // self-healing pipe relay for tiktok_pipe / youtube_pipe modes
   inputUrl?: string;
   sourceType?: string;
   urlExpired?: boolean;
@@ -745,8 +746,26 @@ function buildFFmpegArgs(
       "-fflags", "+genpts",
       "-i", inputUrl,
     );
+  } else if (sourceType === "tiktok_pipe") {
+    // streamlink pipe mode: streamlink --stdout streams MPEG-TS to FFmpeg stdin.
+    // streamlink continuously refreshes the TikTok HLS playlist and fetches fresh
+    // segment URLs internally — CDN URL expiry is fully transparent to FFmpeg.
+    //
+    // low_delay: identical reasoning as youtube_pipe — avoids SEI stall at HLS
+    // segment boundaries that accumulates into speed=0.97x lag and RTMP drops.
+    //
+    // analyzeduration/probesize: give FFmpeg enough budget to parse the container
+    // header from the first streamlink chunks before it starts encoding.
+    args.push(
+      "-analyzeduration", "10000000",
+      "-probesize", "10000000",
+      "-thread_queue_size", "4096",
+      "-fflags", "+genpts+discardcorrupt",
+      "-flags", "low_delay",
+      "-i", "pipe:0",
+    );
   } else {
-    // TikTok HLS — aggressive reconnect so TLS/EOF drops never stop the stream.
+    // TikTok HLS (legacy direct-URL mode — kept as fallback if pipe mode fails).
     // tls_verify 0: TikTok CDN edge servers often use certificates that don't
     //   match the request hostname; disabling verification prevents the
     //   "Decryption has failed" TLS error that kills the stream after ~10s.
@@ -1206,9 +1225,10 @@ async function resolveInputUrl(
   }
 
   if (!stream.tiktokUsername) throw new Error("TikTok username is required");
-  const tiktokResult = await getTikTokStreamUrl(stream.tiktokUsername, stream.quality || "best");
-  urlCache.set(stream.id, { url: tiktokResult.url, sourceType, resolvedAt: Date.now() });
-  return { url: tiktokResult.url, sourceType: "tiktok" };
+  // Pipe mode: SourceRelay will spawn streamlink --stdout and manage the connection.
+  // This avoids resolving a temporary CDN URL that expires in 5–30 minutes.
+  // streamlink continuously refreshes the HLS playlist internally — no URL expiry.
+  return { url: "pipe:0", sourceType: "tiktok_pipe" as any };
 }
 
 async function getXSpaceAudioUrl(spaceUrl: string): Promise<string> {
@@ -1537,6 +1557,10 @@ function cleanupStreamProc(streamId: string, proc: StreamProcess) {
     try { proc.ytSourceProcess.kill("SIGKILL"); } catch {}
     proc.ytSourceProcess = undefined;
   }
+  if (proc.sourceRelay) {
+    proc.sourceRelay.stop();
+    proc.sourceRelay = undefined;
+  }
   proc.bgRenderer?.stop();
   proc.uiRenderer?.stop();
   if (proc.micPipe) {
@@ -1603,7 +1627,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
 
   try {
     if (sourceType === "tiktok") {
-      sendLog(streamId, `Fetching TikTok live stream for @${stream.tiktokUsername}...`);
+      sendLog(streamId, `Starting TikTok self-healing relay for @${stream.tiktokUsername} (pipe mode — no URL expiry)...`);
     } else if (sourceType === "youtube") {
       sendLog(streamId, `YouTube source: direct HLS — connecting FFmpeg to ${stream.youtubeSourceUrl}...`);
     } else if (sourceType === "xspace") {
@@ -1629,12 +1653,15 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       return;
     }
 
-    if (sourceType === "tiktok") {
+    if (resolvedType === "tiktok_pipe") {
+      sendLog(streamId, `TikTok source ready [pipe mode — streamlink → stdin, self-healing] — launching FFmpeg...`);
+    } else if (resolvedType === "youtube_pipe") {
+      sendLog(streamId, `YouTube source ready [pipe mode — streamlink → stdin, self-healing] — launching FFmpeg...`);
+    } else if (sourceType === "youtube") {
+      sendLog(streamId, `YouTube source ready [direct HLS] — launching FFmpeg...`);
+    } else if (sourceType === "tiktok") {
       const inputType = inputUrl.includes(".m3u8") ? "HLS" : "FLV";
-      sendLog(streamId, `Using ${inputType} stream input`);
-    } else if (sourceType === "youtube" || resolvedType === "youtube_pipe") {
-      const modeLabel = resolvedType === "youtube_pipe" ? "pipe mode (yt-dlp → stdin)" : "direct HLS";
-      sendLog(streamId, `YouTube source ready [${modeLabel}] — launching FFmpeg...`);
+      sendLog(streamId, `TikTok source: ${inputType} (legacy direct-URL mode)`);
     }
 
     const outputs: string[] = [];
@@ -1714,52 +1741,45 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       }
     }
 
-    // YouTube pipe mode: spawn yt-dlp and pipe its stdout to FFmpeg stdin.
-    // yt-dlp's default downloader passes cookies/headers to its internal FFmpeg via
-    // -headers, so YouTube CDN authentication (including rqh=1 POT segments) works.
-    if (resolvedType === "youtube_pipe") {
-      const pageUrl = normaliseYouTubeUrl((stream.youtubeSourceUrl || "").trim());
-      const ytArgs = getYouTubeYtdlpPipeArgs(pageUrl);
-      sendLog(streamId, `[yt-dlp] Spawning pipe: ${YTDLP_BIN} ${ytArgs.slice(-2).join(" ")}`);
-      const ytProc = spawn(YTDLP_BIN, ytArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    // ── SourceRelay: self-healing pipe for TikTok and YouTube pipe modes ──────
+    // Replaces the old yt-dlp one-shot spawn. Key difference: when the source
+    // process exits (URL expiry, CDN error, network hiccup), SourceRelay respawns
+    // it WITHOUT calling .end() on FFmpeg stdin — so FFmpeg keeps running and the
+    // RTMP connection to YouTube/Facebook stays alive. The brief data pause
+    // (typically 1–5 s) is absorbed by the rtmp_buffer and platform-side buffers.
+    if (resolvedType === "youtube_pipe" || resolvedType === "tiktok_pipe") {
+      const isYT = resolvedType === "youtube_pipe";
+      const relayPageUrl = isYT
+        ? normaliseYouTubeUrl((stream.youtubeSourceUrl || "").trim())
+        : `https://www.tiktok.com/@${stream.tiktokUsername}/live`;
 
-      const stdinPipe = ffmpegProc.stdin as NodeJS.WritableStream | null;
-      if (stdinPipe) {
-        stdinPipe.on("error", () => {});
-        ytProc.stdout?.pipe(stdinPipe);
-      }
-
-      let ytErrBuf = "";
-      ytProc.stderr?.on("data", (d: Buffer) => {
-        ytErrBuf += d.toString();
-        const lines = ytErrBuf.split("\n");
-        ytErrBuf = lines.pop() ?? "";
-        for (const line of lines) {
-          const t = line.trim();
-          if (!t) continue;
-          sendLog(streamId, `[yt-dlp] ${t}`);
-          logger.info({ streamId, line: t }, "[youtube-pipe] yt-dlp stderr");
-        }
+      const relay = new SourceRelay({
+        streamId,
+        sourceType: resolvedType,
+        pageUrl: relayPageUrl,
+        quality: stream.quality || "best",
+        ffmpegStdin: ffmpegProc.stdin as NodeJS.WritableStream,
+        onEvent: (evt) => {
+          if (evt.type === "log" && evt.message) sendLog(streamId, evt.message);
+          else if (evt.type === "warn" && evt.message) sendLog(streamId, evt.message);
+          else if (evt.type === "health" && evt.kbps !== undefined && evt.kbps > 0) {
+            logger.debug(
+              { streamId, kbps: evt.kbps, restarts: evt.totalRestarts },
+              "[relay] health tick",
+            );
+          }
+        },
       });
 
-      ytProc.on("error", (err: NodeJS.ErrnoException) => {
-        logger.error({ streamId, err: err.message }, "[youtube-pipe] yt-dlp spawn error");
-        if (err.code === "ENOENT") {
-          sendLog(streamId, "[yt-dlp] Binary not found — check server setup");
-        } else {
-          sendLog(streamId, `[yt-dlp] Error: ${err.message}`);
-        }
-      });
+      // Guard stdin errors — the relay writes to stdin; if FFmpeg has exited,
+      // the write will throw EPIPE. We suppress it here so the process doesn't crash.
+      (ffmpegProc.stdin as NodeJS.WritableStream | null)?.on("error", () => {});
 
-      ytProc.on("exit", (code, signal) => {
-        logger.info({ streamId, code, signal }, "[youtube-pipe] yt-dlp exited");
-        const currentProc = activeStreams.get(streamId);
-        if (currentProc) currentProc.ytSourceProcess = undefined;
-      });
+      relay.start();
 
-      // Store so cleanupStreamProc can kill it on stop
+      // Store on the proc so cleanupStreamProc can call relay.stop()
       const currentProc = activeStreams.get(streamId);
-      if (currentProc) currentProc.ytSourceProcess = ytProc;
+      if (currentProc) currentProc.sourceRelay = relay;
     }
 
     let gotFrames = false;
@@ -1941,26 +1961,18 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
               });
             }
 
-            // ── Proactive URL pre-fetch for 24/7 TikTok/YouTube streaming ─────
-            // Schedule a background URL refresh 8 minutes after going live.
-            // The old FFmpeg keeps running uninterrupted while the new URL is
-            // fetched (takes 5-35 s). Once in cache, we do a fast restart
-            // (~300 ms kill + ~3-5 s FFmpeg startup) — invisible behind the
-            // YouTube/Facebook platform buffer (~10-30 s).
-            // This eliminates the 50-60 s black-screen gap that used to happen
-            // when TikTok URLs expired mid-stream.
-            // YouTube HLS CDN URLs (googlevideo.com) can also expire mid-stream
-            // (~6 hour TTL, but can be shorter). Include youtube in the proactive
-            // pre-fetch so a fresh URL is always cached before expiry.
-            if (sourceType !== "camera" && sourceType !== "upload") {
+            // ── Proactive URL pre-fetch for xSpace only ───────────────────────
+            // tiktok_pipe and youtube_pipe use SourceRelay which handles URL
+            // refresh and reconnection automatically — no prefetch timer needed.
+            // xspace still uses direct HLS URL mode so it still needs pre-fetch.
+            if (sourceType === "xspace") {
               const schedulePrefetch = (intervalMs: number) => {
                 const timer = setTimeout(async () => {
                   const currentProc = activeStreams.get(streamId);
                   if (!currentProc || currentProc.ffmpegProcess !== ffmpegProc) return;
 
-                  sendLog(streamId, `[prefetch] Pre-fetching fresh source URL for 24/7 continuity...`);
+                  sendLog(streamId, `[prefetch] Pre-fetching fresh X Space URL for 24/7 continuity...`);
                   try {
-                    // Force a fresh resolution — bypasses any stale cache entry
                     urlCache.delete(streamId);
                     const resolved = await resolveInputUrlSafe(stream, false);
                     urlCache.set(streamId, {
@@ -1968,7 +1980,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                       sourceType: resolved.sourceType as "tiktok" | "youtube" | "camera",
                       resolvedAt: Date.now(),
                     });
-                    sendLog(streamId, `[prefetch] Fresh URL cached — will be used on next manual restart.`);
+                    sendLog(streamId, `[prefetch] Fresh URL cached — will be used on next restart.`);
                   } catch (e: any) {
                     sendLog(streamId, `[prefetch] URL refresh failed (${e.message?.slice(0, 120)})`);
                   }
@@ -1978,27 +1990,22 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                 if (runningProc) runningProc.prefetchTimer = timer;
               };
 
-              // TikTok/xSpace CDN auth tokens can expire in as little as 90-120 s.
-              // Pre-fetch a fresh URL at 90 s so the cache is warm when the 403
-              // fires, letting the restart bypass the 5-30 s streamlink wait.
-              if (sourceType === "tiktok" || sourceType === "xspace") {
-                schedulePrefetch(90 * 1000);
-              }
-              // All non-camera sources: refresh at 8 min (YouTube CDN URLs can
-              // expire after ~6 hours but we refresh eagerly for robustness).
+              // X Space CDN auth tokens can expire in ~90-120 s
+              schedulePrefetch(90 * 1000);
+              // Refresh again at 8 min for longer sessions
               schedulePrefetch(8 * 60 * 1000);
             }
 
-            // ── Proactive session refresh for TikTok/xSpace (24/7) ──────────
-            // streamlink/yt-dlp sessions for TikTok and X Spaces expire after
-            // ~3 hours.  Rather than waiting for a stall, restart proactively
-            // just before expiry with a fresh URL so viewers never see a gap.
-            if (sourceType === "tiktok" || sourceType === "xspace") {
+            // ── Proactive session refresh for xSpace (24/7) ──────────────────
+            // yt-dlp sessions for X Spaces expire after ~3 hours. Restart
+            // proactively so viewers never see a gap.
+            // TikTok no longer needs this — SourceRelay handles 24/7 continuity.
+            if (sourceType === "xspace") {
               const sessionTimer = setTimeout(() => {
                 const currentProc = activeStreams.get(streamId);
                 if (!currentProc || currentProc.ffmpegProcess !== ffmpegProc) return;
                 if (manuallyStopped.has(streamId)) return;
-                sendLog(streamId, `[24/7] Session refresh — restarting with fresh source URL for uninterrupted streaming...`);
+                sendLog(streamId, `[24/7] X Space session refresh — restarting with fresh URL...`);
                 urlCache.delete(streamId);
                 hardKillAndRestart(streamId, 500, true /* forceNewUrl */);
               }, SESSION_REFRESH_MS);
@@ -2220,7 +2227,9 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       watchdog,
       statsInterval,
       // prefetchTimer is set later inside the gotFrames block (after ffmpegProc is running)
+      // sourceRelay is set in the tiktok_pipe / youtube_pipe block above (after ffmpegProc starts)
       ytSourceProcess: undefined,
+      sourceRelay: undefined,
       inputUrl,
       sourceType,
     });

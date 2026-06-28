@@ -23,10 +23,11 @@ A live-stream restreaming dashboard that captures TikTok/YouTube/camera feeds an
 
 - `artifacts/api-server/src/bintunet-routes.ts` — all API + WebSocket routes
 - `artifacts/api-server/src/stream-manager.ts` — FFmpeg process management
+- `artifacts/api-server/src/source-relay.ts` — **SourceRelay** self-healing pipe manager (TikTok/YouTube)
 - `artifacts/api-server/src/storage.ts` — in-memory store for streams
 - `artifacts/api-server/src/schema.ts` — StreamConfig zod schema (13 core fields, no overlay)
-- `artifacts/api-server/src/tiktok-extractor.ts` — TikTok HLS URL extraction via streamlink
-- `artifacts/api-server/src/youtube-source.ts` — YouTube live URL resolution via yt-dlp
+- `artifacts/api-server/src/tiktok-extractor.ts` — legacy TikTok HLS URL extraction (kept for reference)
+- `artifacts/api-server/src/youtube-source.ts` — YouTube live URL resolution helpers
 - `artifacts/bintunet/src/types/schema.ts` — shared TypeScript types (StreamConfig)
 - `artifacts/bintunet/src/components/stream-card.tsx` — main per-stream control card
 - `artifacts/bintunet/src/components/live-preview.tsx` — HLS live preview via hls.js
@@ -38,6 +39,7 @@ A live-stream restreaming dashboard that captures TikTok/YouTube/camera feeds an
 - **WebSocket** — `ws` library on raw `http.createServer`; exposed at `/ws` path in artifact.toml
 - **Session auth** — `express-session` + `memorystore`; password is `"bintunet"` (change in production)
 - **No overlay** — overlay system was fully removed; FFmpeg does plain scale+pad+encode only
+- **SourceRelay (self-healing pipe)** — TikTok and YouTube both use `sourceType="tiktok_pipe"` / `"youtube_pipe"`. `resolveInputUrl` returns `{ url: "pipe:0" }` immediately (no temp CDN URL). `SourceRelay` spawns `streamlink --stdout` and pipes to FFmpeg stdin via `.on('data')` (NOT `.pipe()` — to keep stdin open). When streamlink dies, relay respawns it with backoff; FFmpeg never disconnects from RTMP. See `source-relay.ts`.
 
 ## Product
 
