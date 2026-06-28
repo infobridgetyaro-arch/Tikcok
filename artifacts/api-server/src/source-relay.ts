@@ -10,77 +10,116 @@
  *   ✓  https://www.youtube.com/@channel/live
  *   ✗  https://pull-live-f4.tiktokcdn.com/stream/abc123.flv?auth=...
  *
- * The relay resolves a fresh media stream from the page URL each time it
- * (re)spawns the source process. CDN URL expiry is therefore transparent:
- * streamlink continuously refreshes the HLS playlist and fetches new segments
- * without restarting FFmpeg.
- *
  * ─── LIFECYCLE ──────────────────────────────────────────────────────────────
- *  start()  → spawn source (streamlink/yt-dlp --stdout)
+ *  start()  → detect streamlink version → spawn streamlink --stdout
  *           → pipe data to FFmpeg stdin via .on('data') + .write()  ← NEVER .end()
- *           → if source exits → exponential backoff → spawn fresh source
+ *           → NETWORK/SOURCE failure → exponential backoff → respawn
+ *           → CONFIG error (bad flags, missing binary) → fail permanently, do NOT retry
  *  stop()   → kill source process, do NOT touch stdin (caller's responsibility)
  *
  * ─── WHY NOT .pipe() ────────────────────────────────────────────────────────
  * Node's readable.pipe(writable) calls writable.end() when the source stream
  * ends. That closes FFmpeg's stdin → FFmpeg processes EOF → exits → RTMP
- * disconnect → YouTube stream cut. We use manual .write() instead to keep
- * stdin alive across source process restarts.
+ * disconnect. We use manual .write() instead to keep stdin alive across
+ * source process restarts.
  *
- * ─── FFMPEG SIDE ────────────────────────────────────────────────────────────
- * FFmpeg reads from pipe:0 (stdin). The brief data pause when the source
- * process restarts (typically 1–5 s) is absorbed by:
- *   • The 5-second RTMP output buffer (rtmp_buffer=5000)
- *   • The dropout_transition=10 audio silence bridge in the filter graph
- *   • YouTube's ~30-second platform-side stream buffer
+ * ─── STREAMLINK VERSION COMPATIBILITY ───────────────────────────────────────
+ * Streamlink 7.x renamed several flags:
+ *   OLD (≤5.x)              NEW (7.x+)
+ *   --hls-segment-timeout   --stream-segment-timeout
+ *   --hls-timeout           --stream-timeout
+ *   --http-cookie-jar       (removed — pass --http-cookie KEY=VALUE individually)
  *
- * ─── LOGGING ────────────────────────────────────────────────────────────────
- * All events are surfaced via the onEvent callback so the caller can forward
- * them to both the Pino server log and the per-stream WebSocket log buffer.
+ * The relay detects the installed version at startup and logs it.
+ * On exit code 2 ("unrecognized arguments"), it fails permanently instead of
+ * retrying — this is a configuration error, not a network failure.
  */
 
-import { spawn, ChildProcess } from "child_process";
+import { spawn, exec, ChildProcess } from "child_process";
 import { logger } from "./lib/logger";
 import { YTDLP_BIN } from "./lib/ytdlp";
-import fs from "fs";
-import path from "path";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 // ── Timing constants ──────────────────────────────────────────────────────────
 
 /**
- * Backoff schedule (ms) for consecutive source failures.
- * Grows from 1 s → 60 s to avoid hammering the platform with rapid re-requests.
+ * Backoff schedule (ms) for consecutive NETWORK / SOURCE failures.
+ * Config errors (bad flags, ENOENT) do NOT use this — they fail permanently.
  */
 const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 20_000, 30_000, 60_000];
 
 /**
  * How many consecutive failures trigger a "source may be offline" warning.
- * Below this threshold we treat failures as transient network / CDN issues.
  */
 const WARN_AFTER_FAILURES = 5;
 
 /**
- * Startup watchdog timeout (ms). If no bytes arrive within this time after
- * spawning, the source is considered offline and we retry with backoff.
+ * Startup watchdog (ms): if no bytes arrive after spawning, treat as offline.
  */
 const STARTUP_TIMEOUT_MS = 60_000;
 
 /**
- * Health monitoring interval (ms). Emits a health event so the caller can
- * log throughput and detect silent streams.
+ * Health monitoring interval (ms).
  */
 const HEALTH_INTERVAL_MS = 10_000;
+
+// ── Version detection ─────────────────────────────────────────────────────────
+
+interface StreamlinkInfo {
+  version: string;
+  major: number;
+}
+
+let cachedStreamlinkInfo: StreamlinkInfo | null = null;
+
+/**
+ * Detect installed streamlink version (cached after first call).
+ * Returns null if streamlink is not installed or version cannot be determined.
+ */
+async function detectStreamlink(): Promise<StreamlinkInfo | null> {
+  if (cachedStreamlinkInfo) return cachedStreamlinkInfo;
+  try {
+    const { stdout } = await execAsync("streamlink --version", { timeout: 8_000 });
+    // Output: "streamlink 7.1.3" or similar
+    const match = stdout.trim().match(/streamlink\s+(\d+)\.(\d+)/i);
+    if (!match) return null;
+    const info: StreamlinkInfo = {
+      version: match[0].replace(/^streamlink\s+/i, ""),
+      major: parseInt(match[1], 10),
+    };
+    cachedStreamlinkInfo = info;
+    return info;
+  } catch {
+    return null;
+  }
+}
+
+// ── Config-error detection ────────────────────────────────────────────────────
+
+/**
+ * Returns true if the process exit looks like a configuration error
+ * (bad flags, binary not found) rather than a network/source failure.
+ * Configuration errors should NOT be retried.
+ */
+function isConfigError(exitCode: number | null, stderr: string): boolean {
+  if (exitCode === 2) return true; // argparse exit code for unrecognized arguments
+  if (/unrecognized argument|invalid choice|error: argument/i.test(stderr)) return true;
+  return false;
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type RelayStatus =
-  | "starting"     // waiting for first bytes from source process
-  | "running"      // bytes are flowing to FFmpeg stdin
-  | "reconnecting" // source died, waiting for backoff before next spawn
-  | "stopped";     // stop() was called — relay is permanently inactive
+  | "starting"      // waiting for first bytes from source process
+  | "running"       // bytes are flowing to FFmpeg stdin
+  | "reconnecting"  // source died (network/source), waiting before next spawn
+  | "failed"        // permanent failure — config error or binary not found
+  | "stopped";      // stop() was called
 
 export interface RelayEvent {
-  type: "log" | "warn" | "status" | "health";
+  type: "log" | "warn" | "status" | "health" | "fatal";
   message?: string;
   status?: RelayStatus;
   bytesRelayed?: number;
@@ -95,7 +134,6 @@ export interface SourceRelayOptions {
   sourceType: string;
   /**
    * The PERMANENT live page URL. Never a CDN URL.
-   * Examples:
    *   TikTok:  "https://www.tiktok.com/@username/live"
    *   YouTube: "https://www.youtube.com/@channel/live"
    */
@@ -107,7 +145,7 @@ export interface SourceRelayOptions {
    * The relay writes data here and NEVER calls .end() on it.
    */
   ffmpegStdin: NodeJS.WritableStream;
-  /** Callback invoked for every relay event (logs, status changes, health). */
+  /** Called for every relay event (logs, status changes, health). */
   onEvent: (event: RelayEvent) => void;
 }
 
@@ -123,6 +161,7 @@ export class SourceRelay {
 
   private proc: ChildProcess | null = null;
   private stopped = false;
+  private permanentlyFailed = false;
   private consecutiveFailures = 0;
   private totalRestarts = 0;
   private bytesRelayed = 0;
@@ -143,24 +182,30 @@ export class SourceRelay {
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  /** Begin the relay. Spawns the source process and starts piping to FFmpeg stdin. */
+  /** Begin the relay. Detects streamlink version then spawns the source process. */
   start(): void {
-    this._log(
-      `[relay:${this.sourceType}] Starting — permanent URL: ${this.pageUrl}`,
-    );
+    this._log(`[relay:${this.sourceType}] Starting — URL: ${this.pageUrl}`);
     this._setStatus("starting");
     this._startHealthMonitor();
-    this._spawn();
+    // Detect streamlink version first, then spawn
+    detectStreamlink().then((info) => {
+      if (this.stopped) return;
+      if (info) {
+        this._log(`[relay] streamlink ${info.version} detected`);
+      } else {
+        this._log(`[relay] streamlink not found or version unknown — attempting spawn anyway`);
+      }
+      this._spawn();
+    });
   }
 
   /**
    * Permanently stop the relay.
-   * Kills the source process. Does NOT close ffmpegStdin — that is the caller's job.
+   * Kills the source process. Does NOT close ffmpegStdin.
    */
   stop(): void {
     if (this.stopped) return;
     this.stopped = true;
-    this._log(`[relay:${this.sourceType}] Stopping`);
     this._setStatus("stopped");
     if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
     if (this.healthTimer) { clearInterval(this.healthTimer); this.healthTimer = null; }
@@ -195,6 +240,13 @@ export class SourceRelay {
     logger.warn({ streamId: this.streamId }, msg);
   }
 
+  private _fatal(msg: string): void {
+    this.permanentlyFailed = true;
+    this._setStatus("failed");
+    this.onEvent({ type: "fatal", message: msg });
+    logger.error({ streamId: this.streamId }, msg);
+  }
+
   private _kill(proc: ChildProcess | null): void {
     if (!proc) return;
     try { proc.kill("SIGKILL"); } catch {}
@@ -211,16 +263,13 @@ export class SourceRelay {
   }
 
   private _tikTokArgs(): { cmd: string; args: string[] } {
-    // Extract bare username from the permanent page URL or treat as username directly
+    // Extract bare username from the permanent page URL
     const username = this.pageUrl
       .replace(/.*tiktok\.com\/@?/, "")
       .replace(/\/.*$/, "")
       .replace(/^@/, "");
 
-    const cookiesPath = path.join(process.cwd(), "tiktok-cookies.txt");
-    const hasCookies = fs.existsSync(cookiesPath);
-
-    // Map quality preference → streamlink quality selector
+    // Quality selector: streamlink tries each in order, picks first available
     const qualityMap: Record<string, string> = {
       best: "best",
       "720p": "720p,best",
@@ -237,20 +286,18 @@ export class SourceRelay {
         "User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "--http-header", "Referer=https://www.tiktok.com/",
         "--http-header", "Accept-Language=en-US,en;q=0.9",
+        // streamlink 7.x flag names (renamed from --hls-* in older versions):
+        //   --stream-segment-timeout: max time to wait for each segment to start
+        //   --stream-timeout:          max time to wait for stream data overall
         "--http-timeout", "20",
-        // HLS segment / playlist timeouts — allow TikTok CDN to be slow
-        "--hls-segment-timeout", "15",
-        "--hls-timeout", "60",
-        // streamlink built-in reconnect handles transient CDN drops internally.
-        // --retry-streams: how many times to retry the stream URL if it goes dead
-        // --retry-max:     how many total request retries per segment/manifest
-        // --retry-open:    how many times to retry opening the stream
+        "--stream-segment-timeout", "15",
+        "--stream-timeout", "60",
+        // Built-in reconnect — streamlink handles transient CDN drops internally
         "--retry-streams", "10",
         "--retry-max", "10",
         "--retry-open", "5",
-        // Live edge: start at the latest available segment, not the beginning of DVR
+        // Start at the latest live segment (low-latency edge)
         "--hls-live-edge", "3",
-        ...(hasCookies ? ["--http-cookie-jar", cookiesPath] : []),
         `https://www.tiktok.com/@${username}/live`,
         qualityArg,
       ],
@@ -258,25 +305,19 @@ export class SourceRelay {
   }
 
   private _youTubeArgs(): { cmd: string; args: string[] } {
-    // streamlink is preferred over yt-dlp for YouTube live because:
-    // - It uses YouTube's native streaming API (no POT/rqh=1 token issues)
-    // - It keeps all segment fetches inside its own session (no 403s on CDN)
-    // - It handles playlist refresh and reconnection automatically
-    const cookiesPath = path.join(process.cwd(), "cookies.txt");
-    const hasCookies = fs.existsSync(cookiesPath);
-
+    // streamlink is preferred for YouTube live — uses the native YouTube plugin
+    // which handles POT/rqh token rotation and HLS playlist refresh internally.
     return {
       cmd: "streamlink",
       args: [
         "--stdout",
         "--loglevel", "warning",
-        "--hls-segment-timeout", "15",
-        "--hls-timeout", "60",
+        "--stream-segment-timeout", "15",
+        "--stream-timeout", "60",
         "--retry-streams", "10",
         "--retry-max", "10",
         "--retry-open", "5",
         "--hls-live-edge", "3",
-        ...(hasCookies ? ["--http-cookie-jar", cookiesPath] : []),
         this.pageUrl,
         "best/1080p60/1080p/720p60/720p/480p/360p/worst",
       ],
@@ -284,8 +325,6 @@ export class SourceRelay {
   }
 
   private _xSpaceArgs(): { cmd: string; args: string[] } {
-    const xCookiesPath = path.join(process.cwd(), "x-cookies.txt");
-    const hasCookies = fs.existsSync(xCookiesPath);
     return {
       cmd: YTDLP_BIN,
       args: [
@@ -295,7 +334,6 @@ export class SourceRelay {
         "--no-warnings",
         "--socket-timeout", "20",
         "-o", "-",
-        ...(hasCookies ? ["--cookies", xCookiesPath] : []),
         this.pageUrl,
       ],
     };
@@ -304,25 +342,32 @@ export class SourceRelay {
   // ── Core spawn / retry loop ────────────────────────────────────────────────
 
   private _spawn(): void {
-    if (this.stopped) return;
+    if (this.stopped || this.permanentlyFailed) return;
 
     const spawnArgs = this._getSpawnArgs();
     if (!spawnArgs) {
-      this._warn(`[relay] Unknown source type "${this.sourceType}" — cannot spawn`);
+      this._fatal(`[relay] Unknown source type "${this.sourceType}" — cannot spawn`);
       return;
     }
 
     const { cmd, args } = spawnArgs;
 
-    // Log the last 2 args (URL + quality) so the log isn't flooded with all flags
-    this._log(`[relay:${this.sourceType}] Spawning: ${cmd} … ${args.slice(-2).join(" ")}`);
+    // Log the full command so the user can diagnose flag issues
+    this._log(`[relay:${this.sourceType}] $ ${cmd} ${args.join(" ")}`);
 
     let proc: ChildProcess;
     try {
       proc = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
     } catch (e: any) {
-      this._warn(`[relay] Failed to launch ${cmd}: ${e.message}`);
-      this._scheduleRetry();
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+        this._fatal(
+          `[relay] "${cmd}" not found. ` +
+          `Install with: pip install ${cmd === "streamlink" ? "streamlink" : "yt-dlp"}`,
+        );
+      } else {
+        this._warn(`[relay] Failed to launch ${cmd}: ${e.message}`);
+        this._scheduleRetry();
+      }
       return;
     }
 
@@ -330,13 +375,12 @@ export class SourceRelay {
     this.proc = proc;
 
     let gotData = false;
-    let stderrBuf = "";
+    // Accumulate full stderr so we can classify the error on exit
+    let stderrFull = "";
     let sessionBytes = 0;
     const spawnedAt = Date.now();
 
     // ── Startup watchdog ─────────────────────────────────────────────────────
-    // If streamlink finds no live stream, it exits immediately with no stdout.
-    // If TikTok/YouTube is not live, we'll know within STARTUP_TIMEOUT_MS.
     const startupWatchdog = setTimeout(() => {
       if (!gotData && this.proc === thisProc && !this.stopped) {
         this._warn(
@@ -348,9 +392,8 @@ export class SourceRelay {
       }
     }, STARTUP_TIMEOUT_MS);
 
-    // ── stdout: pipe to FFmpeg stdin ──────────────────────────────────────────
-    // CRITICAL: We use .write() instead of .pipe() so that when this process
-    // exits, we do NOT call .end() on ffmpegStdin. That keeps FFmpeg alive.
+    // ── stdout → FFmpeg stdin ─────────────────────────────────────────────────
+    // CRITICAL: .write() not .pipe() — keeps stdin open across source restarts.
     proc.stdout?.on("data", (chunk: Buffer) => {
       if (!gotData) {
         gotData = true;
@@ -358,8 +401,8 @@ export class SourceRelay {
         this.consecutiveFailures = 0;
         this._setStatus("running");
         this._log(
-          `[relay:${this.sourceType}] ✓ Source live — piping to FFmpeg stdin ` +
-          `(first chunk: ${chunk.length} bytes)`,
+          `[relay:${this.sourceType}] ✓ Source connected — piping to FFmpeg stdin ` +
+          `(first chunk: ${chunk.length} B)`,
         );
       }
 
@@ -372,15 +415,17 @@ export class SourceRelay {
           stdin.write(chunk);
         }
       } catch {
-        // FFmpeg has exited — the relay will be stopped by the stream manager
+        // FFmpeg exited — stream manager will call stop() shortly
       }
     });
 
-    // ── stderr: structured logging ────────────────────────────────────────────
+    // ── stderr collection ─────────────────────────────────────────────────────
     proc.stderr?.on("data", (d: Buffer) => {
-      stderrBuf += d.toString();
-      const lines = stderrBuf.split("\n");
-      stderrBuf = lines.pop() ?? "";
+      const text = d.toString();
+      stderrFull += text;
+
+      // Stream stderr lines to the log in real time, filtered by relevance
+      const lines = text.split("\n");
       for (const line of lines) {
         const t = line.trim();
         if (!t) continue;
@@ -392,21 +437,21 @@ export class SourceRelay {
       }
     });
 
-    // ── process error (e.g. ENOENT) ───────────────────────────────────────────
+    // ── process error (e.g. ENOENT after spawn) ───────────────────────────────
     proc.on("error", (err: NodeJS.ErrnoException) => {
       clearTimeout(startupWatchdog);
       if (this.proc !== thisProc || this.stopped) return;
       this.proc = null;
 
       if (err.code === "ENOENT") {
-        this._warn(
+        this._fatal(
           `[relay] "${cmd}" not found. ` +
           `Install with: pip install ${cmd === "streamlink" ? "streamlink" : "yt-dlp"}`,
         );
       } else {
         this._warn(`[relay] Process error: ${err.message}`);
+        this._scheduleRetry();
       }
-      this._scheduleRetry();
     });
 
     // ── process exit ──────────────────────────────────────────────────────────
@@ -418,6 +463,25 @@ export class SourceRelay {
       const uptimeSec = Math.round((Date.now() - spawnedAt) / 1000);
       const kbRelayed = Math.round(sessionBytes / 1024);
 
+      // ── Config error detection: fail permanently, do NOT retry ────────────
+      // Exit code 2 is argparse's standard exit for unrecognized arguments.
+      // Retrying an invalid command is pointless and wastes the retry budget.
+      if (isConfigError(code, stderrFull)) {
+        // Find the most useful error line from stderr
+        const errorLine = stderrFull
+          .split("\n")
+          .map((l) => l.trim())
+          .find((l) => /error|unrecognized/i.test(l)) ?? stderrFull.trim().slice(0, 200);
+        this._fatal(
+          `[relay] Configuration error (exit ${code}) — stopping retries.\n` +
+          `  Command: ${cmd} ${args.join(" ")}\n` +
+          `  Error: ${errorLine}\n` +
+          `  Fix: check that the flags above are valid for your installed streamlink version.`,
+        );
+        return;
+      }
+
+      // ── Network / source failure: retry with backoff ───────────────────────
       if (gotData) {
         this._warn(
           `[relay:${this.sourceType}] Source exited after ${uptimeSec}s ` +
@@ -426,7 +490,7 @@ export class SourceRelay {
       } else {
         this._warn(
           `[relay:${this.sourceType}] Source exited before sending data ` +
-          `(code=${code}, signal=${signal}) — will retry`,
+          `(code=${code}, signal=${signal}, uptime=${uptimeSec}s) — will retry`,
         );
       }
 
@@ -434,10 +498,10 @@ export class SourceRelay {
     });
   }
 
-  // ── Retry scheduling ────────────────────────────────────────────────────────
+  // ── Retry scheduling (network/source failures only) ────────────────────────
 
   private _scheduleRetry(): void {
-    if (this.stopped) return;
+    if (this.stopped || this.permanentlyFailed) return;
 
     this.consecutiveFailures++;
     this.totalRestarts++;
@@ -453,7 +517,7 @@ export class SourceRelay {
     const delayMs = BACKOFF_MS[backoffIdx];
 
     this._warn(
-      `[relay] Retry #${this.totalRestarts} scheduled in ${delayMs / 1000}s ` +
+      `[relay] Retry #${this.totalRestarts} in ${delayMs / 1000}s ` +
       `(consecutive failures: ${this.consecutiveFailures})`,
     );
 
@@ -461,7 +525,7 @@ export class SourceRelay {
 
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
-      if (!this.stopped) {
+      if (!this.stopped && !this.permanentlyFailed) {
         this._setStatus("starting");
         this._spawn();
       }
