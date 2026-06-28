@@ -1280,8 +1280,12 @@ async function getXSpaceAudioUrl(spaceUrl: string): Promise<string> {
 // 30 s: tolerant enough to survive HLS segment gaps and brief network hiccups,
 // while still fast enough to catch a dead source before the YouTube platform
 // buffer fully drains (~60 s).
-const STALL_TIMEOUT_MS = 30_000;
-const HEALTH_WARN_MS = 15_000; // warn before stall watchdog fires
+// 15 s: YouTube gives ~2 min of grace for "no data"; we need each stall+restart
+// cycle to finish well under 30 s so multiple incidents don't accumulate to 2 min.
+// With the 90-second URL pre-fetch the restart itself takes < 5 s (no streamlink
+// wait), so a 15 s watchdog → < 20 s total gap per incident.
+const STALL_TIMEOUT_MS = 15_000;
+const HEALTH_WARN_MS = 10_000; // warn before stall watchdog fires
 // TikTok/xSpace streamlink sessions expire after ~3 hours.  Force a proactive
 // restart before that so the stream never dies silently from session expiry.
 const SESSION_REFRESH_MS = 3 * 60 * 60 * 1000; // 3 hours
