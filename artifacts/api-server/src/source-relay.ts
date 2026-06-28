@@ -399,34 +399,54 @@ export class SourceRelay {
   private _youTubeArgs(formatSelector: string): { cmd: string; args: string[] } {
     // yt-dlp is used for YouTube live instead of streamlink because:
     //
-    //  1. YouTube rate-limits rapid manifest requests (403/429). Our two-step
-    //     streamlink flow (quality probe → playback spawn) makes two manifest
-    //     requests in quick succession, reliably triggering rate limits.
+    //  1. YouTube rate-limits rapid manifest requests (403/429). The previous
+    //     streamlink two-step flow (quality probe → playback spawn) made two
+    //     manifest requests in quick succession, reliably triggering rate limits.
+    //     yt-dlp resolves and streams in one session, eliminating that problem.
     //
     //  2. Streamlink's YouTube plugin does not attach Referer/Origin headers
-    //     when fetching individual HLS segments, causing 403s on segment CDN
-    //     requests even when the playlist URL itself resolves fine.
+    //     when fetching HLS segments, causing 403s on segment CDN requests.
+    //     yt-dlp handles segment-level auth headers internally.
     //
-    //  3. yt-dlp handles rqh token rotation, segment-level auth headers, and
-    //     the signed-URL expiry cycle internally in a single session — no
-    //     separate quality-probe request is needed.
+    //  3. yt-dlp handles rqh token rotation and the signed-URL expiry cycle
+    //     internally — no separate quality-probe request is needed.
     //
-    // --extractor-args "youtube:player_client=web" forces the web player path
-    // which returns HLS (m3u8_native) streams. The default android-vr client
-    // returns DASH streams that cannot be piped to a single stdout cleanly.
+    // ── Flag rationale ───────────────────────────────────────────────────────
     //
-    // --hls-use-mpegts writes an MPEG-TS container to stdout, which FFmpeg
-    // can read from stdin as a continuous stream across HLS segment boundaries.
+    // --no-progress          — suppresses the download progress bar but keeps
+    //                          all WARNING and ERROR lines visible in stderr so
+    //                          the relay's stderr handler can log 429s, format
+    //                          errors, and offline signals. (--no-warnings would
+    //                          hide the "HTTP 429" warning that explains WHY
+    //                          "No video formats found!" happens.)
+    //
+    // --extractor-retries 5  — retry the m3u8 manifest fetch up to 5× when it
+    //                          returns 429/503. Without this, a single transient
+    //                          rate-limit response immediately causes "No video
+    //                          formats found!" and the relay must restart.
+    //
+    // --retry-sleep          — exponential backoff between extractor retries:
+    //   extractor:exp=1:10     1 s → 2 s → 4 s → 8 s → 10 s cap.
+    //
+    // --hls-use-mpegts       — write an MPEG-TS container to stdout so FFmpeg
+    //                          receives a single seekable byte-stream across
+    //                          HLS segment boundaries (no atom-level rewrite).
+    //
+    // NOTE: --extractor-args "youtube:player_client=web" was deliberately
+    // removed. It requires a JS runtime (node/deno/quickjs) for nsig solving,
+    // none of which are configured here. The default android-VR client returns
+    // both DASH and HLS (m3u8) formats; the format selector below picks HLS.
     return {
       cmd: YTDLP_BIN,
       args: [
         "--no-config",
         "--no-playlist",
-        "--no-warnings",
-        "--extractor-args", "youtube:player_client=web",
+        "--no-progress",
+        "--extractor-retries", "5",
+        "--retry-sleep", "extractor:exp=1:10",
         "-f", formatSelector,
         "--hls-use-mpegts",
-        "--socket-timeout", "20",
+        "--socket-timeout", "30",
         "-o", "-",
         this.pageUrl,
       ],
@@ -434,22 +454,25 @@ export class SourceRelay {
   }
 
   /**
-   * Derive a yt-dlp format selector string from the user's quality preference.
+   * Derive a yt-dlp format selector from the user's quality preference.
    *
-   * We do NOT pre-query yt-dlp to discover available formats (that would make
-   * two requests → rate limiting). Instead, we build a cascading format selector
-   * that tries the user's preferred height first, then falls back gracefully.
+   * We do NOT pre-query yt-dlp (that would make a second manifest request,
+   * risking a 429 rate limit). Instead we build a cascading selector that
+   * the single streaming invocation resolves internally.
    *
-   * All selectors prefer m3u8_native (HLS) over other protocols so the output
-   * is a single MPEG-TS stream suitable for piping to FFmpeg stdin.
+   * Protocol selector uses `^=m3u8` ("starts with m3u8") rather than
+   * `=m3u8_native` (exact match) so it also accepts the plain `m3u8` protocol
+   * variant. If no m3u8 stream passes the height filter, the `/best` fallback
+   * picks whatever yt-dlp considers best — combined with `--hls-use-mpegts`
+   * this is still piped as MPEG-TS even when it's an HLS stream.
    */
   private _youTubeFormatSelector(): string {
     const qualityMap: Record<string, string> = {
-      best:  "best[protocol=m3u8_native]/best",
-      "720p": "best[height<=720][protocol=m3u8_native]/best[height<=720]/best",
-      "480p": "best[height<=480][protocol=m3u8_native]/best[height<=480]/best",
-      "360p": "best[height<=360][protocol=m3u8_native]/best[height<=360]/best",
-      "240p": "best[height<=240][protocol=m3u8_native]/best[height<=240]/best",
+      best:   "best[protocol^=m3u8]/best",
+      "720p": "best[height<=720][protocol^=m3u8]/best[height<=720]/best",
+      "480p": "best[height<=480][protocol^=m3u8]/best[height<=480]/best",
+      "360p": "best[height<=360][protocol^=m3u8]/best[height<=360]/best",
+      "240p": "best[height<=240][protocol^=m3u8]/best[height<=240]/best",
     };
     const sel = qualityMap[this.quality] ?? qualityMap["best"];
     this._log(`[relay] YouTube format selector: ${sel}`);
