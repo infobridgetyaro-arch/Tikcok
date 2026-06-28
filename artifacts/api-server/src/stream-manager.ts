@@ -592,31 +592,27 @@ function buildFFmpegArgs(
   //   720p30  → 2,500 kbps  |  720p60  → 3,500 kbps
   //   480p30  → 1,500 kbps  |  480p60  → 2,000 kbps
   //
-  // CBR enforcement:
-  //   maxrate = 110% of bitrate → tight ceiling; prevents burst overflows that
-  //     cause YouTube Studio to flag "bitrate instability"
-  //   bufsize = 2× bitrate (exactly) → YouTube's own CBR guidance; the encoder
-  //     can absorb burst complexity within a 2-second window without starving
-  //     the ingest server or triggering the "buffering" warning
-  //
-  // -x264-params nal-hrd=cbr:force-cfr=1 enforces NAL-level CBR (the only mode
-  //   YouTube's ingestion pipeline treats as truly constant bitrate).
+  // Strict CBR enforcement (nal-hrd=cbr requires minrate = maxrate = bitrate):
+  //   bufsize = 2× bitrate → YouTube's own CBR guidance; the encoder can absorb
+  //     burst complexity within a 2-second VBV window.
+  //   maxrate = bitrate (NOT 110%) — this is intentional.  nal-hrd=cbr only
+  //     inserts filler NAL units when minrate = maxrate = bitrate.  Setting
+  //     maxrate > minrate breaks the HRD model: the VBV floor is free to drop
+  //     toward zero during static content (freeze frames, black background, HLS
+  //     segment gaps), triggering YouTube Studio's "not receiving enough data"
+  //     disconnect at exactly ~2 minutes.
   const is60fps = fps === 60;
   let bitrate: string;
-  let maxrate: string;
   let bufsize: string;
 
   if (stream.quality === "best") {
     bitrate  = is60fps ? "6000k" : "4500k";
-    maxrate  = is60fps ? "6600k" : "5000k";
     bufsize  = is60fps ? "12000k" : "9000k";
   } else if (stream.quality === "720p") {
     bitrate  = is60fps ? "3500k" : "2500k";
-    maxrate  = is60fps ? "3850k" : "2750k";
     bufsize  = is60fps ? "7000k"  : "5000k";
   } else {
     bitrate  = is60fps ? "2000k" : "1500k";
-    maxrate  = is60fps ? "2200k" : "1650k";
     bufsize  = is60fps ? "4000k"  : "3000k";
   }
 
@@ -1056,17 +1052,19 @@ function buildFFmpegArgs(
     "-tune", "zerolatency",
     "-b:v", bitrate,
     "-minrate", bitrate,
-    "-maxrate", maxrate,
+    // nal-hrd=cbr requires -minrate = -maxrate = bitrate so that x264's HRD
+    // model inserts filler NAL units whenever the encoded bitrate would fall
+    // below the target.  Setting -maxrate higher than -minrate (e.g. 110%)
+    // breaks the invariant: the VBV only enforces the ceiling, the floor is
+    // free to drop toward zero during static content (eof_action=repeat freeze
+    // frames, black background, HLS segment gaps).  That drop is exactly what
+    // triggers YouTube Studio's "not receiving enough data" disconnect at ~2 min.
+    // maxrate = bitrate (not the 110% value) is intentional for strict CBR.
+    "-maxrate", bitrate,
     "-bufsize", bufsize,
     "-profile:v", "high",
     "-level", "4.1",
     "-bf", "0",
-    // nal-hrd=cbr requires -minrate = -maxrate for the HRD model to fill
-    // filler NAL units on low-complexity / repeated frames.  Without -minrate
-    // the VBV only enforces the ceiling — the floor is free to drop toward
-    // zero during static content (eof_action=repeat freeze frames, black
-    // background, HLS segment gaps), which is exactly what triggers YouTube
-    // Studio's "not receiving enough data" warning after ~2 minutes.
     "-x264-params", "nal-hrd=cbr:force-cfr=1",
     "-pix_fmt", "yuv420p",
     "-g", String(fps * 2),
