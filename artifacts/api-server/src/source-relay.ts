@@ -42,6 +42,66 @@ import { promisify } from "util";
 
 const execAsync = promisify(exec);
 
+// ── spawnCollect ──────────────────────────────────────────────────────────────
+
+/**
+ * Run a command via spawn (NO shell — args are passed as an array, never
+ * concatenated into a shell string). Collects all stdout + stderr and resolves
+ * when the process exits or the timeout fires.
+ *
+ * Use this instead of execAsync / exec whenever args may contain characters
+ * that are special in sh (parentheses, quotes, dollar signs, etc.).
+ * Most notably: User-Agent strings such as
+ *   "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+ * contain "(" which sh parses as a subshell — causing the error
+ *   /bin/sh: Syntax error: "(" unexpected
+ * when passed through exec/execAsync.
+ */
+function spawnCollect(
+  cmd: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+  return new Promise((resolve, reject) => {
+    let proc: ChildProcess;
+    try {
+      proc = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    } catch (e: any) {
+      return reject(e);
+    }
+
+    let stdout = "";
+    let stderr = "";
+    // settled guards against the race where timeout fires and then "exit" fires
+    // (or vice-versa), which would call resolve/reject twice on the same Promise.
+    let settled = false;
+    const settle = (value: { stdout: string; stderr: string; exitCode: number | null }) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
+
+    const timer = setTimeout(() => {
+      try { proc.kill("SIGKILL"); } catch {}
+      settle({ stdout, stderr, exitCode: null });
+    }, timeoutMs);
+
+    proc.on("error", (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(e);
+    });
+    proc.on("exit", (code) => {
+      clearTimeout(timer);
+      settle({ stdout, stderr, exitCode: code });
+    });
+  });
+}
+
 // ── Timing constants ──────────────────────────────────────────────────────────
 
 /**
@@ -108,6 +168,17 @@ function isConfigError(exitCode: number | null, stderr: string): boolean {
   if (/unrecognized argument|invalid choice|error: argument/i.test(stderr)) return true;
   return false;
 }
+
+/**
+ * Sentinel returned by _resolveStreamlinkQuality when streamlink itself is
+ * broken/misconfigured (bad flags, binary not installed). The caller must
+ * call _fatal() and NOT fall back to yt-dlp — retrying a bad command or
+ * a missing binary forever would waste the retry budget.
+ *
+ * Distinct from `null` (channel offline / no streams), where yt-dlp fallback
+ * is the appropriate next step.
+ */
+const STREAMLINK_CONFIG_ERROR: unique symbol = Symbol("streamlink_config_error");
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -261,32 +332,58 @@ export class SourceRelay {
    * Query streamlink for available stream names on the given URL, then pick
    * the most appropriate quality.
    *
-   * Selection priority:
-   *   1. "best"  — if present in the stream list (streamlink alias)
-   *   2. User's requested quality — if it exists in the list
-   *   3. Highest available stream — last entry after filtering out "worst"/"best"/"audio_only"
-   *
-   * Returns the chosen quality string, or null if the channel is offline /
-   * no streams are available.
+   * Return values:
+   *   string                  — a valid quality name; proceed with streamlink
+   *   null                    — channel offline / no streams; yt-dlp fallback is appropriate
+   *   STREAMLINK_CONFIG_ERROR — bad flags or binary not installed; caller must _fatal(),
+   *                            NOT fall back to yt-dlp (retrying a broken command is useless)
    */
   private async _resolveStreamlinkQuality(
     url: string,
     extraArgs: string[] = [],
-  ): Promise<string | null> {
+  ): Promise<string | null | typeof STREAMLINK_CONFIG_ERROR> {
     this._log(`[relay] Querying available streams for: ${url}`);
 
+    // IMPORTANT: use spawnCollect (array args, NO shell) — NOT execAsync.
+    // execAsync runs via `sh -c` and concatenates args into a shell string.
+    // User-Agent values contain "(" which sh parses as a subshell, causing:
+    //   /bin/sh: Syntax error: "(" unexpected
+    // spawnCollect passes each arg as a separate array element, bypassing sh.
     let stdout = "";
     let stderr = "";
+    let exitCode: number | null = null;
     try {
-      const result = await execAsync(
-        `streamlink --json ${extraArgs.join(" ")} ${url}`,
-        { timeout: 30_000 },
+      const result = await spawnCollect(
+        "streamlink",
+        ["--json", ...extraArgs, url],
+        30_000,
       );
       stdout = result.stdout;
       stderr = result.stderr;
+      exitCode = result.exitCode;
     } catch (e: any) {
-      stdout = e.stdout ?? "";
-      stderr = e.stderr ?? e.message ?? String(e);
+      // ENOENT → streamlink is not installed; treat as permanent config error.
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+        this._warn(`[relay] streamlink binary not found — cannot probe TikTok streams`);
+        return STREAMLINK_CONFIG_ERROR;
+      }
+      stdout = "";
+      stderr = e.message ?? String(e);
+    }
+
+    // ── Detect configuration / installation errors early ─────────────────────
+    // Exit code 2 = argparse "unrecognized arguments"; stderr patterns also
+    // cover older streamlink versions that don't use exit code 2 consistently.
+    // These must NOT fall back to yt-dlp — the command itself is broken.
+    if (isConfigError(exitCode, stderr)) {
+      const errorLine = stderr
+        .split("\n")
+        .map((l) => l.trim())
+        .find((l) => /error|unrecognized/i.test(l)) ?? stderr.trim().slice(0, 200);
+      this._warn(
+        `[relay] Streamlink configuration error (exit ${exitCode}): ${errorLine}`,
+      );
+      return STREAMLINK_CONFIG_ERROR;
     }
 
     // Try to parse JSON regardless of exit code — streamlink sometimes exits 1
@@ -367,7 +464,16 @@ export class SourceRelay {
     return null;
   }
 
+  /** Sentinel value used when streamlink returns no streams and we fall back to yt-dlp. */
+  private static readonly YTDLP_TIKTOK_FALLBACK = "__ytdlp_tiktok_fallback__";
+
   private _tikTokArgs(resolvedQuality: string): { cmd: string; args: string[] } {
+    // When streamlink's quality probe returned no streams, _spawn sets this
+    // sentinel and we transparently switch to yt-dlp for the same TikTok URL.
+    if (resolvedQuality === SourceRelay.YTDLP_TIKTOK_FALLBACK) {
+      return this._tikTokYtdlpArgs();
+    }
+
     // Extract bare username from the permanent page URL
     const username = this.pageUrl
       .replace(/.*tiktok\.com\/@?/, "")
@@ -392,6 +498,54 @@ export class SourceRelay {
         "--hls-live-edge", "3",
         `https://www.tiktok.com/@${username}/live`,
         resolvedQuality,
+      ],
+    };
+  }
+
+  /**
+   * yt-dlp fallback args for TikTok live.
+   *
+   * Used when streamlink's quality probe returns no streams — either because
+   * the TikTok plugin is incompatible with the installed streamlink version,
+   * or because the live feed URL format changed.
+   *
+   * yt-dlp supports TikTok live via its own extractor and does not require
+   * a separate quality-probe step: `best` resolves internally in one session.
+   *
+   * --hls-use-mpegts  — write MPEG-TS to stdout so FFmpeg receives a
+   *                     continuous seekable byte-stream across HLS segments.
+   * --no-progress     — suppress the progress bar but keep WARNING/ERROR lines
+   *                     visible in stderr for the relay's log handler.
+   */
+  private _tikTokYtdlpArgs(): { cmd: string; args: string[] } {
+    const username = this.pageUrl
+      .replace(/.*tiktok\.com\/@?/, "")
+      .replace(/\/.*$/, "")
+      .replace(/^@/, "");
+    const url = `https://www.tiktok.com/@${username}/live`;
+
+    const qualityMap: Record<string, string> = {
+      best:   "best[protocol^=m3u8]/best",
+      "720p": "best[height<=720][protocol^=m3u8]/best[height<=720]/best",
+      "480p": "best[height<=480][protocol^=m3u8]/best[height<=480]/best",
+      "360p": "best[height<=360][protocol^=m3u8]/best[height<=360]/best",
+      "240p": "best[height<=240][protocol^=m3u8]/best[height<=240]/best",
+    };
+    const formatSelector = qualityMap[this.quality] ?? qualityMap["best"];
+
+    return {
+      cmd: YTDLP_BIN,
+      args: [
+        "--no-config",
+        "--no-playlist",
+        "--no-progress",
+        "--extractor-retries", "5",
+        "--retry-sleep", "extractor:exp=1:10",
+        "-f", formatSelector,
+        "--hls-use-mpegts",
+        "--socket-timeout", "30",
+        "-o", "-",
+        url,
       ],
     };
   }
@@ -534,12 +688,24 @@ export class SourceRelay {
       const quality = await this._resolveStreamlinkQuality(queryUrl, extraArgs);
       if (this.stopped || this.permanentlyFailed) return;
 
-      if (quality === null) {
-        // Channel offline / no streams — retry with backoff, not permanent fail
-        this._scheduleRetry();
+      if (quality === STREAMLINK_CONFIG_ERROR) {
+        // Bad flags or streamlink not installed — permanent failure, do NOT retry.
+        // Falling back to yt-dlp here would mask the misconfiguration and waste
+        // the retry budget on a fundamentally broken command.
+        this._fatal(
+          `[relay] Streamlink is misconfigured or not installed. ` +
+          `Fix the streamlink installation/flags, then restart the stream.`,
+        );
         return;
+      } else if (quality === null) {
+        // Streamlink returned no streams (channel offline or plugin mismatch) —
+        // fall back to yt-dlp which has its own TikTok extractor. If the channel
+        // is truly offline, yt-dlp also fails fast and the exit handler retries.
+        this._log(`[relay] Streamlink no streams — switching to yt-dlp fallback for TikTok`);
+        resolvedQuality = SourceRelay.YTDLP_TIKTOK_FALLBACK;
+      } else {
+        resolvedQuality = quality;
       }
-      resolvedQuality = quality;
 
     } else if (isYouTubeSource) {
       // Build yt-dlp format selector from user preference — no pre-query.
