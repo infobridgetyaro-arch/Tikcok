@@ -706,11 +706,19 @@ function buildFFmpegArgs(
     // yt-dlp pipe mode: yt-dlp streams MPEG-TS to FFmpeg stdin.
     // yt-dlp handles all HLS segment fetches and POT token rotation internally
     // so YouTube CDN never sees bare unauthenticated requests (no 429).
+    //
+    // -flags low_delay: tells the H.264 decoder to output frames immediately
+    //   without buffering to wait for late SEI NAL units. YouTube HLS streams
+    //   frequently produce "Late SEI is not implemented" warnings at each 2s
+    //   segment boundary. Without low_delay the decoder stalls ~30ms per
+    //   segment waiting for the SEI, which cumulatively causes speed=0.97x and
+    //   a minor RTMP bitrate deficiency that YouTube flags as insufficient data.
     args.push(
       "-analyzeduration", "10000000",
       "-probesize", "10000000",
       "-thread_queue_size", "4096",
       "-fflags", "+genpts+discardcorrupt",
+      "-flags", "low_delay",
       "-i", "pipe:0",
     );
   } else if (sourceType === "xspace") {
@@ -2129,8 +2137,21 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
           trimmed.includes("Input stream #0") ||
           trimmed.includes("Starting new cluster") ||
           trimmed.includes("No trailing") ||
+          // Bare codec-address line "[h264 @ 0x...]" with no message — FFmpeg
+          // multi-line warning preamble that appears before Late SEI messages.
+          /^\[[a-z0-9_]+ @ 0x[0-9a-f]+\]$/.test(trimmed) ||
           trimmed === ""
         ) return;
+
+        // Suppress known noisy-but-harmless patterns (Late SEI, videolan upload
+        // prompts, etc.) — defined in LOG_SUPPRESS_PATTERNS.  These are already
+        // filtered from the frontend via sendLog(); apply the same filter here so
+        // they don't flood the pino/workflow logs either.
+        if (shouldSuppressLog(trimmed)) {
+          // Still forward to frontend log (sendLog already checks internally)
+          sendLog(streamId, `[ffmpeg] ${trimmed}`);
+          return;
+        }
 
         // Log FFmpeg warnings/errors to pino so they appear in workflow logs
         logger.warn({ streamId, ffmpeg: trimmed }, "FFmpeg stderr");
