@@ -195,7 +195,10 @@ export class SourceRelay {
       } else {
         this._log(`[relay] streamlink not found or version unknown — attempting spawn anyway`);
       }
-      this._spawn();
+      this._spawn().catch((err) => {
+        this._warn(`[relay] Unexpected spawn error: ${err?.message ?? err}`);
+        this._scheduleRetry();
+      });
     });
   }
 
@@ -252,30 +255,124 @@ export class SourceRelay {
     try { proc.kill("SIGKILL"); } catch {}
   }
 
+  // ── Stream quality resolution ──────────────────────────────────────────────
+
+  /**
+   * Query streamlink for available stream names on the given URL, then pick
+   * the most appropriate quality.
+   *
+   * Selection priority:
+   *   1. "best"  — if present in the stream list (streamlink alias)
+   *   2. User's requested quality — if it exists in the list
+   *   3. Highest available stream — last entry after filtering out "worst"/"best"/"audio_only"
+   *
+   * Returns the chosen quality string, or null if the channel is offline /
+   * no streams are available.
+   */
+  private async _resolveStreamlinkQuality(
+    url: string,
+    extraArgs: string[] = [],
+  ): Promise<string | null> {
+    this._log(`[relay] Querying available streams for: ${url}`);
+
+    let stdout = "";
+    let stderr = "";
+    try {
+      const result = await execAsync(
+        `streamlink --json ${extraArgs.join(" ")} ${url}`,
+        { timeout: 30_000 },
+      );
+      stdout = result.stdout;
+      stderr = result.stderr;
+    } catch (e: any) {
+      stdout = e.stdout ?? "";
+      stderr = e.stderr ?? e.message ?? String(e);
+    }
+
+    // Try to parse JSON regardless of exit code — streamlink sometimes exits 1
+    // but still emits valid JSON with an "error" field when the channel is offline.
+    let parsed: { streams?: Record<string, unknown>; error?: string } | null = null;
+    try {
+      parsed = JSON.parse(stdout);
+    } catch {
+      // Not JSON — fall through to stderr analysis
+    }
+
+    // Explicit offline/unavailable report from JSON
+    if (parsed?.error) {
+      this._warn(`[relay] Streamlink reported: ${parsed.error}`);
+      return null;
+    }
+
+    const streams = parsed?.streams ?? {};
+    const names = Object.keys(streams);
+
+    if (names.length === 0) {
+      // No JSON streams — analyse stderr to give a clear reason
+      const offlinePatterns =
+        /no playable streams|channel.*offline|not live|unavailable|no streams found|could not find/i;
+      if (offlinePatterns.test(stderr)) {
+        this._warn(
+          `[relay] Channel is offline or unavailable. ` +
+          `Streamlink said: ${stderr.trim().split("\n").slice(-3).join(" | ")}`,
+        );
+      } else if (stderr.trim()) {
+        this._warn(`[relay] No streams returned. Stderr: ${stderr.trim().slice(0, 300)}`);
+      } else {
+        this._warn(`[relay] No streams returned (empty response). Channel may be offline.`);
+      }
+      return null;
+    }
+
+    // Log all available names so operators can diagnose quality issues
+    this._log(`[relay] Available streams: ${names.join(", ")}`);
+
+    // 1. "best" alias — always prefer it when present
+    if (names.includes("best")) {
+      this._log(`[relay] Selected quality: best`);
+      return "best";
+    }
+
+    // 2. User's requested quality — exact match
+    if (this.quality && names.includes(this.quality)) {
+      this._log(`[relay] Selected quality: ${this.quality} (user preference)`);
+      return this.quality;
+    }
+
+    // 3. Fallback: highest real quality (exclude aliases like "worst"/"audio_only")
+    const aliases = new Set(["worst", "best", "audio_only"]);
+    const realStreams = names.filter((n) => !aliases.has(n));
+    const chosen = realStreams.length > 0
+      ? realStreams[realStreams.length - 1]   // last is typically highest quality
+      : names[names.length - 1];
+
+    if (this.quality && !names.includes(this.quality)) {
+      this._warn(
+        `[relay] Requested quality "${this.quality}" not available. ` +
+        `Falling back to "${chosen}". Available: ${names.join(", ")}`,
+      );
+    } else {
+      this._log(`[relay] Selected quality: ${chosen}`);
+    }
+    return chosen;
+  }
+
   // ── Spawn args per source type ─────────────────────────────────────────────
 
-  private _getSpawnArgs(): { cmd: string; args: string[] } | null {
+  private _getSpawnArgs(resolvedQuality: string): { cmd: string; args: string[] } | null {
     const st = this.sourceType;
-    if (st === "tiktok" || st === "tiktok_pipe") return this._tikTokArgs();
-    if (st === "youtube" || st === "youtube_pipe") return this._youTubeArgs();
+    if (st === "tiktok" || st === "tiktok_pipe") return this._tikTokArgs(resolvedQuality);
+    if (st === "youtube" || st === "youtube_pipe") return this._youTubeArgs(resolvedQuality);
     if (st === "xspace") return this._xSpaceArgs();
     return null;
   }
 
-  private _tikTokArgs(): { cmd: string; args: string[] } {
+  private _tikTokArgs(resolvedQuality: string): { cmd: string; args: string[] } {
     // Extract bare username from the permanent page URL
     const username = this.pageUrl
       .replace(/.*tiktok\.com\/@?/, "")
       .replace(/\/.*$/, "")
       .replace(/^@/, "");
-
-    // Quality selector: streamlink tries each in order, picks first available
-    const qualityMap: Record<string, string> = {
-      best: "best",
-      "720p": "720p,best",
-      "480p": "480p,720p,best",
-    };
-    const qualityArg = qualityMap[this.quality] ?? "best";
 
     return {
       cmd: "streamlink",
@@ -286,27 +383,20 @@ export class SourceRelay {
         "User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "--http-header", "Referer=https://www.tiktok.com/",
         "--http-header", "Accept-Language=en-US,en;q=0.9",
-        // streamlink 7.x flag names (renamed from --hls-* in older versions):
-        //   --stream-segment-timeout: max time to wait for each segment to start
-        //   --stream-timeout:          max time to wait for stream data overall
         "--http-timeout", "20",
         "--stream-segment-timeout", "15",
         "--stream-timeout", "60",
-        // Built-in reconnect — streamlink handles transient CDN drops internally
         "--retry-streams", "10",
         "--retry-max", "10",
         "--retry-open", "5",
-        // Start at the latest live segment (low-latency edge)
         "--hls-live-edge", "3",
         `https://www.tiktok.com/@${username}/live`,
-        qualityArg,
+        resolvedQuality,
       ],
     };
   }
 
-  private _youTubeArgs(): { cmd: string; args: string[] } {
-    // streamlink is preferred for YouTube live — uses the native YouTube plugin
-    // which handles POT/rqh token rotation and HLS playlist refresh internally.
+  private _youTubeArgs(resolvedQuality: string): { cmd: string; args: string[] } {
     return {
       cmd: "streamlink",
       args: [
@@ -319,7 +409,7 @@ export class SourceRelay {
         "--retry-open", "5",
         "--hls-live-edge", "3",
         this.pageUrl,
-        "best/1080p60/1080p/720p60/720p/480p/360p/worst",
+        resolvedQuality,
       ],
     };
   }
@@ -341,10 +431,46 @@ export class SourceRelay {
 
   // ── Core spawn / retry loop ────────────────────────────────────────────────
 
-  private _spawn(): void {
+  private async _spawn(): Promise<void> {
     if (this.stopped || this.permanentlyFailed) return;
 
-    const spawnArgs = this._getSpawnArgs();
+    // ── Dynamic quality resolution for streamlink-based sources ───────────────
+    // We query streamlink for the available stream names before spawning so we
+    // never pass an invalid quality string. xspace uses yt-dlp and has no
+    // streamlink quality concept.
+    let resolvedQuality = "best";
+    const st = this.sourceType;
+    const isStreamlinkSource =
+      st === "tiktok" || st === "tiktok_pipe" ||
+      st === "youtube" || st === "youtube_pipe";
+
+    if (isStreamlinkSource) {
+      const queryUrl = st === "tiktok" || st === "tiktok_pipe"
+        ? `https://www.tiktok.com/@${this.pageUrl.replace(/.*tiktok\.com\/@?/, "").replace(/\/.*$/, "").replace(/^@/, "")}/live`
+        : this.pageUrl;
+
+      // Extra headers for TikTok discovery
+      const extraArgs = (st === "tiktok" || st === "tiktok_pipe")
+        ? [
+            "--http-header",
+            "User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "--http-header", "Referer=https://www.tiktok.com/",
+          ]
+        : [];
+
+      const quality = await this._resolveStreamlinkQuality(queryUrl, extraArgs);
+      if (this.stopped || this.permanentlyFailed) return;
+
+      if (quality === null) {
+        // Channel is offline / no streams — schedule a retry but do NOT
+        // permanently fail, since channels can come back online.
+        this._scheduleRetry();
+        return;
+      }
+      resolvedQuality = quality;
+    }
+
+    const spawnArgs = this._getSpawnArgs(resolvedQuality);
     if (!spawnArgs) {
       this._fatal(`[relay] Unknown source type "${this.sourceType}" — cannot spawn`);
       return;
@@ -527,7 +653,10 @@ export class SourceRelay {
       this.retryTimer = null;
       if (!this.stopped && !this.permanentlyFailed) {
         this._setStatus("starting");
-        this._spawn();
+        this._spawn().catch((err) => {
+          this._warn(`[relay] Unexpected spawn error: ${err?.message ?? err}`);
+          this._scheduleRetry();
+        });
       }
     }, delayMs);
   }
