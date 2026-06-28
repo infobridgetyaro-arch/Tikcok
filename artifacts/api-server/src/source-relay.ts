@@ -396,22 +396,64 @@ export class SourceRelay {
     };
   }
 
-  private _youTubeArgs(resolvedQuality: string): { cmd: string; args: string[] } {
+  private _youTubeArgs(formatSelector: string): { cmd: string; args: string[] } {
+    // yt-dlp is used for YouTube live instead of streamlink because:
+    //
+    //  1. YouTube rate-limits rapid manifest requests (403/429). Our two-step
+    //     streamlink flow (quality probe → playback spawn) makes two manifest
+    //     requests in quick succession, reliably triggering rate limits.
+    //
+    //  2. Streamlink's YouTube plugin does not attach Referer/Origin headers
+    //     when fetching individual HLS segments, causing 403s on segment CDN
+    //     requests even when the playlist URL itself resolves fine.
+    //
+    //  3. yt-dlp handles rqh token rotation, segment-level auth headers, and
+    //     the signed-URL expiry cycle internally in a single session — no
+    //     separate quality-probe request is needed.
+    //
+    // --extractor-args "youtube:player_client=web" forces the web player path
+    // which returns HLS (m3u8_native) streams. The default android-vr client
+    // returns DASH streams that cannot be piped to a single stdout cleanly.
+    //
+    // --hls-use-mpegts writes an MPEG-TS container to stdout, which FFmpeg
+    // can read from stdin as a continuous stream across HLS segment boundaries.
     return {
-      cmd: "streamlink",
+      cmd: YTDLP_BIN,
       args: [
-        "--stdout",
-        "--loglevel", "warning",
-        "--stream-segment-timeout", "15",
-        "--stream-timeout", "60",
-        "--retry-streams", "10",
-        "--retry-max", "10",
-        "--retry-open", "5",
-        "--hls-live-edge", "3",
+        "--no-config",
+        "--no-playlist",
+        "--no-warnings",
+        "--extractor-args", "youtube:player_client=web",
+        "-f", formatSelector,
+        "--hls-use-mpegts",
+        "--socket-timeout", "20",
+        "-o", "-",
         this.pageUrl,
-        resolvedQuality,
       ],
     };
+  }
+
+  /**
+   * Derive a yt-dlp format selector string from the user's quality preference.
+   *
+   * We do NOT pre-query yt-dlp to discover available formats (that would make
+   * two requests → rate limiting). Instead, we build a cascading format selector
+   * that tries the user's preferred height first, then falls back gracefully.
+   *
+   * All selectors prefer m3u8_native (HLS) over other protocols so the output
+   * is a single MPEG-TS stream suitable for piping to FFmpeg stdin.
+   */
+  private _youTubeFormatSelector(): string {
+    const qualityMap: Record<string, string> = {
+      best:  "best[protocol=m3u8_native]/best",
+      "720p": "best[height<=720][protocol=m3u8_native]/best[height<=720]/best",
+      "480p": "best[height<=480][protocol=m3u8_native]/best[height<=480]/best",
+      "360p": "best[height<=360][protocol=m3u8_native]/best[height<=360]/best",
+      "240p": "best[height<=240][protocol=m3u8_native]/best[height<=240]/best",
+    };
+    const sel = qualityMap[this.quality] ?? qualityMap["best"];
+    this._log(`[relay] YouTube format selector: ${sel}`);
+    return sel;
   }
 
   private _xSpaceArgs(): { cmd: string; args: string[] } {
@@ -434,40 +476,51 @@ export class SourceRelay {
   private async _spawn(): Promise<void> {
     if (this.stopped || this.permanentlyFailed) return;
 
-    // ── Dynamic quality resolution for streamlink-based sources ───────────────
-    // We query streamlink for the available stream names before spawning so we
-    // never pass an invalid quality string. xspace uses yt-dlp and has no
-    // streamlink quality concept.
+    // ── Quality / format-selector resolution ──────────────────────────────────
+    //
+    //  TikTok  → streamlink: query `streamlink --json` to discover available
+    //            stream names at runtime, then spawn with the resolved name.
+    //            This avoids passing invalid quality strings.
+    //
+    //  YouTube → yt-dlp: derive a cascading yt-dlp format selector directly
+    //            from the user's quality preference WITHOUT a pre-query.
+    //            A separate "probe then play" flow triggers YouTube rate limits
+    //            (429) because two manifest requests arrive from the same IP in
+    //            rapid succession. yt-dlp resolves and streams in one session.
+    //
+    //  xspace / other → no quality resolution needed; yt-dlp handles it.
+    //
     let resolvedQuality = "best";
     const st = this.sourceType;
-    const isStreamlinkSource =
-      st === "tiktok" || st === "tiktok_pipe" ||
-      st === "youtube" || st === "youtube_pipe";
+    const isTikTokSource = st === "tiktok" || st === "tiktok_pipe";
+    const isYouTubeSource = st === "youtube" || st === "youtube_pipe";
 
-    if (isStreamlinkSource) {
-      const queryUrl = st === "tiktok" || st === "tiktok_pipe"
-        ? `https://www.tiktok.com/@${this.pageUrl.replace(/.*tiktok\.com\/@?/, "").replace(/\/.*$/, "").replace(/^@/, "")}/live`
-        : this.pageUrl;
+    if (isTikTokSource) {
+      const username = this.pageUrl
+        .replace(/.*tiktok\.com\/@?/, "")
+        .replace(/\/.*$/, "")
+        .replace(/^@/, "");
+      const queryUrl = `https://www.tiktok.com/@${username}/live`;
 
-      // Extra headers for TikTok discovery
-      const extraArgs = (st === "tiktok" || st === "tiktok_pipe")
-        ? [
-            "--http-header",
-            "User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "--http-header", "Referer=https://www.tiktok.com/",
-          ]
-        : [];
+      const extraArgs = [
+        "--http-header",
+        "User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "--http-header", "Referer=https://www.tiktok.com/",
+      ];
 
       const quality = await this._resolveStreamlinkQuality(queryUrl, extraArgs);
       if (this.stopped || this.permanentlyFailed) return;
 
       if (quality === null) {
-        // Channel is offline / no streams — schedule a retry but do NOT
-        // permanently fail, since channels can come back online.
+        // Channel offline / no streams — retry with backoff, not permanent fail
         this._scheduleRetry();
         return;
       }
       resolvedQuality = quality;
+
+    } else if (isYouTubeSource) {
+      // Build yt-dlp format selector from user preference — no pre-query.
+      resolvedQuality = this._youTubeFormatSelector();
     }
 
     const spawnArgs = this._getSpawnArgs(resolvedQuality);
@@ -550,12 +603,21 @@ export class SourceRelay {
       const text = d.toString();
       stderrFull += text;
 
-      // Stream stderr lines to the log in real time, filtered by relevance
+      // Stream stderr lines to the log in real time, filtered by relevance.
+      // Patterns cover both streamlink and yt-dlp output styles.
       const lines = text.split("\n");
       for (const line of lines) {
         const t = line.trim();
         if (!t) continue;
-        if (/error|warning|failed|cannot|unable|unavailable|not live|no streams/i.test(t)) {
+        const isSignificant =
+          // General error/warning indicators
+          /error|warning|failed|cannot|unable|unavailable/i.test(t) ||
+          // Streamlink-specific offline/stream signals
+          /not live|no streams|no playable streams/i.test(t) ||
+          // yt-dlp YouTube-specific signals
+          /no video formats found|this (video|channel) is (unavailable|not available)|private video|members.only|geo.?restrict|sign in to confirm|HTTP Error 40[0-9]/i.test(t);
+
+        if (isSignificant) {
           this._warn(`[relay:${cmd}] ${t}`);
         } else {
           logger.debug({ streamId: this.streamId, src: cmd }, t);
