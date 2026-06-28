@@ -271,6 +271,7 @@ interface StreamProcess {
   accumulatedLagSec?: number;     // total seconds of lag built up since last reconnect
   lastSpeedSampleAt?: number;     // unix ms of last speed= sample for delta-time calc
   lastSlowReconnectAt?: number;   // unix ms of last slow-encode-triggered reconnect (cooldown)
+  lastSpeedLogAt?: number;        // unix ms of last pino speed log (throttled to every 30s)
 }
 
 // ── URL cache: reuse recently resolved URLs to skip 20-35s re-resolution on restart ──
@@ -1833,13 +1834,18 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
 
           // ── Slow-encode watchdog ────────────────────────────────────────────
           // At 0.95x speed, the encoder accumulates 0.05s of lag per real second.
-          // After ~60-90 seconds the lag exceeds YouTube's tolerance (~3-5s) and
-          // Studio shows "not receiving enough video".
+          // After significant lag accumulates, trigger a clean RTMP reconnect.
           //
-          // Strategy: measure actual accumulated lag by multiplying (1 - speed)
-          // by the elapsed time between speed samples. When lag > 2.5s, trigger
-          // a clean RTMP reconnect before YouTube notices. A 3-minute cooldown
-          // prevents a reconnect loop if the CPU is permanently slow.
+          // IMPORTANT thresholds (tuned from production data):
+          //   • "Fast enough" floor: 0.92x — speeds 0.92–1.0x are normal when the
+          //     input pipe (yt-dlp/streamlink) is the bottleneck. Do NOT restart for
+          //     these; the restart gap (5–15s) is far worse than the minor slowdown.
+          //     Previously this was 0.97x, which caused the encoder to restart every
+          //     ~61s when the yt-dlp pipe ran at 0.96x, triggering YouTube's
+          //     "not receiving enough data" disconnect at ~2:10.
+          //   • Lag trigger: 8.0s — only restart when genuinely far behind (< 0.92x
+          //     sustained long enough). Previously 2.5s, which was too sensitive.
+          //   • Cooldown: 3 min between auto-reconnects to prevent thrash loops.
           const speedMatch = trimmed.match(/speed=\s*([\d.]+)x/);
           if (speedMatch) {
             const encSpeed = parseFloat(speedMatch[1]);
@@ -1851,15 +1857,29 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                 const elapsedSec = Math.min((nowMs - lastSampleAt) / 1000, 10); // cap at 10s gap
                 currentProc.lastSpeedSampleAt = nowMs;
 
-                if (encSpeed >= 0.97) {
-                  // Fast enough — drain lag counter slowly so brief hiccups don't
-                  // immediately reset progress when the encoder catches back up.
+                // Log encoder speed to server logs every ~30s for diagnosability.
+                // Previously these stats were only forwarded to the frontend via WS.
+                const lastSpeedLog = currentProc.lastSpeedLogAt ?? 0;
+                if (nowMs - lastSpeedLog >= 30_000) {
+                  currentProc.lastSpeedLogAt = nowMs;
+                  const lagSoFar = currentProc.accumulatedLagSec ?? 0;
+                  logger.info(
+                    { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSoFar.toFixed(2) },
+                    "[perf] main encoder speed sample",
+                  );
+                }
+
+                if (encSpeed >= 0.92) {
+                  // Within normal range — drain lag counter slowly.
+                  // 0.92–1.0x is acceptable: the input pipe is the bottleneck, not
+                  // the CPU. Restarting here creates a damaging RTMP gap.
                   currentProc.accumulatedLagSec = Math.max(
                     0,
                     (currentProc.accumulatedLagSec ?? 0) - elapsedSec * 0.5,
                   );
                 } else {
-                  // Accumulate lag: if speed=0.94x, lag rate = 0.06s per real second
+                  // Genuinely slow (< 0.92x) — accumulate lag.
+                  // e.g. speed=0.85x → lagDelta = 0.15s per real second
                   const lagDelta = elapsedSec * (1 - encSpeed);
                   currentProc.accumulatedLagSec = (currentProc.accumulatedLagSec ?? 0) + lagDelta;
 
@@ -1870,7 +1890,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                     nowMs - currentProc.lastSlowReconnectAt > cooldownMs;
 
                   if (
-                    lagSec >= 2.5 &&
+                    lagSec >= 8.0 &&
                     cooldownOk &&
                     !restartScheduled.has(streamId) &&
                     !manuallyStopped.has(streamId)
@@ -1880,6 +1900,10 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                     sendLog(
                       streamId,
                       `[perf] ~${lagSec.toFixed(1)}s of encoding lag accumulated (speed ${encSpeed.toFixed(2)}x) — reconnecting before YouTube shows buffering error...`,
+                    );
+                    logger.warn(
+                      { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSec.toFixed(2) },
+                      "[perf] slow-encode restart triggered",
                     );
                     hardKillAndRestart(streamId, 1500, false, true /* keepStatus=reconnecting */);
                   }
