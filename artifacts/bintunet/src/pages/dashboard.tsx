@@ -29,6 +29,7 @@ interface StreamStats {
   subs: string | null;
   viewers: string | null;
   hasChat: boolean;
+  error?: "quota" | "not_found" | "api_error" | null;
 }
 
 function InviteModal({ onClose }: { onClose: () => void }) {
@@ -207,6 +208,7 @@ export default function Dashboard() {
             subs: msg.data.subs ?? null,
             viewers: msg.data.viewers ?? null,
             hasChat: msg.data.hasChat ?? false,
+            error: msg.data.error ?? null,
           },
         }));
       }

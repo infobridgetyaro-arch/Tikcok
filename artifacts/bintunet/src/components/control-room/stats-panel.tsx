@@ -5,6 +5,7 @@ interface StreamStats {
   subs: string | null;
   viewers: string | null;
   hasChat: boolean;
+  error?: "quota" | "not_found" | "api_error" | null;
 }
 
 interface ProcStat {
@@ -83,13 +84,14 @@ function AnimatedNumber({ value, color }: { value: number; color: string }) {
   );
 }
 
-function StatCard({ icon, label, value, color, gradient, loading }: {
+function StatCard({ icon, label, value, color, gradient, loading, error }: {
   icon: React.ReactNode;
   label: string;
   value: string | null;
   color: string;
   gradient: string;
   loading: boolean;
+  error?: "quota" | "not_found" | "api_error" | null;
 }) {
   const numVal = parseNum(value);
   const [prev, setPrev] = useState(numVal);
@@ -136,10 +138,20 @@ function StatCard({ icon, label, value, color, gradient, loading }: {
             <div style={{ width: 6, height: 6, borderRadius: "50%", background: color, opacity: 0.5, animation: "sp-pulse 1.5s infinite" }} />
             <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Fetching…</span>
           </div>
+        ) : error === "quota" ? (
+          <div style={{ marginTop: 2 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24" }}>⚠ Quota exceeded</span>
+            <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginTop: 2 }}>Resets midnight PT · check Google Cloud Console</div>
+          </div>
+        ) : error === "not_found" ? (
+          <div style={{ marginTop: 2 }}>
+            <span style={{ fontSize: 11, color: "rgba(255,100,100,0.8)" }}>Channel not found</span>
+            <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginTop: 2 }}>Verify the channel ID in stream settings</div>
+          </div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
             <span style={{ fontSize: 18, fontWeight: 700, color: "rgba(255,255,255,0.2)" }}>—</span>
-            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>No data · check channel ID &amp; API key</span>
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>No data</span>
           </div>
         )}
       </div>
@@ -378,6 +390,13 @@ export function StatsPanel({ streams, streamStats, procStats = {} }: StatsPanelP
   const totalViewers = activeStreams.reduce((acc, s) => acc + parseNum(streamStats[s.id]?.viewers ?? null), 0);
   const totalChatStreams = activeStreams.filter((s) => streamStats[s.id]?.hasChat).length;
 
+  // Derive the most meaningful error across all active streams (quota > not_found > api_error > null)
+  const errorPriority = (e: StreamStats["error"]) => e === "quota" ? 3 : e === "not_found" ? 2 : e === "api_error" ? 1 : 0;
+  const dominantError: StreamStats["error"] = activeStreams.reduce<StreamStats["error"]>((best, s) => {
+    const e = streamStats[s.id]?.error ?? null;
+    return errorPriority(e) > errorPriority(best) ? e : best;
+  }, null);
+
   useEffect(() => {
     if (totalSubs > 0) setSubHistory((h) => [...h.slice(-19), totalSubs]);
   }, [totalSubs]);
@@ -406,6 +425,7 @@ export function StatsPanel({ streams, streamStats, procStats = {} }: StatsPanelP
           color="#a78bfa"
           gradient="rgba(167,139,250,0.08), rgba(167,139,250,0.03)"
           loading={!statsReceived}
+          error={dominantError}
         />
         <StatCard
           icon={<Eye size={14} />}
@@ -414,6 +434,7 @@ export function StatsPanel({ streams, streamStats, procStats = {} }: StatsPanelP
           color="#34d399"
           gradient="rgba(52,211,153,0.08), rgba(52,211,153,0.03)"
           loading={!statsReceived}
+          error={dominantError}
         />
         <StatCard
           icon={<MessageSquare size={14} />}
@@ -422,6 +443,7 @@ export function StatsPanel({ streams, streamStats, procStats = {} }: StatsPanelP
           color="#60a5fa"
           gradient="rgba(96,165,250,0.08), rgba(96,165,250,0.03)"
           loading={!statsReceived}
+          error={dominantError}
         />
       </div>
 

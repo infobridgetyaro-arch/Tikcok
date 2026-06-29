@@ -26,6 +26,7 @@ interface ChannelStats {
   viewers: string | null;
   liveChatId: string | null;
   lastFetch: number;
+  error: "quota" | "not_found" | "api_error" | null;
 }
 
 interface ChatMessage {
@@ -83,38 +84,47 @@ async function fetchChannelStats(channelId: string): Promise<ChannelStats> {
 
   if (!apiKey) {
     warnMissingApiKeyOnce();
-    return { subs: null, viewers: null, liveChatId: null, lastFetch: Date.now() };
+    return { subs: null, viewers: null, liveChatId: null, lastFetch: Date.now(), error: "api_error" };
   }
 
   let subs: string | null = prev?.subs ?? null;
   let viewers: string | null = prev?.viewers ?? null;
   let liveChatId: string | null = prev?.liveChatId ?? null;
+  let error: ChannelStats["error"] = prev?.error ?? null;
 
+  // --- Subscriber count (channels.list = 1 quota unit) ---
   try {
     const chanUrl = `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${encodeURIComponent(channelId)}&key=${apiKey}`;
     const chanRes = await fetch(chanUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     const chanBody = await chanRes.json() as any;
     if (!chanRes.ok) {
-      logger.warn({ channelId, status: chanRes.status, error: chanBody?.error?.message }, "[youtube] Channel stats API error — check API key & quota");
+      const isQuota = chanRes.status === 403 || chanRes.status === 429;
+      logger.warn({ channelId, status: chanRes.status, error: chanBody?.error?.message }, "[youtube] Channel stats API error");
+      error = isQuota ? "quota" : "api_error";
     } else {
       const subCount = chanBody.items?.[0]?.statistics?.subscriberCount;
       if (subCount !== undefined) {
         subs = formatCount(parseInt(subCount, 10));
+        error = null;
         logger.info({ channelId, subs }, "[youtube] Subscriber count fetched");
       } else {
-        logger.warn({ channelId, itemCount: chanBody.items?.length ?? 0 }, "[youtube] Channel not found or stats hidden — verify channel ID");
+        logger.warn({ channelId, itemCount: chanBody.items?.length ?? 0 }, "[youtube] Channel not found — verify channel ID");
+        error = "not_found";
       }
     }
   } catch (e) {
     logger.warn({ channelId, err: e }, "[youtube] Failed to fetch subscriber count");
+    error = "api_error";
   }
 
-  // search.list costs 100 quota units — only run every 10 minutes to avoid burning daily limit.
+  // --- Live video search (search.list = 100 quota units) — throttled to SEARCH_INTERVAL_MS ---
   const now = Date.now();
   const lastSearch = lastSearchAt.get(channelId) ?? 0;
   const shouldSearch = now - lastSearch >= SEARCH_INTERVAL_MS;
 
   if (shouldSearch) {
+    // Always record the attempt time so quota errors don't cause a retry storm.
+    lastSearchAt.set(channelId, now);
     try {
       logger.info({ channelId, msSinceLastSearch: now - lastSearch }, "[youtube] Running search.list for live video (100 quota units)");
       const searchRes = await fetch(
@@ -123,9 +133,10 @@ async function fetchChannelStats(channelId: string): Promise<ChannelStats> {
       );
       const searchData = await searchRes.json() as any;
       if (!searchRes.ok) {
+        const isQuota = searchRes.status === 403 || searchRes.status === 429;
         logger.warn({ channelId, status: searchRes.status, error: searchData?.error?.message }, "[youtube] Live search API error");
+        if (isQuota) error = "quota";
       } else {
-        lastSearchAt.set(channelId, now);
         const videoId = searchData.items?.[0]?.id?.videoId ?? null;
         if (videoId) {
           const vidRes = await fetch(
@@ -152,10 +163,11 @@ async function fetchChannelStats(channelId: string): Promise<ChannelStats> {
       logger.warn({ channelId, err: e }, "[youtube] Failed to fetch live viewer count");
     }
   } else {
-    logger.debug({ channelId, nextSearchIn: Math.round((SEARCH_INTERVAL_MS - (now - lastSearch)) / 1000) + "s" }, "[youtube] Skipping search.list — within 10-min window, reusing cached live data");
+    const nextIn = Math.round((SEARCH_INTERVAL_MS - (now - lastSearch)) / 1000);
+    logger.debug({ channelId, nextSearchIn: nextIn + "s" }, "[youtube] Skipping search.list — reusing cached live data");
   }
 
-  const result: ChannelStats = { subs, viewers, liveChatId, lastFetch: Date.now() };
+  const result: ChannelStats = { subs, viewers, liveChatId, lastFetch: Date.now(), error };
   statsCache.set(channelId, result);
   return result;
 }
@@ -285,6 +297,7 @@ export function startLiveCountPolling() {
               subs: stats.subs,
               viewers: stats.viewers,
               hasChat: !!stats.liveChatId,
+              error: stats.error ?? null,
             });
           }
           // Sample raw subscriber count for the sparkline chart
