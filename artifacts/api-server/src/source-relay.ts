@@ -248,6 +248,11 @@ export class SourceRelay {
   private status: RelayStatus = "starting";
   private retryTimer: NodeJS.Timeout | null = null;
   private healthTimer: NodeJS.Timeout | null = null;
+  // Guard: prevents two concurrent _spawn() calls (e.g. from the startup watchdog
+  // firing at the same time the exit handler schedules a retry).  Set to true for
+  // the entire duration of the async quality-probe + process-launch phase; reset
+  // to false as soon as the child process is running (or on any error path).
+  private _spawning = false;
   // Cached result from the first successful streamlink quality probe.
   // Re-probing on every reconnect adds 10–30 s of FFmpeg stdin starvation
   // per restart cycle.  During that probe window the RTMP rw_timeout (20 s)
@@ -672,6 +677,17 @@ export class SourceRelay {
   private async _spawn(): Promise<void> {
     if (this.stopped || this.permanentlyFailed) return;
 
+    // ── Concurrency guard ─────────────────────────────────────────────────────
+    // Prevents a second _spawn() from starting while the async quality-probe is
+    // still running (10–30 s for TikTok streamlink --json). Without this, a
+    // startup-watchdog timeout firing while the probe is in progress would launch
+    // a second streamlink process that writes interleaved bytes to FFmpeg stdin.
+    if (this._spawning) {
+      this._warn("[relay] Concurrent spawn request ignored — already in progress");
+      return;
+    }
+    this._spawning = true;
+
     // ── Quality / format-selector resolution ──────────────────────────────────
     //
     //  TikTok  → streamlink: query `streamlink --json` to discover available
@@ -717,12 +733,13 @@ export class SourceRelay {
         ];
 
         const quality = await this._resolveStreamlinkQuality(queryUrl, extraArgs);
-        if (this.stopped || this.permanentlyFailed) return;
+        if (this.stopped || this.permanentlyFailed) { this._spawning = false; return; }
 
         if (quality === STREAMLINK_CONFIG_ERROR) {
           // Bad flags or streamlink not installed — permanent failure, do NOT retry.
           // Falling back to yt-dlp here would mask the misconfiguration and waste
           // the retry budget on a fundamentally broken command.
+          this._spawning = false;
           this._fatal(
             `[relay] Streamlink is misconfigured or not installed. ` +
             `Fix the streamlink installation/flags, then restart the stream.`,
@@ -748,6 +765,7 @@ export class SourceRelay {
 
     const spawnArgs = this._getSpawnArgs(resolvedQuality);
     if (!spawnArgs) {
+      this._spawning = false;
       this._fatal(`[relay] Unknown source type "${this.sourceType}" — cannot spawn`);
       return;
     }
@@ -761,6 +779,7 @@ export class SourceRelay {
     try {
       proc = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
     } catch (e: any) {
+      this._spawning = false;
       if ((e as NodeJS.ErrnoException).code === "ENOENT") {
         this._fatal(
           `[relay] "${cmd}" not found. ` +
@@ -773,22 +792,33 @@ export class SourceRelay {
       return;
     }
 
+    // Process launched — release the spawn lock so future retries are not blocked.
+    // Handlers below are set up synchronously; the lock is only needed to guard
+    // the async quality-probe phase above against concurrent entry.
+    this._spawning = false;
+
     const thisProc = proc;
     this.proc = proc;
 
     let gotData = false;
-    // Accumulate full stderr so we can classify the error on exit
+    // Accumulate full stderr for error classification on exit.
+    // Capped at 50 KB to prevent unbounded growth on long-running sessions.
     let stderrFull = "";
     let sessionBytes = 0;
     const spawnedAt = Date.now();
 
     // ── Startup watchdog ─────────────────────────────────────────────────────
+    // RACE FIX: null this.proc BEFORE calling _scheduleRetry() so the exit
+    // handler (triggered by _kill()) sees this.proc !== thisProc and bails out
+    // without scheduling a second retry.  Combined with _scheduleRetry()'s own
+    // timer-cancellation guard, this eliminates the double-spawn race entirely.
     const startupWatchdog = setTimeout(() => {
       if (!gotData && this.proc === thisProc && !this.stopped) {
         this._warn(
           `[relay] No data received after ${STARTUP_TIMEOUT_MS / 1000}s — ` +
           `source may not be live. Will retry.`,
         );
+        this.proc = null;        // ← must come before _kill so exit handler bails
         this._kill(thisProc);
         this._scheduleRetry();
       }
@@ -824,7 +854,10 @@ export class SourceRelay {
     // ── stderr collection ─────────────────────────────────────────────────────
     proc.stderr?.on("data", (d: Buffer) => {
       const text = d.toString();
-      stderrFull += text;
+      // Cap at 50 KB to prevent unbounded growth on long-running sessions with
+      // verbose streamlink/yt-dlp output.  Error-classification reads only the
+      // tail anyway, and the most recent lines are always preserved by the cap.
+      if (stderrFull.length < 50_000) stderrFull += text;
 
       // Stream stderr lines to the log in real time, filtered by relevance.
       // Patterns cover both streamlink and yt-dlp output styles.
@@ -913,6 +946,12 @@ export class SourceRelay {
 
   private _scheduleRetry(): void {
     if (this.stopped || this.permanentlyFailed) return;
+
+    // Cancel any existing retry timer before scheduling a new one.
+    // Without this, concurrent failure paths (startup watchdog + exit handler)
+    // both call _scheduleRetry() and leave two live timers — both fire, both
+    // call _spawn(), and two streamlink processes write to the same FFmpeg stdin.
+    if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
 
     this.consecutiveFailures++;
     this.totalRestarts++;

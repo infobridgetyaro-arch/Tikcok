@@ -2302,7 +2302,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
 // keepStatus=true   — do NOT emit "reconnecting"; UI stays as "streaming"
 //                     (used for seamless mute/unmute where the gap is ~100 ms
 //                      and is invisible to the viewer behind platform buffers).
-function hardKillAndRestart(streamId: string, _delayMs: number, forceNewUrl = false, keepStatus = false) {
+function hardKillAndRestart(streamId: string, delayMs: number, forceNewUrl = false, keepStatus = false) {
   const proc = activeStreams.get(streamId);
   if (!proc) return;
   // ── Guard: only one restart timer per stream at a time ───────────────────
@@ -2328,9 +2328,20 @@ function hardKillAndRestart(streamId: string, _delayMs: number, forceNewUrl = fa
   activeStreams.delete(streamId);    // guard #1: health-recovery bails on !has
   markSourceFailed(streamId);
 
-  // Exponential backoff — grows with each consecutive failure, resets on first frame
-  const delay = getBackoffDelay(streamId);
+  // ── Restart delay ─────────────────────────────────────────────────────────
+  // Use the caller's intended delay for the first two failures.  After that,
+  // honour the exponential backoff to prevent hammering external services
+  // during extended failure chains (e.g. channel offline for 30+ minutes).
+  //
+  // Previously this function ignored delayMs entirely (it had a leading
+  // underscore and used getBackoffDelay() unconditionally).  That caused every
+  // reconnect — including a 300 ms CDN-URL refresh — to wait 5 s minimum,
+  // which was the primary cause of YouTube Studio's "Poor" stream-health rating.
+  const backoffCount = restartBackoff.get(streamId) ?? 0;
+  const backoffDelay = getBackoffDelay(streamId);
   bumpBackoff(streamId);
+  const delay = backoffCount < 2 ? delayMs : Math.max(delayMs, backoffDelay);
+
   restartScheduled.add(streamId);    // guard #2: any concurrent path bails on has
 
   // NOW safe to call — recompute() fires here but both guards are already set
@@ -2437,7 +2448,6 @@ export function stopStream(streamId: string) {
   // SIGKILL stops the process (and all I/O) at the OS level instantly.
   try { proc.ffmpegProcess?.kill("SIGKILL"); } catch {}
 
-  activeStreams.delete(streamId);
   sendStatus(streamId, "idle");
   broadcastStream(streamId, "chat_clear", {});
   sendLog(streamId, "Stream stopped");

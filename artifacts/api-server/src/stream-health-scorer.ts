@@ -66,7 +66,8 @@ interface StreamState {
   targetFps: number;                                 // set via scorerSetTargetFps
   bitrateHistory: { value: number; at: number }[];   // last 60s of samples
   fpsHistory: { value: number; at: number }[];
-  reconnects: number[];                               // timestamps of each reconnect
+  reconnects: number[];                               // timestamps within sliding window
+  reconnectCountAllTime: number;                      // ever-growing total for UI display
   lastRtmpErrorAt: number | null;
   recoveryTriggeredAt: number | null;
   warningEmittedAt: number | null;
@@ -145,6 +146,7 @@ export function scorerRegisterStream(streamId: string, targetBitrateKbps: number
     bitrateHistory: [],
     fpsHistory: [],
     reconnects: [],
+    reconnectCountAllTime: 0,
     lastRtmpErrorAt: null,
     recoveryTriggeredAt: null,
     warningEmittedAt: null,
@@ -224,6 +226,7 @@ export function scorerRecordReconnect(streamId: string): void {
   if (!s) return;
   const now = Date.now();
   s.reconnects.push(now);
+  s.reconnectCountAllTime++;                           // never trimmed — true total
   const cutoff = now - RECONNECT_WINDOW_MS;
   s.reconnects = s.reconnects.filter((t) => t >= cutoff);
   // Priority: reconnect events are infrequent and critical — always immediate
@@ -372,7 +375,7 @@ function recompute(streamId: string): void {
       currentFps: s.fpsHistory.length > 0
         ? s.fpsHistory[s.fpsHistory.length - 1].value
         : 0,
-      reconnectCount: s.reconnects.filter(() => true).length,  // all-time via module state
+      reconnectCount: s.reconnectCountAllTime,
       reconnectsInWindow: s.reconnects.length,
       lastRtmpErrorAt: s.lastRtmpErrorAt,
       lastUpdatedAt: now,
@@ -419,7 +422,7 @@ export function getHealthSnapshot(streamId: string): StreamHealthSnapshot | null
       currentBitrateKbps: s.bitrateHistory.length > 0 ? s.bitrateHistory[s.bitrateHistory.length - 1].value : 0,
       targetBitrateKbps: s.targetBitrateKbps,
       currentFps: s.fpsHistory.length > 0 ? s.fpsHistory[s.fpsHistory.length - 1].value : 0,
-      reconnectCount: s.reconnects.length,
+      reconnectCount: s.reconnectCountAllTime,
       reconnectsInWindow: s.reconnects.length,
       lastRtmpErrorAt: s.lastRtmpErrorAt,
       lastUpdatedAt: Date.now(),
