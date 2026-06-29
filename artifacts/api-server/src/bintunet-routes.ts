@@ -1243,7 +1243,13 @@ export async function registerBintunetRoutes(
       updateStreamVolume(broadcastState.globalStreamVolume);
     }
 
-    updateStreamOverlays({
+    // Build the overlay patch from the current broadcast state.
+    // newsLogo is intentionally excluded unless the request body explicitly
+    // changed it: the logo is a base64 data URI (often 50–200 KB) and
+    // updateState compares it character-by-character on every call.  Including
+    // it on every slider drag / toggle would block the Node.js event loop for
+    // several milliseconds each time, causing brief RTMP send-buffer stalls.
+    const overlayPatch: Parameters<typeof updateStreamOverlays>[0] = {
       newsActive:             broadcastState.newsActive,
       newsText:               broadcastState.newsText,
       newsTitle:              broadcastState.newsTitle,
@@ -1325,9 +1331,15 @@ export async function registerBintunetRoutes(
       donationTicker:         broadcastState.donationTicker,
       giftDisplayMode:        broadcastState.giftDisplayMode,
       giftQueue:              getGiftQueue(),
-      newsLogo:               broadcastState.newsLogo,
       thankYouStyle:          broadcastState.thankYouStyle,
-    });
+    };
+    // Only pass newsLogo when it was explicitly included in this request body.
+    // This avoids a multi-millisecond base64 string comparison in updateState
+    // on every unrelated control-room change (position drags, toggles, etc.).
+    if (req.body && typeof req.body === "object" && "newsLogo" in req.body) {
+      overlayPatch.newsLogo = broadcastState.newsLogo;
+    }
+    updateStreamOverlays(overlayPatch);
     res.json(broadcastState);
   });
 

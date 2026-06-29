@@ -754,7 +754,9 @@ export class OverlayRenderer {
     this.alphas.guestName = this.stepAlpha(this.alphas.guestName, this.state.guestNameActive && !this.state.breakActive ? 1 : 0);
     this.alphas.superChat = this.stepAlpha(this.alphas.superChat, activeSuperChat ? 1 : 0);
     this.alphas.subAlert  = this.stepAlpha(this.alphas.subAlert,  subAlertWant);
-    this.alphas.subChart  = this.stepAlpha(this.alphas.subChart,  this.state.subChartActive && this.state.subChartData.length >= 2 && !!this.state.subs && !this.state.breakActive ? 1 : 0);
+    // subChart shows as soon as subChartActive is true — data and subs are handled
+    // gracefully inside drawSubChart (shows a "collecting…" placeholder when not ready).
+    this.alphas.subChart  = this.stepAlpha(this.alphas.subChart,  this.state.subChartActive && !this.state.breakActive ? 1 : 0);
     this.alphas.break     = this.stepAlpha(this.alphas.break,     wantBreak);
     this.alphas.qr        = this.stepAlpha(this.alphas.qr,        this.state.qrActive && !!this.state.qrUrl ? 1 : 0);
     // Gift economy system + legacy donation alerts
@@ -1965,7 +1967,6 @@ export class OverlayRenderer {
   private drawSubChart() {
     const { ctx, W, H, state } = this;
     const data = state.subChartData;
-    if (data.length < 2) return;
 
     const effPos = this.pos(state.subChartPosition, state.mobileSubChartPosition);
     const bx = this.px(effPos.x, W);
@@ -1973,7 +1974,7 @@ export class OverlayRenderer {
     const bw = Math.round(W * (this.isVertical ? 0.38 : 0.22));
     const bh = Math.round(H * (this.isVertical ? 0.12 : 0.1));
 
-    // Background
+    // Background — always drawn so the card is visible even before data arrives.
     const bg = ctx.createLinearGradient(bx, by, bx + bw, by + bh);
     bg.addColorStop(0, "rgba(15,12,41,0.9)");
     bg.addColorStop(1, "rgba(48,43,99,0.85)");
@@ -1994,7 +1995,20 @@ export class OverlayRenderer {
     ctx.fillStyle = "#a78bfa";
     ctx.font = `bold ${Math.round(labelFs * 1.1)}px sans-serif`;
     ctx.textAlign = "right";
-    ctx.fillText(state.subs!, bx + bw - 6, by + labelH / 2);
+    // subs may be null before the first YouTube API poll — show "—" as placeholder.
+    ctx.fillText(state.subs ?? "—", bx + bw - 6, by + labelH / 2);
+
+    // Sparkline — only drawn once there are ≥2 data points.
+    // Before that, show a "Collecting data…" hint so the card looks intentional.
+    if (data.length < 2) {
+      const hintFs = Math.round(labelFs * 0.85);
+      ctx.fillStyle = "rgba(167,139,250,0.5)";
+      ctx.font = `${hintFs}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("Collecting data…", bx + bw / 2, by + labelH + (bh - labelH) / 2);
+      return;
+    }
 
     // Sparkline
     const chartY = by + labelH + 2;
