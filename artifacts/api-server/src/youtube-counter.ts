@@ -2,12 +2,70 @@ import { storage } from "./storage";
 import { broadcastStream, updateStreamOverlays } from "./stream-manager";
 import { logger } from "./lib/logger";
 
-// Accept either env var name — .env.example documents YOUTUBE_API_KEY, but
-// some deployments set GOOGLE_API_KEY (the underlying Google Cloud console
-// key name). Supporting both avoids a silent "chat never shows up" failure
-// caused purely by a naming mismatch between docs and code.
+// ── Multi-key pool ──────────────────────────────────────────────────────────
+// Set YOUTUBE_API_KEYS=key1,key2,key3 (comma-separated) to enable rotation.
+// Falls back to YOUTUBE_API_KEY / GOOGLE_API_KEY for single-key deployments.
+const apiKeys: string[] = (() => {
+  const multi = process.env.YOUTUBE_API_KEYS;
+  if (multi) {
+    const keys = multi.split(",").map((k) => k.trim()).filter(Boolean);
+    if (keys.length) return keys;
+  }
+  const single = process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY || "";
+  return single ? [single] : [];
+})();
+
+let currentKeyIndex = 0;
+// Reset exhaustion at midnight (keys refill daily at midnight Pacific)
+const exhaustedUntil = new Map<number, number>(); // index → timestamp when quota resets
+
+function scheduleExhaustionReset() {
+  const now = new Date();
+  // YouTube quota resets at midnight Pacific (UTC-8 or UTC-7 DST) = 08:00 UTC
+  const nextReset = new Date();
+  nextReset.setUTCHours(8, 0, 0, 0);
+  if (nextReset <= now) nextReset.setUTCDate(nextReset.getUTCDate() + 1);
+  const ms = nextReset.getTime() - now.getTime();
+  setTimeout(() => {
+    exhaustedUntil.clear();
+    logger.info("[youtube] Quota reset — all API keys are available again");
+    scheduleExhaustionReset();
+  }, ms);
+}
+scheduleExhaustionReset();
+
 function getYouTubeApiKey(): string {
-  return process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY || "";
+  if (apiKeys.length === 0) return "";
+  return apiKeys[currentKeyIndex] ?? "";
+}
+
+/**
+ * Mark current key as exhausted and rotate to the next available one.
+ * Returns true if a fresh key is now active, false if all keys are exhausted.
+ */
+function rotateApiKey(): boolean {
+  exhaustedUntil.set(currentKeyIndex, Date.now());
+  logger.warn(
+    { exhaustedIndex: currentKeyIndex, totalKeys: apiKeys.length },
+    "[youtube] API key quota exhausted — rotating to next key"
+  );
+  for (let i = 1; i <= apiKeys.length; i++) {
+    const next = (currentKeyIndex + i) % apiKeys.length;
+    if (!exhaustedUntil.has(next)) {
+      currentKeyIndex = next;
+      logger.info(
+        { newKeyIndex: currentKeyIndex, totalKeys: apiKeys.length },
+        "[youtube] Rotated to next YouTube API key"
+      );
+      return true;
+    }
+  }
+  logger.error("[youtube] All YouTube API keys exhausted — stats/chat unavailable until midnight reset");
+  return false;
+}
+
+function isQuotaExhausted(): boolean {
+  return exhaustedUntil.size === apiKeys.length && apiKeys.length > 0;
 }
 
 let warnedNoApiKey = false;
@@ -15,7 +73,7 @@ function warnMissingApiKeyOnce(): void {
   if (warnedNoApiKey) return;
   warnedNoApiKey = true;
   logger.warn(
-    "YOUTUBE_API_KEY is not set — live chat burn-in, viewer count, and subscriber " +
+    "YOUTUBE_API_KEYS (or YOUTUBE_API_KEY) is not set — live chat, viewer count, and subscriber " +
     "count will not work. Add YOUTUBE_API_KEY to your environment secrets " +
     "(console.cloud.google.com → APIs → YouTube Data API v3)."
   );
@@ -44,29 +102,21 @@ interface ChatMessage {
 const statsCache = new Map<string, ChannelStats>();
 const chatPageTokens = new Map<string, string | null>();
 
-// Track when we last ran the expensive search.list call (100 quota units) per channel.
-// We only search for a live video every 10 minutes to avoid burning the daily quota.
 const lastSearchAt = new Map<string, number>();
-const SEARCH_INTERVAL_MS = 20 * 60 * 1000; // 20 minutes — search.list costs 100 units; at 20-min intervals 1 channel ≈ 7,920 units/day (under the 10,000 daily quota)
+const SEARCH_INTERVAL_MS = 20 * 60 * 1000;
 
-// Server-side deduplication: track message IDs already sent to the burn-in
-// overlay. Without this, the same 10 messages are re-fed to updateStreamOverlays
-// on every 3-second poll tick whenever no new chat arrives — causing the burn-in
-// to keep replaying the same messages instead of just showing new ones.
 const burnSentMessageIds = new Map<string, Set<string>>();
 
-// Rolling sub chart data: up to 60 samples (1 per minute poll)
 const subChartData: number[] = [];
 const MAX_CHART_SAMPLES = 60;
 
-// Chat result cache — prevents rapid API calls from hanging when the control
-// room chat panel and the polling interval overlap.
 interface ChatCache { messages: ChatMessage[]; fetchedAt: number }
 const chatResultCache = new Map<string, ChatCache>();
-const CHAT_CACHE_TTL = 2_500; // return cached results for 2.5 s (3-second poll interval)
+const CHAT_CACHE_TTL = 2_500;
 
 let pollingInterval: NodeJS.Timeout | null = null;
 let chatInterval: NodeJS.Timeout | null = null;
+let chartBroadcastInterval: NodeJS.Timeout | null = null;
 let statsPolling = false;
 let chatPolling = false;
 
@@ -78,6 +128,34 @@ function formatCount(num: number): string {
   return String(num);
 }
 
+async function fetchWithKeyRotation(
+  buildUrl: (key: string) => string,
+  label: string
+): Promise<{ res: Response; data: any } | null> {
+  const triedKeys = new Set<number>();
+  while (triedKeys.size < apiKeys.length) {
+    const key = getYouTubeApiKey();
+    if (!key) return null;
+    const url = buildUrl(key);
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      if (res.status === 403 || res.status === 429) {
+        logger.warn({ label, status: res.status, keyIndex: currentKeyIndex }, "[youtube] Quota error — rotating key");
+        triedKeys.add(currentKeyIndex);
+        const rotated = rotateApiKey();
+        if (!rotated) return null; // all exhausted
+        continue;
+      }
+      const data = await res.json();
+      return { res, data };
+    } catch (e) {
+      logger.warn({ label, err: e }, "[youtube] Fetch error");
+      return null;
+    }
+  }
+  return null;
+}
+
 async function fetchChannelStats(channelId: string): Promise<ChannelStats> {
   const apiKey = getYouTubeApiKey();
   const prev = statsCache.get(channelId);
@@ -87,65 +165,71 @@ async function fetchChannelStats(channelId: string): Promise<ChannelStats> {
     return { subs: null, viewers: null, liveChatId: null, lastFetch: Date.now(), error: "api_error" };
   }
 
+  if (isQuotaExhausted()) {
+    return {
+      subs: prev?.subs ?? null,
+      viewers: prev?.viewers ?? null,
+      liveChatId: prev?.liveChatId ?? null,
+      lastFetch: Date.now(),
+      error: "quota",
+    };
+  }
+
   let subs: string | null = prev?.subs ?? null;
   let viewers: string | null = prev?.viewers ?? null;
   let liveChatId: string | null = prev?.liveChatId ?? null;
   let error: ChannelStats["error"] = prev?.error ?? null;
 
-  // --- Subscriber count (channels.list = 1 quota unit) ---
-  try {
-    const chanUrl = `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${encodeURIComponent(channelId)}&key=${apiKey}`;
-    const chanRes = await fetch(chanUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-    const chanBody = await chanRes.json() as any;
-    if (!chanRes.ok) {
-      const isQuota = chanRes.status === 403 || chanRes.status === 429;
-      logger.warn({ channelId, status: chanRes.status, error: chanBody?.error?.message }, "[youtube] Channel stats API error");
-      error = isQuota ? "quota" : "api_error";
-    } else {
-      const subCount = chanBody.items?.[0]?.statistics?.subscriberCount;
-      if (subCount !== undefined) {
-        subs = formatCount(parseInt(subCount, 10));
-        error = null;
-        logger.info({ channelId, subs }, "[youtube] Subscriber count fetched");
-      } else {
-        logger.warn({ channelId, itemCount: chanBody.items?.length ?? 0 }, "[youtube] Channel not found — verify channel ID");
-        error = "not_found";
-      }
-    }
-  } catch (e) {
-    logger.warn({ channelId, err: e }, "[youtube] Failed to fetch subscriber count");
+  // --- Subscriber count (channels.list = 1 quota unit) — with auto key rotation ---
+  const chanResult = await fetchWithKeyRotation(
+    (key) => `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${encodeURIComponent(channelId)}&key=${key}`,
+    "channels.list"
+  );
+
+  if (!chanResult) {
+    error = "quota";
+  } else if (!chanResult.res.ok) {
+    logger.warn({ channelId, status: chanResult.res.status }, "[youtube] Channel stats API error");
     error = "api_error";
+  } else {
+    const subCount = chanResult.data.items?.[0]?.statistics?.subscriberCount;
+    if (subCount !== undefined) {
+      subs = formatCount(parseInt(subCount, 10));
+      error = null;
+      logger.info({ channelId, subs }, "[youtube] Subscriber count fetched");
+    } else {
+      logger.warn({ channelId }, "[youtube] Channel not found — verify channel ID");
+      error = "not_found";
+    }
   }
 
-  // --- Live video search (search.list = 100 quota units) — throttled to SEARCH_INTERVAL_MS ---
+  // --- Live video search (search.list = 100 quota units) — throttled ---
   const now = Date.now();
   const lastSearch = lastSearchAt.get(channelId) ?? 0;
   const shouldSearch = now - lastSearch >= SEARCH_INTERVAL_MS;
 
-  if (shouldSearch) {
-    // Always record the attempt time so quota errors don't cause a retry storm.
+  if (shouldSearch && !isQuotaExhausted()) {
     lastSearchAt.set(channelId, now);
     try {
-      logger.info({ channelId, msSinceLastSearch: now - lastSearch }, "[youtube] Running search.list for live video (100 quota units)");
-      const searchRes = await fetch(
-        `https://www.googleapis.com/youtube/v3/search?part=id&channelId=${encodeURIComponent(channelId)}&eventType=live&type=video&key=${apiKey}`,
-        { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }
+      logger.info({ channelId }, "[youtube] Running search.list for live video (100 quota units)");
+      const searchResult = await fetchWithKeyRotation(
+        (key) => `https://www.googleapis.com/youtube/v3/search?part=id&channelId=${encodeURIComponent(channelId)}&eventType=live&type=video&key=${key}`,
+        "search.list"
       );
-      const searchData = await searchRes.json() as any;
-      if (!searchRes.ok) {
-        const isQuota = searchRes.status === 403 || searchRes.status === 429;
-        logger.warn({ channelId, status: searchRes.status, error: searchData?.error?.message }, "[youtube] Live search API error");
-        if (isQuota) error = "quota";
+
+      if (!searchResult) {
+        if (error !== "quota") error = "quota";
+      } else if (!searchResult.res.ok) {
+        logger.warn({ channelId }, "[youtube] Live search API error");
       } else {
-        const videoId = searchData.items?.[0]?.id?.videoId ?? null;
+        const videoId = searchResult.data.items?.[0]?.id?.videoId ?? null;
         if (videoId) {
-          const vidRes = await fetch(
-            `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(videoId)}&key=${apiKey}`,
-            { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }
+          const vidResult = await fetchWithKeyRotation(
+            (key) => `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(videoId)}&key=${key}`,
+            "videos.list"
           );
-          if (vidRes.ok) {
-            const vidData = await vidRes.json() as any;
-            const details = vidData.items?.[0]?.liveStreamingDetails;
+          if (vidResult?.res.ok) {
+            const details = vidResult.data.items?.[0]?.liveStreamingDetails;
             if (details?.concurrentViewers !== undefined) {
               viewers = formatCount(parseInt(details.concurrentViewers, 10));
             }
@@ -154,7 +238,7 @@ async function fetchChannelStats(channelId: string): Promise<ChannelStats> {
             }
           }
         } else {
-          logger.info({ channelId }, "[youtube] No active live video found for channel");
+          logger.info({ channelId }, "[youtube] No active live video found");
           liveChatId = null;
           viewers = null;
         }
@@ -162,7 +246,7 @@ async function fetchChannelStats(channelId: string): Promise<ChannelStats> {
     } catch (e) {
       logger.warn({ channelId, err: e }, "[youtube] Failed to fetch live viewer count");
     }
-  } else {
+  } else if (!shouldSearch) {
     const nextIn = Math.round((SEARCH_INTERVAL_MS - (now - lastSearch)) / 1000);
     logger.debug({ channelId, nextSearchIn: nextIn + "s" }, "[youtube] Skipping search.list — reusing cached live data");
   }
@@ -178,51 +262,50 @@ export async function fetchLiveChat(streamId: string, chatId: string): Promise<C
     warnMissingApiKeyOnce();
     return [];
   }
+  if (isQuotaExhausted()) {
+    return chatResultCache.get(chatId)?.messages ?? [];
+  }
 
-  // Return cached result if fresh enough — avoids pile-up when the control
-  // room panel and the polling interval fire close together.
   const cached = chatResultCache.get(chatId);
   if (cached && Date.now() - cached.fetchedAt < CHAT_CACHE_TTL) {
     return cached.messages;
   }
 
   const pageToken = chatPageTokens.get(chatId) ?? undefined;
-  const url = new URL("https://www.googleapis.com/youtube/v3/liveChat/messages");
-  url.searchParams.set("liveChatId", chatId);
-  url.searchParams.set("part", "snippet,authorDetails");
-  url.searchParams.set("key", apiKey);
-  url.searchParams.set("maxResults", "50");
-  if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-  try {
-    const res = await fetch(url.toString(), { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-    if (!res.ok) return [];
-    const data = await res.json() as any;
+  const result = await fetchWithKeyRotation((key) => {
+    const url = new URL("https://www.googleapis.com/youtube/v3/liveChat/messages");
+    url.searchParams.set("liveChatId", chatId);
+    url.searchParams.set("part", "snippet,authorDetails");
+    url.searchParams.set("key", key);
+    url.searchParams.set("maxResults", "50");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    return url.toString();
+  }, "liveChat.messages");
 
-    if (data.nextPageToken) {
-      chatPageTokens.set(chatId, data.nextPageToken);
-    }
-
-    const messages: ChatMessage[] = (data.items ?? []).map((item: any) => ({
-      id: item.id,
-      authorName: item.authorDetails?.displayName ?? "Unknown",
-      authorPhoto: item.authorDetails?.profileImageUrl ?? "",
-      text: item.snippet?.displayMessage ?? "",
-      publishedAt: item.snippet?.publishedAt ?? new Date().toISOString(),
-      isMember: item.authorDetails?.isChatSponsor ?? false,
-      isModerator: item.authorDetails?.isChatModerator ?? false,
-      isOwner: item.authorDetails?.isChatOwner ?? false,
-      superChatAmount: item.snippet?.superChatDetails?.amountDisplayString ?? null,
-    }));
-
-    // Cache the result so rapid/overlapping calls return instantly
-    chatResultCache.set(chatId, { messages, fetchedAt: Date.now() });
-    return messages;
-  } catch (e) {
-    logger.warn({ streamId, chatId, err: e }, "Failed to fetch live chat");
-    // Return stale cache on error rather than empty, if we have one
+  if (!result || !result.res.ok) {
     return chatResultCache.get(chatId)?.messages ?? [];
   }
+
+  const data = result.data;
+  if (data.nextPageToken) {
+    chatPageTokens.set(chatId, data.nextPageToken);
+  }
+
+  const messages: ChatMessage[] = (data.items ?? []).map((item: any) => ({
+    id: item.id,
+    authorName: item.authorDetails?.displayName ?? "Unknown",
+    authorPhoto: item.authorDetails?.profileImageUrl ?? "",
+    text: item.snippet?.displayMessage ?? "",
+    publishedAt: item.snippet?.publishedAt ?? new Date().toISOString(),
+    isMember: item.authorDetails?.isChatSponsor ?? false,
+    isModerator: item.authorDetails?.isChatModerator ?? false,
+    isOwner: item.authorDetails?.isChatOwner ?? false,
+    superChatAmount: item.snippet?.superChatDetails?.amountDisplayString ?? null,
+  }));
+
+  chatResultCache.set(chatId, { messages, fetchedAt: Date.now() });
+  return messages;
 }
 
 export function getLiveStats(streamId: string): { subs: string | null; viewers: string | null } {
@@ -238,13 +321,7 @@ export function getLiveChatId(streamId: string): string | null {
   return statsCache.get(stream.youtubeChannelId)?.liveChatId ?? null;
 }
 
-/**
- * Immediately runs one stats poll cycle (fire-and-forget).
- * Call this after a stream's youtubeChannelId is set or changed so the
- * liveChatId is resolved right away instead of waiting up to 60 s.
- */
 export function triggerStatsPollNow(): void {
-  // Run inline without touching the interval so the regular 60s cycle is unaffected
   if (statsPolling) return;
   statsPolling = true;
   const streams = storage.getStreams();
@@ -300,12 +377,10 @@ export function startLiveCountPolling() {
               error: stats.error ?? null,
             });
           }
-          // Sample raw subscriber count for the sparkline chart
           if (stats.subs) {
-            const rawStr = stats.subs;
-            let rawNum = parseFloat(rawStr);
-            if (rawStr.endsWith("M")) rawNum *= 1_000_000;
-            else if (rawStr.endsWith("K")) rawNum *= 1_000;
+            let rawNum = parseFloat(stats.subs);
+            if (stats.subs.endsWith("M")) rawNum *= 1_000_000;
+            else if (stats.subs.endsWith("K")) rawNum *= 1_000;
             if (!isNaN(rawNum)) {
               subChartData.push(rawNum);
               if (subChartData.length > MAX_CHART_SAMPLES)
@@ -325,6 +400,34 @@ export function startLiveCountPolling() {
   poll();
   pollingInterval = setInterval(poll, 60_000);
 
+  // ── Re-broadcast cached stats every 10 s so the chart animates live ──────
+  // No new API calls — just push what we already have so the frontend chart
+  // gets a fresh data point and the animated numbers keep moving smoothly.
+  chartBroadcastInterval = setInterval(() => {
+    const streams = storage.getStreams();
+    const seen = new Set<string>();
+    for (const stream of streams) {
+      if (!stream.youtubeChannelId || seen.has(stream.youtubeChannelId)) continue;
+      seen.add(stream.youtubeChannelId);
+      const cached = statsCache.get(stream.youtubeChannelId);
+      if (!cached) continue;
+      const streamsForChannel = storage.getStreams().filter(
+        (s) => s.youtubeChannelId === stream.youtubeChannelId
+      );
+      for (const s of streamsForChannel) {
+        broadcastStream(s.id, "stats", {
+          subs: cached.subs,
+          viewers: cached.viewers,
+          hasChat: !!cached.liveChatId,
+          error: cached.error ?? null,
+        });
+      }
+    }
+    if (subChartData.length > 0) {
+      updateStreamOverlays({ subChartData: [...subChartData] });
+    }
+  }, 10_000);
+
   const pollChat = async () => {
     if (chatPolling) return;
     chatPolling = true;
@@ -338,10 +441,8 @@ export function startLiveCountPolling() {
         try {
           const messages = await fetchLiveChat(stream.id, chatId);
           if (messages.length > 0) {
-            // Broadcast all new messages to the frontend (seenRef deduplicates display)
             broadcastStream(stream.id, "chat", messages);
 
-            // Server-side dedup for burn-in overlay: only pass messages never seen before
             if (!burnSentMessageIds.has(stream.id)) {
               burnSentMessageIds.set(stream.id, new Set());
             }
@@ -350,7 +451,6 @@ export function startLiveCountPolling() {
 
             if (newBurnMsgs.length > 0) {
               newBurnMsgs.forEach((m) => sentIds.add(m.id));
-              // Cap the sent-IDs set to avoid unbounded memory growth
               if (sentIds.size > 2000) {
                 const oldest = Array.from(sentIds).slice(0, 500);
                 oldest.forEach((id) => sentIds.delete(id));
@@ -381,4 +481,15 @@ export function startLiveCountPolling() {
 export function stopLiveCountPolling() {
   if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
   if (chatInterval) { clearInterval(chatInterval); chatInterval = null; }
+  if (chartBroadcastInterval) { clearInterval(chartBroadcastInterval); chartBroadcastInterval = null; }
+}
+
+/** Exposed for the /api/youtube/key-status debug endpoint */
+export function getApiKeyStatus(): { total: number; active: number; exhausted: number[]; currentIndex: number } {
+  return {
+    total: apiKeys.length,
+    active: currentKeyIndex,
+    exhausted: Array.from(exhaustedUntil.keys()),
+    currentIndex: currentKeyIndex,
+  };
 }

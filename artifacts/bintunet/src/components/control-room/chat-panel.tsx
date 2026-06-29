@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, Pin, PinOff } from "lucide-react";
 
 interface ChatMessage {
   id: string;
@@ -37,7 +37,7 @@ function getNameColor(msg: ChatMessage): string {
   if (msg.superChatAmount || msg.isOwner) return "#fbbf24";
   if (msg.isModerator) return "#a78bfa";
   if (msg.isMember) return "#34d399";
-  return "#38bdf8"; // sky blue for regular users
+  return "#38bdf8";
 }
 
 function getInitials(name: string) {
@@ -48,10 +48,9 @@ function getAvatarBg(msg: ChatMessage): string {
   if (msg.superChatAmount || msg.isOwner) return "linear-gradient(135deg,#f59e0b,#fcd34d)";
   if (msg.isModerator) return "linear-gradient(135deg,#6366f1,#a78bfa)";
   if (msg.isMember) return "linear-gradient(135deg,#059669,#34d399)";
-  // deterministic hue from name
   let h = 0;
   for (let i = 0; i < msg.authorName.length; i++) h = (h * 31 + msg.authorName.charCodeAt(i)) % 360;
-  return `linear-gradient(135deg,hsl(${h},70%,38%),hsl(${(h+40)%360},70%,52%))`;
+  return `linear-gradient(135deg,hsl(${h},70%,38%),hsl(${(h + 40) % 360},70%,52%))`;
 }
 
 function Avatar({ msg, size = 36 }: { msg: ChatMessage; size?: number }) {
@@ -139,66 +138,163 @@ function useMessageQueue(incoming: ChatMessage[]) {
   return { displayed, queueLen };
 }
 
+// ── Pinned Message Banner ─────────────────────────────────────────────────────
+function PinnedBanner({ msg, onUnpin }: { msg: ChatMessage; onUnpin: () => void }) {
+  const nameColor = getNameColor(msg);
+  return (
+    <div style={{
+      display: "flex", gap: 10, alignItems: "flex-start",
+      padding: "10px 14px",
+      background: "linear-gradient(135deg, rgba(251,191,36,0.13), rgba(245,158,11,0.07))",
+      borderBottom: "2px solid rgba(251,191,36,0.35)",
+      position: "relative",
+      animation: "lf-slide 0.35s cubic-bezier(0.22,1,0.36,1) forwards",
+    }}>
+      {/* Pin stripe */}
+      <div style={{
+        position: "absolute", left: 0, top: 0, bottom: 0, width: 3,
+        background: "linear-gradient(to bottom,#fbbf24,#f59e0b)",
+        borderRadius: "0 2px 2px 0",
+      }} />
+      {/* Pin icon */}
+      <div style={{
+        position: "absolute", top: 8, right: 10,
+        display: "flex", alignItems: "center", gap: 5,
+      }}>
+        <span style={{ fontSize: 9, color: "#fbbf24", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>
+          Pinned
+        </span>
+        <button
+          onClick={onUnpin}
+          title="Unpin message"
+          style={{
+            background: "rgba(251,191,36,0.15)", border: "1px solid rgba(251,191,36,0.35)",
+            borderRadius: 6, padding: "2px 5px", cursor: "pointer", color: "#fbbf24",
+            display: "flex", alignItems: "center",
+          }}
+        >
+          <PinOff size={10} />
+        </button>
+      </div>
+      <Avatar msg={msg} size={34} />
+      <div style={{ flex: 1, minWidth: 0, paddingRight: 80 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: nameColor, lineHeight: 1 }}>{msg.authorName}</span>
+          {msg.superChatAmount && (
+            <Badge label={`★ ${msg.superChatAmount}`} bg="rgba(251,191,36,0.18)" color="#fcd34d" border="rgba(251,191,36,0.35)" />
+          )}
+          {msg.isOwner && !msg.superChatAmount && (
+            <Badge label="Owner" bg="rgba(251,191,36,0.18)" color="#fcd34d" border="rgba(251,191,36,0.35)" />
+          )}
+          {msg.isModerator && (
+            <Badge label="Mod" bg="rgba(99,102,241,0.18)" color="#c4b5fd" border="rgba(99,102,241,0.3)" />
+          )}
+          {msg.isMember && !msg.isOwner && (
+            <Badge label="Member" bg="rgba(16,185,129,0.18)" color="#6ee7b7" border="rgba(16,185,129,0.3)" />
+          )}
+        </div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.92)", wordBreak: "break-word", lineHeight: 1.45 }}>
+          {msg.text}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Live Feed (StreamYard-style, sky blue) ────────────────────────────────────
-function LiveFeedChat({ messages }: { messages: QueuedMessage[] }) {
+function LiveFeedChat({
+  messages,
+  pinnedMessage,
+  onPin,
+}: {
+  messages: QueuedMessage[];
+  pinnedMessage: ChatMessage | null;
+  onPin: (msg: ChatMessage | null) => void;
+}) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   return (
-    <div style={{ minHeight: 200, maxHeight: 380, overflowY: "auto", display: "flex", flexDirection: "column", gap: 0, padding: "6px 0" }}>
-      {messages.length === 0 && (
-        <div style={{ color: "rgba(56,189,248,0.3)", fontSize: 12, textAlign: "center", padding: "60px 0", display: "flex", flexDirection: "column", gap: 8, alignItems: "center" }}>
-          <MessageSquare size={22} style={{ opacity: 0.3 }} />
-          Waiting for messages…
-        </div>
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      {/* Pinned message lives above the scrollable list */}
+      {pinnedMessage && (
+        <PinnedBanner msg={pinnedMessage} onUnpin={() => onPin(null)} />
       )}
-      {messages.map((msg) => {
-        const nameColor = getNameColor(msg);
-        const isSuperChat = !!(msg.superChatAmount || msg.isOwner);
-        return (
-          <div
-            key={msg.id}
-            style={{
-              display: "flex", gap: 11, alignItems: "flex-start",
-              padding: "10px 14px",
-              background: msg.entering
-                ? isSuperChat ? "rgba(251,191,36,0.12)" : "rgba(14,165,233,0.10)"
-                : isSuperChat ? "rgba(251,191,36,0.06)" : "rgba(14,165,233,0.04)",
-              borderBottom: "1px solid rgba(56,189,248,0.06)",
-              transition: "background 0.5s ease",
-              animation: msg.entering ? "lf-slide 0.35s cubic-bezier(0.22,1,0.36,1) forwards" : "none",
-              position: "relative",
-            }}
-          >
-            {isSuperChat && (
-              <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: "linear-gradient(to bottom,#fbbf24,#f59e0b)", borderRadius: "0 2px 2px 0" }} />
-            )}
-            <Avatar msg={msg} size={38} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 12, fontWeight: 800, color: nameColor, lineHeight: 1 }}>{msg.authorName}</span>
-                {isSuperChat && msg.superChatAmount && (
-                  <Badge label={`★ ${msg.superChatAmount}`} bg="rgba(251,191,36,0.18)" color="#fcd34d" border="rgba(251,191,36,0.35)" />
-                )}
-                {msg.isOwner && !msg.superChatAmount && (
-                  <Badge label="Owner" bg="rgba(251,191,36,0.18)" color="#fcd34d" border="rgba(251,191,36,0.35)" />
-                )}
-                {msg.isModerator && (
-                  <Badge label="Mod" bg="rgba(99,102,241,0.18)" color="#c4b5fd" border="rgba(99,102,241,0.3)" />
-                )}
-                {msg.isMember && !msg.isOwner && (
-                  <Badge label="Member" bg="rgba(16,185,129,0.18)" color="#6ee7b7" border="rgba(16,185,129,0.3)" />
-                )}
-              </div>
-              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.88)", wordBreak: "break-word", lineHeight: 1.45 }}>{msg.text}</div>
-            </div>
+
+      <div style={{ minHeight: 200, maxHeight: pinnedMessage ? 320 : 380, overflowY: "auto", display: "flex", flexDirection: "column", gap: 0, padding: "6px 0" }}>
+        {messages.length === 0 && (
+          <div style={{ color: "rgba(56,189,248,0.3)", fontSize: 12, textAlign: "center", padding: "60px 0", display: "flex", flexDirection: "column", gap: 8, alignItems: "center" }}>
+            <MessageSquare size={22} style={{ opacity: 0.3 }} />
+            Waiting for messages…
           </div>
-        );
-      })}
-      <div ref={endRef} />
-      <style>{`
-        @keyframes lf-slide { from{opacity:0;transform:translateY(10px);} to{opacity:1;transform:none;} }
-      `}</style>
+        )}
+        {messages.map((msg) => {
+          const nameColor = getNameColor(msg);
+          const isSuperChat = !!(msg.superChatAmount || msg.isOwner);
+          const isPinned = pinnedMessage?.id === msg.id;
+          return (
+            <div
+              key={msg.id}
+              onClick={() => onPin(isPinned ? null : msg)}
+              title={isPinned ? "Click to unpin" : "Click to pin this message"}
+              style={{
+                display: "flex", gap: 11, alignItems: "flex-start",
+                padding: "10px 14px",
+                background: isPinned
+                  ? "rgba(251,191,36,0.10)"
+                  : msg.entering
+                  ? isSuperChat ? "rgba(251,191,36,0.12)" : "rgba(14,165,233,0.10)"
+                  : isSuperChat ? "rgba(251,191,36,0.06)" : "rgba(14,165,233,0.04)",
+                borderBottom: "1px solid rgba(56,189,248,0.06)",
+                transition: "background 0.4s ease",
+                animation: msg.entering ? "lf-slide 0.35s cubic-bezier(0.22,1,0.36,1) forwards" : "none",
+                position: "relative",
+                cursor: "pointer",
+              }}
+            >
+              {isSuperChat && (
+                <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: "linear-gradient(to bottom,#fbbf24,#f59e0b)", borderRadius: "0 2px 2px 0" }} />
+              )}
+              {isPinned && (
+                <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: "linear-gradient(to bottom,#fbbf24,#f59e0b80)", borderRadius: "0 2px 2px 0" }} />
+              )}
+              <Avatar msg={msg} size={38} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: nameColor, lineHeight: 1 }}>{msg.authorName}</span>
+                  {isSuperChat && msg.superChatAmount && (
+                    <Badge label={`★ ${msg.superChatAmount}`} bg="rgba(251,191,36,0.18)" color="#fcd34d" border="rgba(251,191,36,0.35)" />
+                  )}
+                  {msg.isOwner && !msg.superChatAmount && (
+                    <Badge label="Owner" bg="rgba(251,191,36,0.18)" color="#fcd34d" border="rgba(251,191,36,0.35)" />
+                  )}
+                  {msg.isModerator && (
+                    <Badge label="Mod" bg="rgba(99,102,241,0.18)" color="#c4b5fd" border="rgba(99,102,241,0.3)" />
+                  )}
+                  {msg.isMember && !msg.isOwner && (
+                    <Badge label="Member" bg="rgba(16,185,129,0.18)" color="#6ee7b7" border="rgba(16,185,129,0.3)" />
+                  )}
+                </div>
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.88)", wordBreak: "break-word", lineHeight: 1.45 }}>{msg.text}</div>
+              </div>
+              {/* Hover pin icon */}
+              <div className="pin-hover-icon" style={{
+                position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+                opacity: 0, transition: "opacity 0.15s ease",
+                color: isPinned ? "#fbbf24" : "rgba(255,255,255,0.3)",
+              }}>
+                <Pin size={12} />
+              </div>
+            </div>
+          );
+        })}
+        <div ref={endRef} />
+        <style>{`
+          @keyframes lf-slide { from{opacity:0;transform:translateY(10px);} to{opacity:1;transform:none;} }
+          div[style*="cursor: pointer"]:hover .pin-hover-icon { opacity: 1 !important; }
+          div[style*="cursor: pointer"]:hover { background: rgba(14,165,233,0.08) !important; }
+        `}</style>
+      </div>
     </div>
   );
 }
@@ -329,13 +425,20 @@ const STYLE_ACCENT: Record<ChatStyle, string> = {
 
 export function ChatPanel({ chatMessages, activeStreamId, activeStreamCount }: ChatPanelProps) {
   const [styleIdx, setStyleIdx] = useState(0);
+  const [pinnedMessage, setPinnedMessage] = useState<ChatMessage | null>(null);
   const currentStyle: ChatStyle = STYLE_NAMES[styleIdx];
   const { displayed, queueLen } = useMessageQueue(chatMessages);
   const accent = STYLE_ACCENT[currentStyle];
 
   const renderChat = () => {
     switch (currentStyle) {
-      case "Live Feed": return <LiveFeedChat messages={displayed} />;
+      case "Live Feed": return (
+        <LiveFeedChat
+          messages={displayed}
+          pinnedMessage={pinnedMessage}
+          onPin={setPinnedMessage}
+        />
+      );
       case "Bubble":    return <BubbleChat messages={displayed} />;
       case "Compact":   return <CompactChat messages={displayed} />;
       case "Ticker":    return <TickerChat messages={displayed} />;
@@ -368,6 +471,16 @@ export function ChatPanel({ chatMessages, activeStreamId, activeStreamCount }: C
           })}
         </div>
         <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+          {pinnedMessage && currentStyle === "Live Feed" && (
+            <div style={{
+              background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)",
+              borderRadius: 99, padding: "2px 8px", color: "#fcd34d", fontSize: 10, fontWeight: 700,
+              display: "flex", gap: 4, alignItems: "center",
+            }}>
+              <Pin size={9} />
+              1 pinned
+            </div>
+          )}
           {queueLen > 0 && (
             <div style={{
               background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)",
@@ -408,6 +521,12 @@ export function ChatPanel({ chatMessages, activeStreamId, activeStreamCount }: C
           overflow: "hidden",
         }}>
           {renderChat()}
+        </div>
+      )}
+
+      {currentStyle === "Live Feed" && activeStreamCount > 0 && (
+        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", textAlign: "center" }}>
+          Click any message to pin it as an announcement
         </div>
       )}
 

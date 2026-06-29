@@ -52,7 +52,7 @@ import {
 } from "./oauth2-manager";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
 import { getYouTubeStreamUrl } from "./youtube-source";
-import { startLiveCountPolling, stopLiveCountPolling, getLiveChatId, fetchLiveChat, getLiveStats, triggerStatsPollNow } from "./youtube-counter";
+import { startLiveCountPolling, stopLiveCountPolling, getLiveChatId, fetchLiveChat, getLiveStats, triggerStatsPollNow, getApiKeyStatus } from "./youtube-counter";
 import type { OverlayPosition } from "./overlay-renderer";
 import { registerDonationGateway, setDonationCallback, getGatewayPaymentUrl, getQRScanCount, getGiftQueue } from "./donation-gateway";
 import type { GiftQueueItem } from "./gift-system";
@@ -505,6 +505,11 @@ export async function registerBintunetRoutes(
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
     }
+  });
+
+  // GET /api/youtube/key-status — shows how many API keys are configured and which are exhausted
+  app.get("/api/youtube/key-status", requireAuth, (_req: Request, res: Response): void => {
+    res.json(getApiKeyStatus());
   });
 
   // Resolve a YouTube handle (e.g. @officialjaydaniels or custom URL) → channel ID.
