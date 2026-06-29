@@ -253,6 +253,19 @@ export class SourceRelay {
   // the entire duration of the async quality-probe + process-launch phase; reset
   // to false as soon as the child process is running (or on any error path).
   private _spawning = false;
+  // Backpressure: when FFmpeg stdin signals "drain needed" we pause the source
+  // process stdout to prevent unbounded buffer growth. Without this, a slow
+  // FFmpeg encoder causes streamlink/yt-dlp stdout to buffer GBs in memory,
+  // ultimately triggering OOM or causing Node.js to fall behind real-time.
+  private _stdinDraining = false;
+  // Single drain listener attached once to ffmpegStdin for the lifetime of
+  // this relay instance. Stored so we can removeListener in stop() to avoid
+  // the EventEmitter leak that accumulates on reconnect cycles if the listener
+  // were re-registered every time the source process reconnects.
+  private _drainListener: (() => void) | null = null;
+  // The currently live source process, needed by the drain listener to resume
+  // stdout without capturing a stale closure from an earlier spawn.
+  private _currentProc: ChildProcess | null = null;
   // Cached result from the first successful streamlink quality probe.
   // Re-probing on every reconnect adds 10–30 s of FFmpeg stdin starvation
   // per restart cycle.  During that probe window the RTMP rw_timeout (20 s)
@@ -280,6 +293,22 @@ export class SourceRelay {
     this._log(`[relay:${this.sourceType}] Starting — URL: ${this.pageUrl}`);
     this._setStatus("starting");
     this._startHealthMonitor();
+
+    // ── Register exactly ONE drain listener for the lifetime of this relay ──
+    // Attaching inside _spawn() (called on every reconnect) would accumulate
+    // one listener per reconnect cycle, causing MaxListenersExceededWarning and
+    // spurious resume() calls from stale closures. We attach once here so the
+    // listener count stays constant regardless of how many times the source
+    // process reconnects. stop() removes it.
+    this._drainListener = () => {
+      this._stdinDraining = false;
+      const cur = this._currentProc;
+      if (!this.stopped && cur && !cur.killed) {
+        try { cur.stdout?.resume(); } catch {}
+      }
+    };
+    (this.ffmpegStdin as any)?.on?.("drain", this._drainListener);
+
     // Detect streamlink version first, then spawn
     detectStreamlink().then((info) => {
       if (this.stopped) return;
@@ -305,6 +334,14 @@ export class SourceRelay {
     this._setStatus("stopped");
     if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
     if (this.healthTimer) { clearInterval(this.healthTimer); this.healthTimer = null; }
+    // Remove the single drain listener registered in start() to avoid
+    // a stale handler accumulating if the relay is restarted externally.
+    if (this._drainListener) {
+      try { (this.ffmpegStdin as any)?.removeListener?.("drain", this._drainListener); } catch {}
+      this._drainListener = null;
+    }
+    this._stdinDraining = false;
+    this._currentProc = null;
     this._kill(this.proc);
     this.proc = null;
   }
@@ -799,6 +836,12 @@ export class SourceRelay {
 
     const thisProc = proc;
     this.proc = proc;
+    // Track the current process so the single drain listener in start() can
+    // resume this specific proc's stdout without holding a stale closure.
+    this._currentProc = proc;
+    // Reset draining state for this new spawn — a previous proc may have left
+    // it stuck in draining=true if it exited before its drain event fired.
+    this._stdinDraining = false;
 
     let gotData = false;
     // Accumulate full stderr for error classification on exit.
@@ -819,6 +862,8 @@ export class SourceRelay {
           `source may not be live. Will retry.`,
         );
         this.proc = null;        // ← must come before _kill so exit handler bails
+        this._currentProc = null;
+        this._stdinDraining = false;
         this._kill(thisProc);
         this._scheduleRetry();
       }
@@ -826,6 +871,19 @@ export class SourceRelay {
 
     // ── stdout → FFmpeg stdin ─────────────────────────────────────────────────
     // CRITICAL: .write() not .pipe() — keeps stdin open across source restarts.
+    //
+    // Backpressure handling: Node.js Writable.write() returns false when the
+    // internal highWaterMark buffer is full (default 16 KB).  Without pausing
+    // the readable source when this happens, streamlink/yt-dlp stdout data
+    // piles up in memory (unbounded) and Node.js falls behind real-time,
+    // which manifests as speed < 1.0x in FFmpeg stats.
+    //
+    // When stdin signals backpressure (write() returns false):
+    //   1. Pause the source process stdout so it stops emitting chunks.
+    //   2. The single drain listener registered in start() resumes it via
+    //      this._currentProc — no per-spawn listener accumulation.
+    //
+    // This keeps the relay pipe non-blocking and prevents memory growth.
     proc.stdout?.on("data", (chunk: Buffer) => {
       if (!gotData) {
         gotData = true;
@@ -844,7 +902,14 @@ export class SourceRelay {
       try {
         const stdin = this.ffmpegStdin as any;
         if (stdin && !stdin.destroyed && stdin.writable) {
-          stdin.write(chunk);
+          // write() returns false when the internal buffer is full → backpressure.
+          const canContinue = stdin.write(chunk);
+          if (!canContinue && !this._stdinDraining) {
+            this._stdinDraining = true;
+            // Pause this proc's stdout to prevent buffer growth.
+            // The drain listener in start() resumes it via this._currentProc.
+            try { thisProc.stdout?.pause(); } catch {}
+          }
         }
       } catch {
         // FFmpeg exited — stream manager will call stop() shortly
@@ -886,6 +951,10 @@ export class SourceRelay {
       clearTimeout(startupWatchdog);
       if (this.proc !== thisProc || this.stopped) return;
       this.proc = null;
+      if (this._currentProc === thisProc) {
+        this._currentProc = null;
+        this._stdinDraining = false;
+      }
 
       if (err.code === "ENOENT") {
         this._fatal(
@@ -903,6 +972,14 @@ export class SourceRelay {
       clearTimeout(startupWatchdog);
       if (this.proc !== thisProc || this.stopped) return;
       this.proc = null;
+      // Clear current proc reference and draining state — the drain listener in
+      // start() will be a no-op for this dead process. _stdinDraining=false ensures
+      // the next spawn starts with a clean backpressure state even if the previous
+      // proc exited mid-drain before its drain event could fire.
+      if (this._currentProc === thisProc) {
+        this._currentProc = null;
+        this._stdinDraining = false;
+      }
 
       const uptimeSec = Math.round((Date.now() - spawnedAt) / 1000);
       const kbRelayed = Math.round(sessionBytes / 1024);

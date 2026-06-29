@@ -269,10 +269,14 @@ interface StreamProcess {
   reconnectCount?: number;        // total pipeline restarts for this stream session
   lastBitrate?: number;           // most recent output bitrate in kbps (from FFmpeg -stats)
   lastFps?: number;               // most recent output fps (from FFmpeg -stats)
+  lastSpeed?: number;             // most recent encoder speed= value (real-time ratio)
+  totalDroppedFrames?: number;    // cumulative dropped frame count from FFmpeg -stats
   accumulatedLagSec?: number;     // total seconds of lag built up since last reconnect
   lastSpeedSampleAt?: number;     // unix ms of last speed= sample for delta-time calc
   lastSlowReconnectAt?: number;   // unix ms of last slow-encode-triggered reconnect (cooldown)
   lastSpeedLogAt?: number;        // unix ms of last pino speed log (throttled to every 30s)
+  recoveryAttempts?: number;      // graceful recovery attempts before hard restart
+  gracefulKillTimer?: NodeJS.Timeout; // SIGTERM→SIGKILL escalation timer
 }
 
 // ── URL cache: reuse recently resolved URLs to skip 20-35s re-resolution on restart ──
@@ -826,9 +830,12 @@ function buildFFmpegArgs(
   // ── Input 1: lavfi black video — the "never-dies" fallback ───────────────
   // pixel_format=yuv420p + -color_range 1 (tv): explicit range avoids the
   // "deprecated pixel format used, make sure you did set range correctly" warning.
+  // thread_queue_size=1024: even lavfi generates frames in a separate thread;
+  // a large queue prevents "Thread message queue blocking" warnings when the
+  // encoder momentarily falls behind and the thread pool is saturated.
   args.push(
     "-f", "lavfi",
-    "-thread_queue_size", "64",
+    "-thread_queue_size", "1024",
     "-color_range", "1",
     "-i", `color=c=black:size=${scaleW}x${scaleH}:rate=${fps}`,
   );
@@ -837,9 +844,11 @@ function buildFFmpegArgs(
   // 48000 Hz matches YouTube's recommended audio sample rate. Using the correct
   // sample rate here avoids a hidden resampling step in the codec pipeline that
   // can introduce cumulative A/V drift during 24/7 streams.
+  // thread_queue_size=1024: matches Input 1 rationale — prevents queue-blocking
+  // warnings when the audio encoder is momentarily stalled by video encode bursts.
   args.push(
     "-f", "lavfi",
-    "-thread_queue_size", "64",
+    "-thread_queue_size", "1024",
     "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
   );
 
@@ -883,11 +892,13 @@ function buildFFmpegArgs(
   // signal, enabling real-time volume/mute with ZERO stream reconnection.
   // 48000 Hz matches the rest of the pipeline so FFmpeg never needs to internally
   // resample this control signal, eliminating a latency source.
+  // thread_queue_size=1024: raised from 512 to prevent queue-blocking when the
+  // audio mixer is momentarily stalled behind video encode bursts.
   args.push(
     "-f", "f32le",
     "-ar", "48000",
     "-ac", "2",
-    "-thread_queue_size", "512",
+    "-thread_queue_size", "1024",
     "-i", "pipe:6",
   );
 
@@ -1062,13 +1073,17 @@ function buildFFmpegArgs(
   args.push("-map", "[_audio]");
 
   // ── Video encoder — YouTube "Excellent connection" settings ──────────────
-  // preset: "superfast" is the default — ~30% less CPU than "veryfast" with
-  //   negligible quality loss at live-streaming bitrates. "veryfast" caused
-  //   speed=0.90x on mobile-layout TikTok restreamers, triggering the slow-
-  //   encode reconnect loop and visible viewer buffering every ~82 s.
-  //   "ultrafast" is kept as an option for severely underpowered servers.
+  // preset: "ultrafast" is the new default for maximum VPS stability.
+  //   Compared to "superfast" it cuts x264 CPU usage by another ~20-30%,
+  //   keeping speed consistently at or above 1.0x on shared/low-core VPS
+  //   hardware where "superfast" or "veryfast" caused speed=0.87-0.92x and
+  //   the slow-encode watchdog triggered restarts. The quality reduction at
+  //   live-streaming bitrates (4500–6000 kbps) is imperceptible to viewers.
+  //   "superfast" remains available via stream.encoderPreset for operators
+  //   with more CPU headroom who want slightly higher quality.
   // tune=zerolatency: keeps the encoder delay to 0 frames — critical for live
   //   streaming where any encoder buffer means higher end-to-end latency.
+  //   Also disables lookahead buffers inside x264, which further reduces CPU.
   // profile=high + level=4.1: maximum compatibility with YouTube's ingest decoder.
   //   level 4.1 allows up to 1080p60 at ~50 Mbps — well above our target bitrates.
   // bf=0: no B-frames; YouTube Live's ingest pipeline does not support B-frames
@@ -1079,12 +1094,9 @@ function buildFFmpegArgs(
   // g=fps*2: 2-second keyframe interval — YouTube's required GOP size for live.
   // sc_threshold=0: disable scene-change detection for fixed GOP (consistent keyframes).
   // fps_mode=cfr: Constant Frame Rate — ensures YouTube never sees timestamp gaps
-  //   that trigger dropped-frame warnings in Studio.
-  // superfast vs veryfast: superfast cuts encoder CPU ~30 % with negligible
-  // quality loss at live-streaming bitrates. veryfast caused speed=0.90x on
-  // a mobile-layout TikTok restream, which accumulated 8 s of lag every ~82 s
-  // and triggered the slow-encode reconnect loop, causing visible buffering.
-  const encoderPreset = (stream.encoderPreset as string) || "superfast";
+  //   that trigger dropped-frame warnings in Studio. Also prevents the encoder
+  //   from stalling waiting for a frame from a slow input.
+  const encoderPreset = (stream.encoderPreset as string) || "ultrafast";
   args.push(
     "-c:v", "libx264",
     "-preset", encoderPreset,
@@ -1564,6 +1576,31 @@ function startProcStatsPolling(streamId: string, pid: number): NodeJS.Timeout {
         const frames = proc?.lastFrameCount ?? 0;
         const uptime = proc?.streamStartTime ? Math.floor((Date.now() - proc.streamStartTime) / 1000) : 0;
         const health = getHealthSnapshot(streamId);
+        const encSpeed = proc?.lastSpeed ?? 0;
+        const droppedFrames = proc?.totalDroppedFrames ?? 0;
+        const lagSec = proc?.accumulatedLagSec ?? 0;
+        const recoveryAttempts = proc?.recoveryAttempts ?? 0;
+
+        // Log CPU/mem/speed every ~30s at debug level for operator visibility
+        if (statsTick % 10 === 0) {
+          logger.info(
+            {
+              streamId,
+              cpu: cpu.toFixed(1),
+              memMb: mem,
+              speed: encSpeed.toFixed(3),
+              fps: proc?.lastFps ?? 0,
+              bitrateKbps: proc?.lastBitrate ?? 0,
+              droppedFrames,
+              lagSec: lagSec.toFixed(2),
+              reconnects: proc?.reconnectCount ?? 0,
+              recoveryAttempts,
+              uptime,
+            },
+            "[perf] stream stats",
+          );
+        }
+
         broadcastStream(streamId, "proc_stats", {
           cpu,
           mem,
@@ -1571,6 +1608,10 @@ function startProcStatsPolling(streamId: string, pid: number): NodeJS.Timeout {
           uptime,
           bitrate: proc?.lastBitrate ?? 0,
           fps: proc?.lastFps ?? 0,
+          speed: encSpeed,
+          droppedFrames,
+          lagSec: parseFloat(lagSec.toFixed(2)),
+          recoveryAttempts,
           reconnectCount: proc?.reconnectCount ?? 0,
           healthScore: health?.score ?? 100,
           healthStatus: health?.status ?? "excellent",
@@ -1595,6 +1636,7 @@ function cleanupStreamProc(streamId: string, proc: StreamProcess) {
   if (proc.statsInterval) clearInterval(proc.statsInterval);
   if (proc.prefetchTimer) clearTimeout(proc.prefetchTimer);
   if (proc.sessionRefreshTimer) clearTimeout(proc.sessionRefreshTimer);
+  if (proc.gracefulKillTimer) { clearTimeout(proc.gracefulKillTimer); proc.gracefulKillTimer = undefined; }
   if (proc.ytSourceProcess) {
     try { proc.ytSourceProcess.kill("SIGKILL"); } catch {}
     proc.ytSourceProcess = undefined;
@@ -1660,7 +1702,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
   scorerRegisterStream(streamId, qualityBitrateKbps);
   scorerSetTargetFps(streamId, streamFps);
 
-  const encoderPresetLabel = (stream.encoderPreset as string) || "superfast";
+  const encoderPresetLabel = (stream.encoderPreset as string) || "ultrafast";
   sendLog(streamId, `--- Starting stream ---`);
   sendLog(streamId, `Quality: ${stream.quality}${is60fps ? " 60fps" : ""} | FPS: ${stream.fps} | Layout: ${stream.ratio} | Preset: ${encoderPresetLabel}`);
   sendLog(streamId, `Audio: ${stream.muted ? "Muted" : "On"} | Auto-restart: ${stream.autoRestart ? "On" : "Off"} | Sample rate: 48000 Hz`);
@@ -1911,42 +1953,38 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
             const totalDropped = parseInt(dropMatch[1], 10);
             if (!isNaN(totalDropped)) {
               scorerRecordDroppedFrames(streamId, totalDropped);
+              // Mirror on proc for proc_stats broadcast
+              const currentProc = activeStreams.get(streamId);
+              if (currentProc) currentProc.totalDroppedFrames = totalDropped;
             }
           }
 
           // ── Slow-encode watchdog ────────────────────────────────────────────
           // At 0.95x speed, the encoder accumulates 0.05s of lag per real second.
-          // After significant lag accumulates, trigger a clean RTMP reconnect.
+          // Graceful recovery is attempted before a hard restart:
+          //   Phase 1 (lag 8–12s):  warning logged, no action — minor slowdown.
+          //   Phase 2 (lag 12–16s): "graceful recovery" — SIGTERM → wait 3s →
+          //                          SIGKILL, then restart. Lets FFmpeg flush its
+          //                          RTMP send buffer cleanly so YouTube sees a
+          //                          shorter gap than a cold SIGKILL.
+          //   Phase 3 (lag > 16s):  hard SIGKILL + immediate restart if graceful
+          //                          kill is already pending or has stalled.
           //
           // ── THRESHOLD RATIONALE (DO NOT REDUCE WITHOUT UNDERSTANDING IMPACT) ─
           //
           // • "Fast enough" floor: 0.88x
           //     Speeds 0.88–1.0x: lag counter DRAINS. No restart triggered.
-          //     At 0.91x the old floor of 0.92x caused lag to accumulate at
-          //     0.09s/s, reaching the 8.0s trigger in exactly 89 s — producing
-          //     the systematic "Poor stream health" warning at ~90 s that
-          //     YouTube Studio reported. With 0.88x floor, 0.91x is inside the
-          //     acceptable band and the restart never fires. fps_mode=cfr +
-          //     nal-hrd=cbr keep the RTMP stream continuous even at 0.91x —
-          //     FFmpeg duplicates frames and inserts filler NALs; YouTube never
-          //     sees a gap. The restart ITSELF was the cause of the warning.
+          //     fps_mode=cfr + nal-hrd=cbr keep the RTMP stream continuous at
+          //     these speeds — FFmpeg duplicates frames and inserts filler NALs;
+          //     YouTube never sees a gap. The restart ITSELF causes the warning.
           //
-          // • Lag trigger: 12.0s (raised from 8.0s)
-          //     Only restart when the encoder is genuinely and severely behind.
-          //     At 0.84x (below 0.88x floor): lag accumulates at 0.16s/s, so
-          //     12.0s is reached in ~75 s — still responsive, but gives more
-          //     room before inflicting an RTMP gap on a borderline-slow server.
+          // • Phase 2 trigger: 12.0s accumulated lag (speed < 0.88x sustained)
+          //     Graceful SIGTERM path fires here — gives FFmpeg 3s to flush.
           //
-          // • Restart delay: 3000ms (raised from 1500ms)
-          //     Lets the RTMP send buffer drain cleanly before the new TCP
-          //     connection lands, preventing YouTube from seeing back-to-back
-          //     gaps if two slow-encode restarts happen close together.
+          // • Phase 3 trigger: 16.0s accumulated lag
+          //     Hard SIGKILL fires if graceful flush stalled or failed.
           //
           // • Cooldown: 3 min between auto-reconnects — unchanged.
-          //
-          // Previous values that caused the 90-second cycle:
-          //   floor=0.92x, trigger=8.0s, delay=1500ms
-          //   → restart every ~89s + 13–17s gap = 90s pattern in YouTube Studio
           const speedMatch = trimmed.match(/speed=\s*([\d.]+)x/);
           if (speedMatch) {
             const encSpeed = parseFloat(speedMatch[1]);
@@ -1954,6 +1992,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
               const nowMs = Date.now();
               const currentProc = activeStreams.get(streamId);
               if (currentProc) {
+                currentProc.lastSpeed = encSpeed;
                 const lastSampleAt = currentProc.lastSpeedSampleAt ?? nowMs;
                 const elapsedSec = Math.min((nowMs - lastSampleAt) / 1000, 10); // cap at 10s gap
                 currentProc.lastSpeedSampleAt = nowMs;
@@ -1971,6 +2010,13 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                       { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSoFar.toFixed(2) },
                       "[perf] encoder speed in warning band (0.88–0.92x) — monitoring, no restart",
                     );
+                    sendLog(streamId, `[perf] Encoder speed ${encSpeed.toFixed(2)}x (warning band 0.88–0.92x) — lag ${lagSoFar.toFixed(1)}s — monitoring`);
+                  } else if (encSpeed < 0.88) {
+                    logger.warn(
+                      { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSoFar.toFixed(2) },
+                      "[perf] encoder speed below floor (< 0.88x) — lag accumulating",
+                    );
+                    sendLog(streamId, `[perf] Encoder speed ${encSpeed.toFixed(2)}x (below 0.88x floor) — lag ${lagSoFar.toFixed(1)}s accumulating`);
                   } else {
                     logger.info(
                       { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSoFar.toFixed(2) },
@@ -2002,22 +2048,58 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                     nowMs - currentProc.lastSlowReconnectAt > cooldownMs;
 
                   if (
-                    lagSec >= 12.0 &&
+                    lagSec >= 16.0 &&
                     cooldownOk &&
                     !restartScheduled.has(streamId) &&
                     !manuallyStopped.has(streamId)
                   ) {
+                    // Phase 3: hard kill — graceful window already elapsed.
                     currentProc.accumulatedLagSec = 0;
                     currentProc.lastSlowReconnectAt = nowMs;
+                    currentProc.recoveryAttempts = 0;
                     sendLog(
                       streamId,
-                      `[perf] ~${lagSec.toFixed(1)}s of encoding lag accumulated (speed ${encSpeed.toFixed(2)}x) — reconnecting to reset encoder state...`,
+                      `[perf] Severe lag ${lagSec.toFixed(1)}s (speed ${encSpeed.toFixed(2)}x) — graceful recovery window exceeded, hard restart`,
                     );
                     logger.warn(
-                      { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSec.toFixed(2) },
-                      "[perf] slow-encode restart triggered (speed < 0.88x sustained)",
+                      { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSec.toFixed(2), phase: 3 },
+                      "[perf] slow-encode hard restart triggered (lag > 16s)",
                     );
-                    hardKillAndRestart(streamId, 3000, false, true /* keepStatus=reconnecting */);
+                    hardKillAndRestart(streamId, 1000, false, true);
+                  } else if (
+                    lagSec >= 12.0 &&
+                    cooldownOk &&
+                    !restartScheduled.has(streamId) &&
+                    !manuallyStopped.has(streamId) &&
+                    !currentProc.gracefulKillTimer  // no graceful kill already in progress
+                  ) {
+                    // Phase 2: graceful kill — SIGTERM then wait, giving FFmpeg
+                    // time to flush its internal RTMP send buffer before dying.
+                    currentProc.accumulatedLagSec = 0;
+                    currentProc.lastSlowReconnectAt = nowMs;
+                    currentProc.recoveryAttempts = (currentProc.recoveryAttempts ?? 0) + 1;
+                    sendLog(
+                      streamId,
+                      `[perf] ${lagSec.toFixed(1)}s lag (speed ${encSpeed.toFixed(2)}x) — graceful recovery #${currentProc.recoveryAttempts}: sending SIGTERM, restarting in 3s`,
+                    );
+                    logger.warn(
+                      {
+                        streamId,
+                        encSpeed: encSpeed.toFixed(3),
+                        lagSec: lagSec.toFixed(2),
+                        phase: 2,
+                        recovery: currentProc.recoveryAttempts,
+                      },
+                      "[perf] slow-encode graceful restart triggered (lag > 12s)",
+                    );
+                    // SIGTERM → 3s window → SIGKILL via hardKillAndRestart
+                    // Mark graceful kill in progress so Phase 3 doesn't double-fire.
+                    try { ffmpegProc.kill("SIGTERM"); } catch {}
+                    currentProc.gracefulKillTimer = setTimeout(() => {
+                      const p = activeStreams.get(streamId);
+                      if (p) p.gracefulKillTimer = undefined;
+                      hardKillAndRestart(streamId, 3000, false, true);
+                    }, 3000);
                   }
                 }
               }
