@@ -125,18 +125,12 @@ export function StreamCard({
   const [settingsOpen, setSettingsOpen] = useState(true);
   const [logsOpen, setLogsOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
-  const [showStats, setShowStats] = useState(false);
+  const [showStats, setShowStats] = useState(!!stream.youtubeChannelId);
   const [locked, setLocked] = useState(false);
   const [pendingAction, setPendingAction] = useState<"stop" | "restart" | null>(null);
   const [cameraMode, setCameraMode] = useState<CameraMode>("guestroom");
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [uploadFilename, setUploadFilename] = useState<string>("");
-  type VerifyState =
-    | { status: "idle" }
-    | { status: "loading" }
-    | { status: "ok"; channelId: string; title: string | null; thumbnail: string | null }
-    | { status: "error"; message: string };
-  const [verifyState, setVerifyState] = useState<VerifyState>({ status: "idle" });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -270,11 +264,19 @@ export function StreamCard({
                 {locked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
               </button>
             )}
+            {/* Inline subs / viewers — always visible when data is available */}
+            {stream.youtubeChannelId && stats && (stats.subs || stats.viewers) && (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-[10px] font-semibold text-red-300">
+                {stats.subs && <span title="Subscribers">👥 {stats.subs}</span>}
+                {stats.subs && stats.viewers && <span className="text-red-400/40">·</span>}
+                {stats.viewers && <span title="Live viewers">👁 {stats.viewers}</span>}
+              </div>
+            )}
             {stream.youtubeChannelId && (
               <button
                 onClick={() => setShowStats((v) => !v)}
                 className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${showStats ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"}`}
-                title="Stats widget"
+                title={showStats ? "Hide chat & stats" : "Show chat & stats"}
                 data-testid={`button-stats-${stream.id}`}
               >
                 <BarChart2 className="w-3.5 h-3.5" />
@@ -745,69 +747,15 @@ export function StreamCard({
                   <Label htmlFor={`channel-id-${stream.id}`} className="text-xs flex items-center gap-1.5">
                     <BarChart2 className="w-3 h-3 text-violet-400" />YouTube Channel ID <span className="text-muted-foreground font-normal text-[10px]">(for stats &amp; chat)</span>
                   </Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id={`channel-id-${stream.id}`}
-                      placeholder="UCxxxxxxxxxxxxxxxxxxxxxxxx  or  @channelname"
-                      value={stream.youtubeChannelId}
-                      onChange={(e) => {
-                        onUpdate(stream.id, { youtubeChannelId: e.target.value });
-                        setVerifyState({ status: "idle" });
-                      }}
-                      className="h-8 text-sm flex-1"
-                      data-testid={`input-channel-id-${stream.id}`}
-                    />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 px-2.5 text-xs shrink-0"
-                      disabled={!stream.youtubeChannelId?.trim() || verifyState.status === "loading"}
-                      onClick={async () => {
-                        setVerifyState({ status: "loading" });
-                        try {
-                          const res = await fetch("/api/youtube/verify-channel", {
-                            method: "POST",
-                            credentials: "include",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ url: stream.youtubeChannelId }),
-                          });
-                          const data = await res.json();
-                          if (!res.ok) {
-                            setVerifyState({ status: "error", message: data.message ?? "Verification failed" });
-                          } else {
-                            setVerifyState({ status: "ok", channelId: data.channelId, title: data.title, thumbnail: data.thumbnail });
-                            onUpdate(stream.id, { youtubeChannelId: data.channelId });
-                          }
-                        } catch (e: any) {
-                          setVerifyState({ status: "error", message: e.message ?? "Network error" });
-                        }
-                      }}
-                    >
-                      {verifyState.status === "loading"
-                        ? <Loader2 className="w-3 h-3 animate-spin" />
-                        : <Check className="w-3 h-3" />}
-                      <span className="ml-1">Verify</span>
-                    </Button>
-                  </div>
-                  {/* Verification result */}
-                  {verifyState.status === "ok" && (
-                    <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-950/30 px-2.5 py-2 mt-1">
-                      {verifyState.thumbnail && (
-                        <img src={verifyState.thumbnail} alt="" className="w-7 h-7 rounded-full shrink-0 object-cover" />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-emerald-300 truncate">{verifyState.title}</p>
-                        <p className="text-[10px] text-emerald-400/70 font-mono truncate">{verifyState.channelId}</p>
-                      </div>
-                      <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    </div>
-                  )}
-                  {verifyState.status === "error" && (
-                    <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-950/30 px-2.5 py-2 mt-1">
-                      <XIcon className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                      <p className="text-xs text-red-300">{verifyState.message}</p>
-                    </div>
-                  )}
+                  <Input
+                    id={`channel-id-${stream.id}`}
+                    placeholder="UCxxxxxxxxxxxxxxxxxxxxxxxx"
+                    value={stream.youtubeChannelId}
+                    onChange={(e) => onUpdate(stream.id, { youtubeChannelId: e.target.value })}
+                    className="h-8 text-sm"
+                    data-testid={`input-channel-id-${stream.id}`}
+                  />
+                  <p className="text-[10px] text-muted-foreground">Paste your channel ID here — subs count &amp; live chat will appear automatically on the card.</p>
                 </div>
 
                 {/* ── Quality Row ── */}
