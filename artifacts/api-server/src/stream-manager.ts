@@ -586,16 +586,32 @@ function buildFFmpegArgs(
 ): string[] {
   const fps = parseInt(stream.fps);
   const isVertical = stream.ratio === "mobile";
-  const isHDQuality = stream.quality === "best" || stream.quality === "720p";
+  // ── Resolution ladder ─────────────────────────────────────────────────────
+  // Each quality tier maps to the resolution YouTube recommends for its bitrate:
+  //   "best" → 1920×1080 (landscape) / 1080×1920 (vertical)  — 1080p
+  //   "720p" → 1280×720  (landscape) / 720×1280  (vertical)  — 720p
+  //   other  → 854×480   (landscape) / 480×854   (vertical)  — 480p
+  //
+  // Previously "best" was incorrectly scaled to 1280×720 (same as "720p") while
+  // using the 4,500 kbps bitrate intended for 1080p. YouTube Studio reported
+  // "bitrate (4824 Kbps) is higher than the recommended bitrate (2500 Kbps)"
+  // because 4,500 kbps is indeed above the 720p30 ceiling. At true 1080p the
+  // 4,500 kbps target falls well within YouTube's recommended range.
+  const isBestQuality = stream.quality === "best";
+  const is720Quality  = stream.quality === "720p";
 
-  const scaleW = isVertical ? (isHDQuality ? 720 : 480) : (isHDQuality ? 1280 : 854);
-  const scaleH = isVertical ? (isHDQuality ? 1280 : 854) : (isHDQuality ? 720 : 480);
+  const scaleW = isVertical
+    ? (isBestQuality ? 1080 : is720Quality ? 720 : 480)
+    : (isBestQuality ? 1920 : is720Quality ? 1280 : 854);
+  const scaleH = isVertical
+    ? (isBestQuality ? 1920 : is720Quality ? 1280 : 854)
+    : (isBestQuality ? 1080 : is720Quality ? 720 : 480);
 
   // ── Bitrate ladder ────────────────────────────────────────────────────────
   // YouTube recommended bitrates for "Excellent connection" status:
-  //   1080p30 → 4,500 kbps  |  1080p60 → 6,000 kbps
-  //   720p30  → 2,500 kbps  |  720p60  → 3,500 kbps
-  //   480p30  → 1,500 kbps  |  480p60  → 2,000 kbps
+  //   1080p30 → 4,500 kbps  |  1080p60 → 6,000 kbps  ("best")
+  //   720p30  → 2,500 kbps  |  720p60  → 3,500 kbps  ("720p")
+  //   480p30  → 1,500 kbps  |  480p60  → 2,000 kbps  (default)
   //
   // Strict CBR enforcement (nal-hrd=cbr requires minrate = maxrate = bitrate):
   //   bufsize = 2× bitrate → YouTube's own CBR guidance; the encoder can absorb
@@ -1389,9 +1405,14 @@ function startBreakDecoder(
   }
 
   const isVertical = stream.ratio === "mobile";
-  const isHDQuality = stream.quality === "best" || stream.quality === "720p";
-  const outW = isVertical ? (isHDQuality ? 720 : 480) : (isHDQuality ? 1280 : 854);
-  const outH = isVertical ? (isHDQuality ? 1280 : 854) : (isHDQuality ? 720 : 480);
+  const _isBest720 = stream.quality === "best";
+  const _is720p    = stream.quality === "720p";
+  const outW = isVertical
+    ? (_isBest720 ? 1080 : _is720p ? 720 : 480)
+    : (_isBest720 ? 1920 : _is720p ? 1280 : 854);
+  const outH = isVertical
+    ? (_isBest720 ? 1920 : _is720p ? 1280 : 854)
+    : (_isBest720 ? 1080 : _is720p ? 720 : 480);
 
   const panXF = (panX / 100).toFixed(4);
   const panYF = (panY / 100).toFixed(4);
@@ -1632,7 +1653,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
   const streamFps = parseInt(stream.fps || "30", 10);
   const is60fps = streamFps >= 60;
   const qualityBitrateKbps = stream.quality === "best"
-    ? (is60fps ? 6000 : 4000)
+    ? (is60fps ? 6000 : 4500)
     : stream.quality === "720p"
     ? (is60fps ? 3500 : 2500)
     : (is60fps ? 2000 : 1500);
@@ -1716,9 +1737,14 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
     });
 
     const isVertical = stream.ratio === "mobile";
-    const isHDQuality = stream.quality === "best" || stream.quality === "720p";
-    const overlayW = isVertical ? (isHDQuality ? 720 : 480) : (isHDQuality ? 1280 : 854);
-    const overlayH = isVertical ? (isHDQuality ? 1280 : 854) : (isHDQuality ? 720 : 480);
+    const _ovBest = stream.quality === "best";
+    const _ov720  = stream.quality === "720p";
+    const overlayW = isVertical
+      ? (_ovBest ? 1080 : _ov720 ? 720 : 480)
+      : (_ovBest ? 1920 : _ov720 ? 1280 : 854);
+    const overlayH = isVertical
+      ? (_ovBest ? 1920 : _ov720 ? 1280 : 854)
+      : (_ovBest ? 1080 : _ov720 ? 720 : 480);
 
     const bgRenderer = new OverlayRenderer(overlayW, overlayH, currentOverlayState, isVertical, "bg");
     const uiRenderer = new OverlayRenderer(overlayW, overlayH, currentOverlayState, isVertical, "ui");
