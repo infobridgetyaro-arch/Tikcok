@@ -462,20 +462,80 @@ export async function registerBintunetRoutes(
     res.json(storage.getStreams());
   });
 
-  // Extract a UC... channel ID from a YouTube URL (e.g. /channel/UCxxxxx/live).
-  // Returns null if the URL doesn't contain a recognisable channel ID segment.
-  function extractChannelIdFromYouTubeUrl(url: string): string | null {
-    const match = url?.match(/\/channel\/(UC[a-zA-Z0-9_-]{21,22})/);
-    return match ? match[1] : null;
+  // Resolve any YouTube URL or bare handle to a UC... channel ID.
+  // Handles all modern URL formats:
+  //   /channel/UCxxxxxx          → regex, no API call
+  //   /@handle  or  @handle      → channels?forHandle=
+  //   /c/name   or  /user/name   → channels?forUsername=
+  // Returns null if the ID cannot be determined.
+  async function resolveYouTubeChannelId(raw: string): Promise<string | null> {
+    if (!raw) return null;
+
+    // 1. Already a bare UC... ID
+    if (/^UC[a-zA-Z0-9_-]{22}$/.test(raw.trim())) return raw.trim();
+
+    // 2. /channel/UCxxxxxx in the URL
+    const channelMatch = raw.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+    if (channelMatch) return channelMatch[1];
+
+    const apiKey = process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY || "";
+
+    // 3. @handle — either in URL path or bare string
+    const handleMatch = raw.match(/\/@([^/?&#\s]+)/) || raw.match(/^@([^/?&#\s]+)$/);
+    if (handleMatch) {
+      if (!apiKey) {
+        logger.warn("Cannot resolve YouTube @handle — YOUTUBE_API_KEY not set");
+        return null;
+      }
+      try {
+        const res = await fetch(
+          `https://www.googleapis.com/youtube/v3/channels?part=id&forHandle=%40${encodeURIComponent(handleMatch[1])}&key=${apiKey}`,
+          { signal: AbortSignal.timeout(8000) }
+        );
+        if (res.ok) {
+          const data = await res.json() as any;
+          const id = data.items?.[0]?.id ?? null;
+          if (id) return id;
+        }
+      } catch (e) {
+        logger.warn({ handle: handleMatch[1], err: e }, "Failed to resolve YouTube @handle");
+      }
+      return null;
+    }
+
+    // 4. /c/name or /user/name  → forUsername lookup
+    const usernameMatch = raw.match(/\/(?:c|user)\/([^/?&#\s]+)/);
+    if (usernameMatch) {
+      if (!apiKey) {
+        logger.warn("Cannot resolve YouTube username — YOUTUBE_API_KEY not set");
+        return null;
+      }
+      try {
+        const res = await fetch(
+          `https://www.googleapis.com/youtube/v3/channels?part=id&forUsername=${encodeURIComponent(usernameMatch[1])}&key=${apiKey}`,
+          { signal: AbortSignal.timeout(8000) }
+        );
+        if (res.ok) {
+          const data = await res.json() as any;
+          const id = data.items?.[0]?.id ?? null;
+          if (id) return id;
+        }
+      } catch (e) {
+        logger.warn({ username: usernameMatch[1], err: e }, "Failed to resolve YouTube username");
+      }
+      return null;
+    }
+
+    return null;
   }
 
-  app.post("/api/streams", requireAuth, (req: Request, res: Response): void => {
+  app.post("/api/streams", requireAuth, async (req: Request, res: Response): Promise<void> => {
     try {
       const body = { ...req.body };
       // Auto-fill youtubeChannelId from the source URL when not provided
       if (body.youtubeSourceUrl && !body.youtubeChannelId) {
-        const extracted = extractChannelIdFromYouTubeUrl(body.youtubeSourceUrl);
-        if (extracted) body.youtubeChannelId = extracted;
+        const resolved = await resolveYouTubeChannelId(body.youtubeSourceUrl);
+        if (resolved) body.youtubeChannelId = resolved;
       }
       const data = insertStreamSchema.parse(body);
       const stream = storage.createStream(data);
@@ -488,12 +548,12 @@ export async function registerBintunetRoutes(
   app.patch(
     "/api/streams/:id",
     requireAuth,
-    (req: Request, res: Response): void => {
+    async (req: Request, res: Response): Promise<void> => {
       const body = { ...req.body };
       // Auto-fill youtubeChannelId from the source URL when not explicitly provided
       if (body.youtubeSourceUrl && !body.youtubeChannelId) {
-        const extracted = extractChannelIdFromYouTubeUrl(body.youtubeSourceUrl);
-        if (extracted) body.youtubeChannelId = extracted;
+        const resolved = await resolveYouTubeChannelId(body.youtubeSourceUrl);
+        if (resolved) body.youtubeChannelId = resolved;
       }
       const stream = storage.updateStream(String(req.params.id), body);
       if (!stream) {
