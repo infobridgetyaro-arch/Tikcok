@@ -131,6 +131,12 @@ export function StreamCard({
   const [cameraMode, setCameraMode] = useState<CameraMode>("guestroom");
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [uploadFilename, setUploadFilename] = useState<string>("");
+  type VerifyState =
+    | { status: "idle" }
+    | { status: "loading" }
+    | { status: "ok"; channelId: string; title: string | null; thumbnail: string | null }
+    | { status: "error"; message: string };
+  const [verifyState, setVerifyState] = useState<VerifyState>({ status: "idle" });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -500,21 +506,75 @@ export function StreamCard({
                     <Label htmlFor={`yt-src-${stream.id}`} className="text-xs flex items-center gap-1.5">
                       <Youtube className="w-3 h-3 text-red-400" /> YouTube Channel or URL
                     </Label>
-                    <Input
-                      id={`yt-src-${stream.id}`}
-                      placeholder="@channelname  or  youtube.com/watch?v=..."
-                      value={stream.youtubeSourceUrl}
-                      onChange={(e) => {
-                        const url = e.target.value;
-                        const channelMatch = url.match(/\/channel\/(UC[a-zA-Z0-9_-]{21,22})/);
-                        const updates: Partial<StreamConfig> = { youtubeSourceUrl: url };
-                        if (channelMatch) updates.youtubeChannelId = channelMatch[1];
-                        onUpdate(stream.id, updates);
-                      }}
-                      disabled={isActive}
-                      className="h-8 text-sm"
-                      data-testid={`input-youtube-source-${stream.id}`}
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        id={`yt-src-${stream.id}`}
+                        placeholder="@channelname  or  youtube.com/@channel/live"
+                        value={stream.youtubeSourceUrl}
+                        onChange={(e) => {
+                          onUpdate(stream.id, { youtubeSourceUrl: e.target.value });
+                          setVerifyState({ status: "idle" });
+                        }}
+                        disabled={isActive}
+                        className="h-8 text-sm flex-1"
+                        data-testid={`input-youtube-source-${stream.id}`}
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 px-2.5 text-xs shrink-0"
+                        disabled={isActive || !stream.youtubeSourceUrl?.trim() || verifyState.status === "loading"}
+                        onClick={async () => {
+                          setVerifyState({ status: "loading" });
+                          try {
+                            const token = getAuthToken();
+                            const headers: Record<string, string> = { "Content-Type": "application/json" };
+                            if (token) headers["Authorization"] = `Bearer ${token}`;
+                            const res = await fetch("/api/youtube/verify-channel", {
+                              method: "POST",
+                              credentials: "include",
+                              headers,
+                              body: JSON.stringify({ url: stream.youtubeSourceUrl }),
+                            });
+                            const data = await res.json();
+                            if (!res.ok) {
+                              setVerifyState({ status: "error", message: data.message ?? "Verification failed" });
+                            } else {
+                              setVerifyState({ status: "ok", channelId: data.channelId, title: data.title, thumbnail: data.thumbnail });
+                              onUpdate(stream.id, { youtubeChannelId: data.channelId });
+                            }
+                          } catch (e: any) {
+                            setVerifyState({ status: "error", message: e.message ?? "Network error" });
+                          }
+                        }}
+                      >
+                        {verifyState.status === "loading"
+                          ? <Loader2 className="w-3 h-3 animate-spin" />
+                          : <Check className="w-3 h-3" />}
+                        <span className="ml-1">Verify</span>
+                      </Button>
+                    </div>
+
+                    {/* Verification result */}
+                    {verifyState.status === "ok" && (
+                      <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-950/30 px-2.5 py-2">
+                        {verifyState.thumbnail && (
+                          <img src={verifyState.thumbnail} alt="" className="w-7 h-7 rounded-full shrink-0 object-cover" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-emerald-300 truncate">{verifyState.title}</p>
+                          <p className="text-[10px] text-emerald-400/70 font-mono truncate">{verifyState.channelId}</p>
+                        </div>
+                        <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      </div>
+                    )}
+                    {verifyState.status === "error" && (
+                      <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-950/30 px-2.5 py-2">
+                        <XIcon className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                        <p className="text-xs text-red-300">{verifyState.message}</p>
+                      </div>
+                    )}
+
                     <div className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5 space-y-2">
                       <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">YouTube streaming tips</p>
                       <ul className="space-y-1.5">

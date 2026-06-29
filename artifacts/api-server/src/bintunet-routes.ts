@@ -462,6 +462,71 @@ export async function registerBintunetRoutes(
     res.json(storage.getStreams());
   });
 
+  // Verify a YouTube channel URL/handle and return name + thumbnail + resolved ID.
+  // Used by the frontend "Verify Channel" button before saving.
+  app.post("/api/youtube/verify-channel", requireAuth, async (req: Request, res: Response): Promise<void> => {
+    const { url } = req.body as { url?: string };
+    if (!url?.trim()) {
+      res.status(400).json({ message: "url is required" });
+      return;
+    }
+    const apiKey = process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY || "";
+    if (!apiKey) {
+      res.status(503).json({ message: "YOUTUBE_API_KEY is not configured on the server" });
+      return;
+    }
+
+    const raw = url.trim();
+    const TIMEOUT = 8000;
+
+    // Build a list of API calls to try, in order:
+    // 1. Direct UC... ID  2. /channel/UCxxx  3. @handle  4. /c/ or /user/
+    type ApiParams = Record<string, string>;
+    const attempts: ApiParams[] = [];
+
+    if (/^UC[a-zA-Z0-9_-]{22}$/.test(raw)) {
+      attempts.push({ id: raw });
+    }
+    const channelMatch = raw.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+    if (channelMatch) attempts.push({ id: channelMatch[1] });
+
+    const handleMatch = raw.match(/\/@([^/?&#\s]+)/) || raw.match(/^@([^/?&#\s]+)$/);
+    if (handleMatch) attempts.push({ forHandle: `@${handleMatch[1]}` });
+
+    const usernameMatch = raw.match(/\/(?:c|user)\/([^/?&#\s]+)/);
+    if (usernameMatch) attempts.push({ forUsername: usernameMatch[1] });
+
+    if (attempts.length === 0) {
+      res.status(400).json({ message: "Could not detect a channel in that URL. Try a URL like youtube.com/@channelname or paste the channel ID directly." });
+      return;
+    }
+
+    for (const params of attempts) {
+      try {
+        const qs = new URLSearchParams({ part: "id,snippet", key: apiKey, ...params });
+        const apiRes = await fetch(
+          `https://www.googleapis.com/youtube/v3/channels?${qs}`,
+          { signal: AbortSignal.timeout(TIMEOUT) }
+        );
+        if (!apiRes.ok) continue;
+        const data = await apiRes.json() as any;
+        const item = data.items?.[0];
+        if (!item) continue;
+        res.json({
+          channelId: item.id,
+          title: item.snippet?.title ?? null,
+          thumbnail: item.snippet?.thumbnails?.default?.url ?? null,
+          customUrl: item.snippet?.customUrl ?? null,
+        });
+        return;
+      } catch {
+        continue;
+      }
+    }
+
+    res.status(404).json({ message: "Channel not found. Make sure the channel exists and your YOUTUBE_API_KEY is enabled for YouTube Data API v3." });
+  });
+
   // Resolve any YouTube URL or bare handle to a UC... channel ID.
   // Handles all modern URL formats:
   //   /channel/UCxxxxxx          → regex, no API call
