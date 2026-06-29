@@ -19,10 +19,10 @@ interface QueuedMessage extends ChatMessage {
   entering: boolean;
 }
 
-const MAX_VISIBLE = 10;
+const MAX_VISIBLE = 12;
 const BASE_DISPLAY_RATE_MS = 350;
 
-const STYLE_NAMES = ["Queue Feed", "Bubble", "Neon", "Glass", "Compact", "Toast"] as const;
+const STYLE_NAMES = ["Live Feed", "Bubble", "Compact", "Ticker"] as const;
 type ChatStyle = typeof STYLE_NAMES[number];
 
 function getPriority(msg: ChatMessage): number {
@@ -33,31 +33,65 @@ function getPriority(msg: ChatMessage): number {
   return 0;
 }
 
-function getBadgeColor(msg: ChatMessage): string {
-  if (msg.superChatAmount || msg.isOwner) return "#f59e0b";
-  if (msg.isModerator) return "#6366f1";
-  if (msg.isMember) return "#10b981";
-  return "#4b5563";
+function getNameColor(msg: ChatMessage): string {
+  if (msg.superChatAmount || msg.isOwner) return "#fbbf24";
+  if (msg.isModerator) return "#a78bfa";
+  if (msg.isMember) return "#34d399";
+  return "#38bdf8"; // sky blue for regular users
 }
 
 function getInitials(name: string) {
   return name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 }
 
-function Avatar({ msg, size = 32 }: { msg: ChatMessage; size?: number }) {
-  const color = getBadgeColor(msg);
-  return msg.authorPhoto ? (
-    <img
-      src={msg.authorPhoto} alt=""
-      style={{ width: size, height: size, borderRadius: "50%", flexShrink: 0, objectFit: "cover" }}
-      onError={(e) => { (e.target as HTMLImageElement).src = ""; }}
-    />
-  ) : (
+function getAvatarBg(msg: ChatMessage): string {
+  if (msg.superChatAmount || msg.isOwner) return "linear-gradient(135deg,#f59e0b,#fcd34d)";
+  if (msg.isModerator) return "linear-gradient(135deg,#6366f1,#a78bfa)";
+  if (msg.isMember) return "linear-gradient(135deg,#059669,#34d399)";
+  // deterministic hue from name
+  let h = 0;
+  for (let i = 0; i < msg.authorName.length; i++) h = (h * 31 + msg.authorName.charCodeAt(i)) % 360;
+  return `linear-gradient(135deg,hsl(${h},70%,38%),hsl(${(h+40)%360},70%,52%))`;
+}
+
+function Avatar({ msg, size = 36 }: { msg: ChatMessage; size?: number }) {
+  const [errored, setErrored] = useState(false);
+  if (msg.authorPhoto && !errored) {
+    return (
+      <img
+        src={msg.authorPhoto}
+        alt={msg.authorName}
+        style={{
+          width: size, height: size, borderRadius: "50%", flexShrink: 0,
+          objectFit: "cover", border: "2px solid rgba(255,255,255,0.1)",
+        }}
+        onError={() => setErrored(true)}
+      />
+    );
+  }
+  return (
     <div style={{
       width: size, height: size, borderRadius: "50%", flexShrink: 0,
-      background: color, display: "flex", alignItems: "center", justifyContent: "center",
-      fontSize: size * 0.35, fontWeight: 800, color: "#fff",
-    }}>{getInitials(msg.authorName)}</div>
+      background: getAvatarBg(msg),
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontSize: size * 0.36, fontWeight: 800, color: "#fff",
+      border: "2px solid rgba(255,255,255,0.12)",
+      letterSpacing: "-0.02em",
+    }}>
+      {getInitials(msg.authorName)}
+    </div>
+  );
+}
+
+function Badge({ label, bg, color, border }: { label: string; bg: string; color: string; border: string }) {
+  return (
+    <span style={{
+      fontSize: 8, fontWeight: 800, padding: "1px 6px", borderRadius: 99,
+      background: bg, color, border: `1px solid ${border}`,
+      textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0,
+    }}>
+      {label}
+    </span>
   );
 }
 
@@ -73,10 +107,7 @@ function useMessageQueue(incoming: ChatMessage[]) {
     if (!newMsgs.length) return;
     newMsgs.forEach((m) => seenRef.current.add(m.id));
     const tagged: QueuedMessage[] = newMsgs.map((m) => ({
-      ...m,
-      priority: getPriority(m),
-      addedAt: Date.now(),
-      entering: false,
+      ...m, priority: getPriority(m), addedAt: Date.now(), entering: false,
     }));
     const vip = tagged.filter((m) => m.priority >= 3);
     const others = tagged.filter((m) => m.priority < 3);
@@ -95,10 +126,9 @@ function useMessageQueue(incoming: ChatMessage[]) {
         const trimmed = withNew.length > MAX_VISIBLE ? withNew.slice(withNew.length - MAX_VISIBLE) : withNew;
         setTimeout(() => {
           setDisplayed((cur) => cur.map((m) => (m.id === next.id ? { ...m, entering: false } : m)));
-        }, 450);
+        }, 400);
         return trimmed;
       });
-      // auto-speed: schedule the next tick sooner when queue is building up
       const rate = remaining > 30 ? 80 : remaining > 15 ? 150 : remaining > 5 ? 220 : BASE_DISPLAY_RATE_MS;
       intervalRef.current = setTimeout(tick, rate);
     };
@@ -109,219 +139,177 @@ function useMessageQueue(incoming: ChatMessage[]) {
   return { displayed, queueLen };
 }
 
-// ── Queue Feed ────────────────────────────────────────────────────────────────
-function QueueFeedChat({ messages }: { messages: QueuedMessage[] }) {
+// ── Live Feed (StreamYard-style, sky blue) ────────────────────────────────────
+function LiveFeedChat({ messages }: { messages: QueuedMessage[] }) {
+  const endRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
   return (
-    <div style={{ minHeight: 180, display: "flex", flexDirection: "column" }}>
+    <div style={{ minHeight: 200, maxHeight: 380, overflowY: "auto", display: "flex", flexDirection: "column", gap: 0, padding: "6px 0" }}>
       {messages.length === 0 && (
-        <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 12, textAlign: "center", padding: "50px 0" }}>
-          Queue empty — messages appear as they arrive
+        <div style={{ color: "rgba(56,189,248,0.3)", fontSize: 12, textAlign: "center", padding: "60px 0", display: "flex", flexDirection: "column", gap: 8, alignItems: "center" }}>
+          <MessageSquare size={22} style={{ opacity: 0.3 }} />
+          Waiting for messages…
         </div>
       )}
       {messages.map((msg) => {
+        const nameColor = getNameColor(msg);
         const isSuperChat = !!(msg.superChatAmount || msg.isOwner);
-        const color = getBadgeColor(msg);
         return (
-          <div key={msg.id} style={{
-            display: "flex", gap: 10, alignItems: "flex-start",
-            padding: "9px 14px",
-            borderBottom: "1px solid rgba(255,255,255,0.05)",
-            borderLeft: `3px solid ${isSuperChat ? "#f59e0b" : color}`,
-            background: msg.entering
-              ? isSuperChat ? "rgba(245,158,11,0.18)" : "rgba(102,126,234,0.1)"
-              : isSuperChat ? "rgba(245,158,11,0.06)" : "transparent",
-            transition: "background 0.4s ease",
-            animation: msg.entering ? "qf-enter 0.4s cubic-bezier(0.34,1.56,0.64,1) forwards" : "none",
-          }}>
-            <Avatar msg={msg} size={28} />
+          <div
+            key={msg.id}
+            style={{
+              display: "flex", gap: 11, alignItems: "flex-start",
+              padding: "10px 14px",
+              background: msg.entering
+                ? isSuperChat ? "rgba(251,191,36,0.12)" : "rgba(14,165,233,0.10)"
+                : isSuperChat ? "rgba(251,191,36,0.06)" : "rgba(14,165,233,0.04)",
+              borderBottom: "1px solid rgba(56,189,248,0.06)",
+              transition: "background 0.5s ease",
+              animation: msg.entering ? "lf-slide 0.35s cubic-bezier(0.22,1,0.36,1) forwards" : "none",
+              position: "relative",
+            }}
+          >
+            {isSuperChat && (
+              <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: "linear-gradient(to bottom,#fbbf24,#f59e0b)", borderRadius: "0 2px 2px 0" }} />
+            )}
+            <Avatar msg={msg} size={38} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, fontWeight: 800, color }}>{msg.authorName}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, fontWeight: 800, color: nameColor, lineHeight: 1 }}>{msg.authorName}</span>
                 {isSuperChat && msg.superChatAmount && (
-                  <span style={{ fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 99, background: "rgba(245,158,11,0.2)", border: "1px solid rgba(245,158,11,0.4)", color: "#fcd34d" }}>
-                    ★ {msg.superChatAmount}
-                  </span>
+                  <Badge label={`★ ${msg.superChatAmount}`} bg="rgba(251,191,36,0.18)" color="#fcd34d" border="rgba(251,191,36,0.35)" />
                 )}
-                {msg.isMember && !isSuperChat && (
-                  <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 99, background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.3)", color: "#6ee7b7" }}>Member</span>
+                {msg.isOwner && !msg.superChatAmount && (
+                  <Badge label="Owner" bg="rgba(251,191,36,0.18)" color="#fcd34d" border="rgba(251,191,36,0.35)" />
                 )}
-                {msg.isModerator && !msg.isMember && (
-                  <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 99, background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", color: "#a5b4fc" }}>Mod</span>
+                {msg.isModerator && (
+                  <Badge label="Mod" bg="rgba(99,102,241,0.18)" color="#c4b5fd" border="rgba(99,102,241,0.3)" />
                 )}
-              </div>
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", wordBreak: "break-word", lineHeight: 1.4 }}>{msg.text}</div>
-            </div>
-          </div>
-        );
-      })}
-      <style>{`@keyframes qf-enter { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }`}</style>
-    </div>
-  );
-}
-
-// ── Bubble ────────────────────────────────────────────────────────────────────
-function BubbleChat({ messages }: { messages: QueuedMessage[] }) {
-  const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-  return (
-    <div style={{ minHeight: 180, maxHeight: 320, overflowY: "auto", padding: "12px", display: "flex", flexDirection: "column", gap: 9 }}>
-      {messages.length === 0 && <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 12, textAlign: "center", padding: "60px 0" }}>No messages yet…</div>}
-      {messages.map((msg) => {
-        const color = getBadgeColor(msg);
-        return (
-          <div key={msg.id} style={{ display: "flex", gap: 8, alignItems: "flex-end", animation: msg.entering ? "bubble-in 0.4s cubic-bezier(0.34,1.56,0.64,1) forwards" : "none" }}>
-            <Avatar msg={msg} size={28} />
-            <div style={{ maxWidth: "78%", display: "flex", flexDirection: "column", gap: 3 }}>
-              <span style={{ fontSize: 10, fontWeight: 700, color, paddingLeft: 6 }}>{msg.authorName}</span>
-              <div style={{
-                background: `linear-gradient(135deg, ${color}22, ${color}11)`,
-                border: `1px solid ${color}33`, borderRadius: "16px 16px 16px 4px",
-                padding: "8px 12px", fontSize: 12, color: "#e2e8f0", lineHeight: 1.4, wordBreak: "break-word",
-              }}>{msg.text}</div>
-            </div>
-          </div>
-        );
-      })}
-      <div ref={endRef} />
-      <style>{`@keyframes bubble-in { from{opacity:0;transform:translateY(12px) scale(0.92);} to{opacity:1;transform:none;} }`}</style>
-    </div>
-  );
-}
-
-// ── Neon ──────────────────────────────────────────────────────────────────────
-function NeonChat({ messages }: { messages: QueuedMessage[] }) {
-  const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-  return (
-    <div style={{ minHeight: 180, maxHeight: 320, overflowY: "auto", padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
-      {messages.length === 0 && <div style={{ color: "rgba(0,255,240,0.25)", fontSize: 12, textAlign: "center", padding: "60px 0" }}>No messages yet…</div>}
-      {messages.map((msg) => {
-        const color = getBadgeColor(msg);
-        return (
-          <div key={msg.id} style={{ display: "flex", gap: 8, alignItems: "baseline", animation: msg.entering ? "neon-in 0.35s ease forwards" : "none" }}>
-            <span style={{ fontSize: 11, fontWeight: 800, color, flexShrink: 0, textShadow: `0 0 8px ${color}` }}>{msg.authorName}:</span>
-            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", wordBreak: "break-word" }}>{msg.text}</span>
-          </div>
-        );
-      })}
-      <div ref={endRef} />
-      <style>{`@keyframes neon-in { from{opacity:0;filter:blur(4px);} to{opacity:1;filter:none;} }`}</style>
-    </div>
-  );
-}
-
-// ── Glass ─────────────────────────────────────────────────────────────────────
-function GlassChat({ messages }: { messages: QueuedMessage[] }) {
-  const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-  return (
-    <div style={{ minHeight: 180, maxHeight: 320, overflowY: "auto", padding: "10px", display: "flex", flexDirection: "column", gap: 6 }}>
-      {messages.length === 0 && <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 12, textAlign: "center", padding: "60px 0" }}>No messages yet…</div>}
-      {messages.map((msg) => {
-        const color = getBadgeColor(msg);
-        return (
-          <div key={msg.id} style={{
-            display: "flex", gap: 9, alignItems: "flex-start",
-            background: "rgba(255,255,255,0.05)", backdropFilter: "blur(8px)",
-            border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, padding: "8px 12px",
-            animation: msg.entering ? "glass-in 0.4s ease forwards" : "none",
-          }}>
-            <Avatar msg={msg} size={26} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
-                <span style={{ fontSize: 10, fontWeight: 800, color }}>{msg.authorName}</span>
-                {msg.superChatAmount && (
-                  <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 99, background: "rgba(245,158,11,0.2)", color: "#fcd34d" }}>★ {msg.superChatAmount}</span>
+                {msg.isMember && !msg.isOwner && (
+                  <Badge label="Member" bg="rgba(16,185,129,0.18)" color="#6ee7b7" border="rgba(16,185,129,0.3)" />
                 )}
               </div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.75)", wordBreak: "break-word", lineHeight: 1.4 }}>{msg.text}</div>
-            </div>
-          </div>
-        );
-      })}
-      <div ref={endRef} />
-      <style>{`@keyframes glass-in { from{opacity:0;transform:translateY(8px);} to{opacity:1;transform:none;} }`}</style>
-    </div>
-  );
-}
-
-// ── Compact ───────────────────────────────────────────────────────────────────
-function CompactChat({ messages }: { messages: QueuedMessage[] }) {
-  const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-  const latest = messages.slice(-10);
-  return (
-    <div style={{ minHeight: 180, maxHeight: 320, overflowY: "auto", background: "rgba(4,4,16,0.78)", borderRadius: 12 }}>
-      <div style={{ padding: "5px 10px 5px 8px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 6 }}>
-        <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#ff4444", animation: "cp-pulse 1.2s infinite" }} />
-        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.38)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", flex: 1 }}>Live Chat</span>
-        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.18)", fontWeight: 600 }}>{latest.length}</span>
-      </div>
-      {latest.length === 0 && <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 12, textAlign: "center", padding: "40px 0" }}>No messages yet…</div>}
-      {latest.map((msg) => {
-        const accent = msg.isOwner ? "#fbbf24" : msg.isModerator ? "#a78bfa" : msg.isMember ? "#34d399" : "rgba(255,255,255,0.52)";
-        return (
-          <div key={msg.id} style={{
-            display: "flex", gap: 8, alignItems: "flex-start",
-            padding: "7px 10px",
-            borderBottom: "1px solid rgba(255,255,255,0.04)",
-            animation: msg.entering ? "compact-in 0.28s cubic-bezier(0.34,1.56,0.64,1) forwards" : "none",
-          }}>
-            <Avatar msg={msg} size={24} />
-            <div style={{ minWidth: 0, flex: 1, overflow: "hidden" }}>
-              <span style={{
-                fontSize: 11, fontWeight: 700,
-                color: accent, marginRight: 5,
-                background: "transparent",
-              }}>{msg.authorName}</span>
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.82)", wordBreak: "break-word", lineHeight: 1.4 }}>{msg.text}</span>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.88)", wordBreak: "break-word", lineHeight: 1.45 }}>{msg.text}</div>
             </div>
           </div>
         );
       })}
       <div ref={endRef} />
       <style>{`
-        @keyframes compact-in { from{opacity:0;transform:translateY(-6px);} to{opacity:1;transform:none;} }
-        @keyframes cp-pulse { 0%,100%{opacity:1;} 50%{opacity:0.18;} }
+        @keyframes lf-slide { from{opacity:0;transform:translateY(10px);} to{opacity:1;transform:none;} }
       `}</style>
     </div>
   );
 }
 
-// ── Toast ─────────────────────────────────────────────────────────────────────
-function ToastChat({ messages }: { messages: QueuedMessage[] }) {
+// ── Bubble (rounded cards, coloured border per role) ──────────────────────────
+function BubbleChat({ messages }: { messages: QueuedMessage[] }) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-  const latest = messages.slice(-10);
   return (
-    <div style={{ minHeight: 180, maxHeight: 320, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6, padding: "8px" }}>
-      {latest.length === 0 && <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 12, textAlign: "center", padding: "50px 0" }}>No messages yet…</div>}
-      {latest.map((msg) => {
-        const accent = msg.isOwner ? "#fbbf24" : msg.isModerator ? "#a78bfa" : "#ff4444";
+    <div style={{ minHeight: 200, maxHeight: 380, overflowY: "auto", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+      {messages.length === 0 && <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 12, textAlign: "center", padding: "60px 0" }}>No messages yet…</div>}
+      {messages.map((msg) => {
+        const nameColor = getNameColor(msg);
         return (
           <div key={msg.id} style={{
-            background: "rgba(6,6,20,0.88)", backdropFilter: "blur(20px)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderLeft: `3px solid ${accent}`,
-            borderRadius: 10, padding: "8px 12px",
-            display: "flex", gap: 9, alignItems: "center",
-            animation: msg.entering ? "toast-in 0.38s cubic-bezier(0.34,1.56,0.64,1) forwards" : "none",
+            display: "flex", gap: 9, alignItems: "flex-start",
+            background: "rgba(255,255,255,0.04)",
+            border: `1px solid ${nameColor}25`,
+            borderLeft: `3px solid ${nameColor}`,
+            borderRadius: 14, padding: "9px 13px",
+            animation: msg.entering ? "bb-in 0.38s cubic-bezier(0.22,1,0.36,1) forwards" : "none",
           }}>
-            <Avatar msg={msg} size={24} />
-            <div style={{ minWidth: 0, flex: 1, overflow: "hidden" }}>
-              <div style={{
-                fontSize: 11, fontWeight: 800,
-                color: accent, marginBottom: 2,
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                background: "transparent",
-              }}>{msg.authorName}</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.82)", wordBreak: "break-word", lineHeight: 1.4 }}>{msg.text}</div>
+            <Avatar msg={msg} size={34} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3 }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: nameColor }}>{msg.authorName}</span>
+                {msg.superChatAmount && <Badge label={`★ ${msg.superChatAmount}`} bg="rgba(251,191,36,0.15)" color="#fcd34d" border="rgba(251,191,36,0.3)" />}
+                {msg.isModerator && <Badge label="Mod" bg="rgba(99,102,241,0.15)" color="#c4b5fd" border="rgba(99,102,241,0.25)" />}
+                {msg.isMember && !msg.isOwner && <Badge label="Member" bg="rgba(16,185,129,0.15)" color="#6ee7b7" border="rgba(16,185,129,0.25)" />}
+              </div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", wordBreak: "break-word", lineHeight: 1.45 }}>{msg.text}</div>
             </div>
           </div>
         );
       })}
       <div ref={endRef} />
-      <style>{`@keyframes toast-in { from{opacity:0;transform:translateX(20px) scale(0.95);} to{opacity:1;transform:none;} }`}</style>
+      <style>{`@keyframes bb-in { from{opacity:0;transform:translateY(10px) scale(0.97);} to{opacity:1;transform:none;} }`}</style>
+    </div>
+  );
+}
+
+// ── Compact (dense streaming-studio style) ────────────────────────────────────
+function CompactChat({ messages }: { messages: QueuedMessage[] }) {
+  const endRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  const latest = messages.slice(-MAX_VISIBLE);
+  return (
+    <div style={{ minHeight: 200, maxHeight: 380, overflowY: "auto" }}>
+      <div style={{ padding: "5px 12px 5px 10px", borderBottom: "1px solid rgba(56,189,248,0.1)", display: "flex", alignItems: "center", gap: 6, background: "rgba(14,165,233,0.06)" }}>
+        <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#ef4444", animation: "cp-pulse 1.2s infinite" }} />
+        <span style={{ fontSize: 9, color: "rgba(56,189,248,0.7)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", flex: 1 }}>Live Chat</span>
+        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", fontWeight: 600 }}>{latest.length}</span>
+      </div>
+      {latest.length === 0 && <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 12, textAlign: "center", padding: "40px 0" }}>No messages yet…</div>}
+      {latest.map((msg) => {
+        const nameColor = getNameColor(msg);
+        return (
+          <div key={msg.id} style={{
+            display: "flex", gap: 8, alignItems: "center",
+            padding: "6px 12px",
+            borderBottom: "1px solid rgba(255,255,255,0.04)",
+            background: msg.entering ? "rgba(14,165,233,0.08)" : "transparent",
+            transition: "background 0.4s",
+            animation: msg.entering ? "cp-in 0.28s cubic-bezier(0.22,1,0.36,1) forwards" : "none",
+          }}>
+            <Avatar msg={msg} size={26} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: nameColor, marginRight: 5 }}>{msg.authorName}</span>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.82)", wordBreak: "break-word" }}>{msg.text}</span>
+            </div>
+            {msg.superChatAmount && (
+              <span style={{ fontSize: 9, fontWeight: 800, color: "#fcd34d", flexShrink: 0 }}>★ {msg.superChatAmount}</span>
+            )}
+          </div>
+        );
+      })}
+      <div ref={endRef} />
+      <style>{`
+        @keyframes cp-in { from{opacity:0;transform:translateX(-8px);} to{opacity:1;transform:none;} }
+        @keyframes cp-pulse { 0%,100%{opacity:1;} 50%{opacity:0.2;} }
+      `}</style>
+    </div>
+  );
+}
+
+// ── Ticker (horizontal scroll for lower-third style display) ──────────────────
+function TickerChat({ messages }: { messages: QueuedMessage[] }) {
+  const latest = messages.slice(-6);
+  if (latest.length === 0) {
+    return (
+      <div style={{ height: 54, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.2)" }}>No messages yet…</span>
+      </div>
+    );
+  }
+  return (
+    <div style={{ overflow: "hidden", height: 56, display: "flex", flexDirection: "column", gap: 6, padding: "6px 12px" }}>
+      {latest.slice(-2).map((msg) => {
+        const nameColor = getNameColor(msg);
+        return (
+          <div key={msg.id} style={{
+            display: "flex", alignItems: "center", gap: 8,
+            animation: msg.entering ? "tk-in 0.35s ease forwards" : "none",
+          }}>
+            <Avatar msg={msg} size={22} />
+            <span style={{ fontSize: 11, fontWeight: 800, color: nameColor, flexShrink: 0 }}>{msg.authorName}:</span>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.85)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{msg.text}</span>
+          </div>
+        );
+      })}
+      <style>{`@keyframes tk-in { from{opacity:0;transform:translateY(-8px);} to{opacity:1;transform:none;} }`}</style>
     </div>
   );
 }
@@ -332,49 +320,58 @@ interface ChatPanelProps {
   activeStreamCount: number;
 }
 
+const STYLE_ACCENT: Record<ChatStyle, string> = {
+  "Live Feed": "#38bdf8",
+  "Bubble":    "#a78bfa",
+  "Compact":   "#34d399",
+  "Ticker":    "#f59e0b",
+};
+
 export function ChatPanel({ chatMessages, activeStreamId, activeStreamCount }: ChatPanelProps) {
   const [styleIdx, setStyleIdx] = useState(0);
   const currentStyle: ChatStyle = STYLE_NAMES[styleIdx];
   const { displayed, queueLen } = useMessageQueue(chatMessages);
-
-  const accentColors = ["#a78bfa", "#667eea", "#00fff0", "rgba(255,255,255,0.15)", "#60a5fa", "#f59e0b"];
-  const borderColors = ["rgba(167,139,250,0.2)", "rgba(102,126,234,0.15)", "rgba(0,255,240,0.2)", "rgba(255,255,255,0.08)", "rgba(96,165,250,0.15)", "rgba(245,158,11,0.15)"];
-  const bgColors = ["transparent", "transparent", "#050510", "transparent", "transparent", "transparent"];
+  const accent = STYLE_ACCENT[currentStyle];
 
   const renderChat = () => {
     switch (currentStyle) {
-      case "Queue Feed": return <QueueFeedChat messages={displayed} />;
-      case "Bubble":     return <BubbleChat messages={displayed} />;
-      case "Neon":       return <NeonChat messages={displayed} />;
-      case "Glass":      return <GlassChat messages={displayed} />;
-      case "Compact":    return <CompactChat messages={displayed} />;
-      case "Toast":      return <ToastChat messages={displayed} />;
+      case "Live Feed": return <LiveFeedChat messages={displayed} />;
+      case "Bubble":    return <BubbleChat messages={displayed} />;
+      case "Compact":   return <CompactChat messages={displayed} />;
+      case "Ticker":    return <TickerChat messages={displayed} />;
     }
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
+      {/* Style tabs + counters */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-          {STYLE_NAMES.map((name, i) => (
-            <button
-              key={name}
-              onClick={() => setStyleIdx(i)}
-              style={{
-                padding: "4px 11px", borderRadius: 20,
-                border: `1px solid ${styleIdx === i ? accentColors[i] : "rgba(255,255,255,0.1)"}`,
-                background: styleIdx === i ? `${accentColors[i]}22` : "transparent",
-                color: styleIdx === i ? "#fff" : "rgba(255,255,255,0.45)",
-                fontSize: 11, fontWeight: 600, cursor: "pointer", transition: "all 0.18s ease",
-              }}
-            >{name}</button>
-          ))}
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {STYLE_NAMES.map((name, i) => {
+            const ac = STYLE_ACCENT[name];
+            const active = styleIdx === i;
+            return (
+              <button
+                key={name}
+                onClick={() => setStyleIdx(i)}
+                style={{
+                  padding: "4px 12px", borderRadius: 20,
+                  border: `1px solid ${active ? ac : "rgba(255,255,255,0.1)"}`,
+                  background: active ? `${ac}20` : "transparent",
+                  color: active ? ac : "rgba(255,255,255,0.4)",
+                  fontSize: 11, fontWeight: 700, cursor: "pointer",
+                  transition: "all 0.18s ease",
+                }}
+              >{name}</button>
+            );
+          })}
         </div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
           {queueLen > 0 && (
             <div style={{
-              background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)",
-              borderRadius: 99, padding: "2px 9px", color: "#fcd34d", fontSize: 10, fontWeight: 700,
+              background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)",
+              borderRadius: 99, padding: "2px 8px", color: "#fcd34d", fontSize: 10, fontWeight: 700,
               display: "flex", gap: 4, alignItems: "center",
             }}>
               <div style={{ width: 4, height: 4, borderRadius: "50%", background: "#f59e0b", animation: "pulse 1s infinite" }} />
@@ -382,20 +379,34 @@ export function ChatPanel({ chatMessages, activeStreamId, activeStreamCount }: C
             </div>
           )}
           {chatMessages.length > 0 && (
-            <div style={{ background: "rgba(102,126,234,0.12)", border: "1px solid rgba(102,126,234,0.25)", borderRadius: 99, padding: "2px 9px", color: "#a5b4fc", fontSize: 10, fontWeight: 700 }}>
+            <div style={{
+              background: "rgba(14,165,233,0.1)", border: "1px solid rgba(56,189,248,0.2)",
+              borderRadius: 99, padding: "2px 8px", color: "#7dd3fc", fontSize: 10, fontWeight: 700,
+            }}>
               {chatMessages.length} total
             </div>
           )}
         </div>
       </div>
 
+      {/* Chat body */}
       {activeStreamCount === 0 ? (
-        <div style={{ height: 120, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, background: "rgba(255,255,255,0.02)", borderRadius: 12, border: "1px solid rgba(255,255,255,0.06)" }}>
-          <MessageSquare size={20} style={{ color: "rgba(255,255,255,0.2)" }} />
+        <div style={{
+          height: 120, display: "flex", flexDirection: "column", alignItems: "center",
+          justifyContent: "center", gap: 8,
+          background: "rgba(14,165,233,0.03)", borderRadius: 14,
+          border: "1px solid rgba(56,189,248,0.08)",
+        }}>
+          <MessageSquare size={20} style={{ color: "rgba(56,189,248,0.2)" }} />
           <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Chat appears when a stream is live</span>
         </div>
       ) : (
-        <div style={{ borderRadius: 12, border: `1px solid ${borderColors[styleIdx]}`, background: bgColors[styleIdx], overflow: "hidden" }}>
+        <div style={{
+          borderRadius: 14,
+          border: `1px solid ${accent}18`,
+          background: "rgba(8,12,24,0.6)",
+          overflow: "hidden",
+        }}>
           {renderChat()}
         </div>
       )}

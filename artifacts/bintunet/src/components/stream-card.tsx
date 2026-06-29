@@ -74,6 +74,96 @@ function getSourceDisplay(stream: StreamConfig): string {
   return stream.tiktokUsername ? `@${stream.tiktokUsername}` : "";
 }
 
+// Smart channel ID / handle input — accepts @handle, full URL, or UC… ID.
+// Resolves @handle to channel ID on blur and saves only the resolved ID.
+function ChannelIdInput({ streamId, value, disabled, onResolved }: {
+  streamId: string;
+  value: string;
+  disabled: boolean;
+  onResolved: (channelId: string) => void;
+}) {
+  const [local, setLocal] = useState(value);
+  const [resolving, setResolving] = useState(false);
+  const [resolved, setResolved] = useState<{ title: string; thumbnail?: string } | null>(null);
+  const [resolveErr, setResolveErr] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  // Sync if parent value changes (e.g. stream loaded from server)
+  useEffect(() => { setLocal(value); }, [value]);
+
+  const isHandle = (v: string) => v.startsWith("@") || v.includes("youtube.com/@") || (v.length > 0 && !/^UC[\w-]{22}$/.test(v.trim()) && !v.startsWith("UC"));
+
+  const resolve = async () => {
+    const trimmed = local.trim();
+    if (!trimmed) return;
+    // Already a bare channel ID — save directly
+    if (/^UC[\w-]{22}$/.test(trimmed)) {
+      onResolved(trimmed);
+      setResolveErr(null);
+      return;
+    }
+    setResolving(true);
+    setResolveErr(null);
+    try {
+      const res = await fetch(`/api/youtube/resolve-handle?handle=${encodeURIComponent(trimmed)}`, { credentials: "include" });
+      const data = await res.json();
+      if (data.ok) {
+        setLocal(data.channelId);
+        setResolved({ title: data.title, thumbnail: data.thumbnail });
+        onResolved(data.channelId);
+        toast({ title: "Channel resolved", description: `${data.title} → ${data.channelId}` });
+      } else {
+        const hint = data.quota ? "API quota exceeded — try again after midnight PT" : data.error;
+        setResolveErr(hint);
+      }
+    } catch {
+      setResolveErr("Network error");
+    } finally {
+      setResolving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={`channel-id-${streamId}`} className="text-xs flex items-center gap-1.5">
+        <BarChart2 className="w-3 h-3 text-violet-400" />
+        YouTube Channel ID
+        <span className="text-muted-foreground font-normal text-[10px]">(for stats &amp; chat)</span>
+      </Label>
+      <div className="flex gap-1.5">
+        <Input
+          id={`channel-id-${streamId}`}
+          placeholder="@yourhandle or UCxxxxxxxxxxxxxxxxxxxxxxxx"
+          value={local}
+          disabled={disabled}
+          onChange={(e) => { setLocal(e.target.value); setResolved(null); setResolveErr(null); }}
+          onBlur={resolve}
+          onKeyDown={(e) => { if (e.key === "Enter") resolve(); }}
+          className="h-8 text-sm flex-1"
+          data-testid={`input-channel-id-${streamId}`}
+        />
+        {isHandle(local) && local.trim() && !resolving && !resolved && (
+          <Button size="sm" variant="outline" className="h-8 px-2 text-xs" onClick={resolve}>
+            Resolve
+          </Button>
+        )}
+        {resolving && <Loader2 className="h-4 w-4 animate-spin self-center text-muted-foreground" />}
+      </div>
+      {resolved && (
+        <p className="text-[10px] text-emerald-400 flex items-center gap-1">
+          <Check className="w-3 h-3" /> {resolved.title}
+        </p>
+      )}
+      {resolveErr && <p className="text-[10px] text-rose-400">{resolveErr}</p>}
+      {!resolveErr && !resolved && (
+        <p className="text-[10px] text-muted-foreground">
+          Type <span className="font-mono">@handle</span> and press Enter, or paste the <span className="font-mono">UCxxxxxxx</span> ID directly.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function canStart(stream: StreamConfig): boolean {
   const hasOutput = !!(stream.youtubeStreamKey || stream.facebookRtmpUrl || stream.instagramStreamKey || stream.tiktokStreamKey);
   if (stream.sourceType === "youtube") return !!(stream.youtubeSourceUrl) && hasOutput;
@@ -742,21 +832,13 @@ export function StreamCard({
                   </div>
                 </div>
 
-                {/* ── Channel ID ── */}
-                <div className="space-y-1">
-                  <Label htmlFor={`channel-id-${stream.id}`} className="text-xs flex items-center gap-1.5">
-                    <BarChart2 className="w-3 h-3 text-violet-400" />YouTube Channel ID <span className="text-muted-foreground font-normal text-[10px]">(for stats &amp; chat)</span>
-                  </Label>
-                  <Input
-                    id={`channel-id-${stream.id}`}
-                    placeholder="UCxxxxxxxxxxxxxxxxxxxxxxxx"
-                    value={stream.youtubeChannelId}
-                    onChange={(e) => onUpdate(stream.id, { youtubeChannelId: e.target.value })}
-                    className="h-8 text-sm"
-                    data-testid={`input-channel-id-${stream.id}`}
-                  />
-                  <p className="text-[10px] text-muted-foreground">Paste your channel ID here — subs count &amp; live chat will appear automatically on the card.</p>
-                </div>
+                {/* ── Channel ID / Handle ── */}
+                <ChannelIdInput
+                  streamId={stream.id}
+                  value={stream.youtubeChannelId ?? ""}
+                  disabled={isActive}
+                  onResolved={(id) => onUpdate(stream.id, { youtubeChannelId: id })}
+                />
 
                 {/* ── Quality Row ── */}
                 <div className="grid grid-cols-3 gap-2">

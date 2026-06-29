@@ -507,6 +507,65 @@ export async function registerBintunetRoutes(
     }
   });
 
+  // Resolve a YouTube handle (e.g. @officialjaydaniels or custom URL) → channel ID.
+  // GET /api/youtube/resolve-handle?handle=@officialjaydaniels
+  app.get("/api/youtube/resolve-handle", requireAuth, async (req: Request, res: Response): Promise<void> => {
+    const raw = String(req.query.handle ?? "").trim();
+    const apiKey = process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY || "";
+
+    if (!apiKey) {
+      res.status(503).json({ ok: false, error: "YOUTUBE_API_KEY is not set" });
+      return;
+    }
+    if (!raw) {
+      res.status(400).json({ ok: false, error: "handle query param required" });
+      return;
+    }
+
+    // Accept: @handle, handle (without @), full channel URL, or UC… ID (passthrough)
+    let handle = raw;
+    // Strip URL prefix if pasted as full URL
+    const urlMatch = raw.match(/youtube\.com\/@([^/?#]+)/);
+    if (urlMatch) handle = "@" + urlMatch[1];
+    // If it's already a channel ID, passthrough
+    if (/^UC[\w-]{22}$/.test(handle)) {
+      // It's already a valid channel ID — just verify it
+      const r = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&id=${encodeURIComponent(handle)}&key=${apiKey}`, { signal: AbortSignal.timeout(8000) });
+      const body = await r.json() as any;
+      if (!r.ok) { res.json({ ok: false, error: body?.error?.message ?? "API error", quota: r.status === 403 || r.status === 429 }); return; }
+      const item = body.items?.[0];
+      if (!item) { res.json({ ok: false, error: "Channel ID not found" }); return; }
+      res.json({ ok: true, channelId: item.id, title: item.snippet?.title, thumbnail: item.snippet?.thumbnails?.default?.url, subscribers: item.statistics?.subscriberCount });
+      return;
+    }
+    // Ensure handle starts with @
+    if (!handle.startsWith("@")) handle = "@" + handle;
+
+    try {
+      const url = `https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&forHandle=${encodeURIComponent(handle)}&key=${apiKey}`;
+      const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      const body = await r.json() as any;
+      if (!r.ok) {
+        res.json({ ok: false, error: body?.error?.message ?? "API error", quota: r.status === 403 || r.status === 429 });
+        return;
+      }
+      const item = body.items?.[0];
+      if (!item) {
+        res.json({ ok: false, error: `Handle "${handle}" not found on YouTube` });
+        return;
+      }
+      res.json({
+        ok: true,
+        channelId: item.id,
+        title: item.snippet?.title,
+        thumbnail: item.snippet?.thumbnails?.default?.url,
+        subscribers: item.statistics?.subscriberCount,
+      });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   // Verify a YouTube channel URL/handle and return name + thumbnail + resolved ID.
   // Used by the frontend "Verify Channel" button before saving.
   app.post("/api/youtube/verify-channel", requireAuth, async (req: Request, res: Response): Promise<void> => {
