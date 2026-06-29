@@ -83,12 +83,13 @@ function AnimatedNumber({ value, color }: { value: number; color: string }) {
   );
 }
 
-function StatCard({ icon, label, value, color, gradient }: {
+function StatCard({ icon, label, value, color, gradient, loading }: {
   icon: React.ReactNode;
   label: string;
   value: string | null;
   color: string;
   gradient: string;
+  loading: boolean;
 }) {
   const numVal = parseNum(value);
   const [prev, setPrev] = useState(numVal);
@@ -130,10 +131,15 @@ function StatCard({ icon, label, value, color, gradient }: {
         </div>
         {value !== null ? (
           <AnimatedNumber value={numVal} color={color} />
-        ) : (
+        ) : loading ? (
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
             <div style={{ width: 6, height: 6, borderRadius: "50%", background: color, opacity: 0.5, animation: "sp-pulse 1.5s infinite" }} />
             <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Fetching…</span>
+          </div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+            <span style={{ fontSize: 18, fontWeight: 700, color: "rgba(255,255,255,0.2)" }}>—</span>
+            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>No data · check channel ID &amp; API key</span>
           </div>
         )}
       </div>
@@ -365,6 +371,9 @@ export function StatsPanel({ streams, streamStats, procStats = {} }: StatsPanelP
   const [subHistory, setSubHistory] = useState<number[]>([]);
   const activeStreams = streams.filter((s) => s.status === "streaming");
 
+  // True once at least one active stream has received a stats WebSocket event
+  const statsReceived = activeStreams.some((s) => s.id in streamStats);
+
   const totalSubs = activeStreams.reduce((acc, s) => acc + parseNum(streamStats[s.id]?.subs ?? null), 0);
   const totalViewers = activeStreams.reduce((acc, s) => acc + parseNum(streamStats[s.id]?.viewers ?? null), 0);
   const totalChatStreams = activeStreams.filter((s) => streamStats[s.id]?.hasChat).length;
@@ -396,6 +405,7 @@ export function StatsPanel({ streams, streamStats, procStats = {} }: StatsPanelP
           value={totalSubs > 0 ? totalSubs.toString() : null}
           color="#a78bfa"
           gradient="rgba(167,139,250,0.08), rgba(167,139,250,0.03)"
+          loading={!statsReceived}
         />
         <StatCard
           icon={<Eye size={14} />}
@@ -403,6 +413,7 @@ export function StatsPanel({ streams, streamStats, procStats = {} }: StatsPanelP
           value={totalViewers > 0 ? totalViewers.toString() : null}
           color="#34d399"
           gradient="rgba(52,211,153,0.08), rgba(52,211,153,0.03)"
+          loading={!statsReceived}
         />
         <StatCard
           icon={<MessageSquare size={14} />}
@@ -410,6 +421,7 @@ export function StatsPanel({ streams, streamStats, procStats = {} }: StatsPanelP
           value={totalChatStreams > 0 ? totalChatStreams.toString() : null}
           color="#60a5fa"
           gradient="rgba(96,165,250,0.08), rgba(96,165,250,0.03)"
+          loading={!statsReceived}
         />
       </div>
 

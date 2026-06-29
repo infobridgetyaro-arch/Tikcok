@@ -43,6 +43,11 @@ interface ChatMessage {
 const statsCache = new Map<string, ChannelStats>();
 const chatPageTokens = new Map<string, string | null>();
 
+// Track when we last ran the expensive search.list call (100 quota units) per channel.
+// We only search for a live video every 10 minutes to avoid burning the daily quota.
+const lastSearchAt = new Map<string, number>();
+const SEARCH_INTERVAL_MS = 20 * 60 * 1000; // 20 minutes — search.list costs 100 units; at 20-min intervals 1 channel ≈ 7,920 units/day (under the 10,000 daily quota)
+
 // Server-side deduplication: track message IDs already sent to the burn-in
 // overlay. Without this, the same 10 messages are re-fed to updateStreamOverlays
 // on every 3-second poll tick whenever no new chat arrives — causing the burn-in
@@ -86,49 +91,68 @@ async function fetchChannelStats(channelId: string): Promise<ChannelStats> {
   let liveChatId: string | null = prev?.liveChatId ?? null;
 
   try {
-    const chanRes = await fetch(
-      `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${encodeURIComponent(channelId)}&key=${apiKey}`,
-      { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }
-    );
-    if (chanRes.ok) {
-      const data = await chanRes.json() as any;
-      const subCount = data.items?.[0]?.statistics?.subscriberCount;
-      if (subCount !== undefined) subs = formatCount(parseInt(subCount, 10));
-    }
-  } catch (e) {
-    logger.warn({ channelId, err: e }, "Failed to fetch subscriber count");
-  }
-
-  try {
-    const searchRes = await fetch(
-      `https://www.googleapis.com/youtube/v3/search?part=id&channelId=${encodeURIComponent(channelId)}&eventType=live&type=video&key=${apiKey}`,
-      { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }
-    );
-    if (searchRes.ok) {
-      const searchData = await searchRes.json() as any;
-      const videoId = searchData.items?.[0]?.id?.videoId ?? null;
-      if (videoId) {
-        const vidRes = await fetch(
-          `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(videoId)}&key=${apiKey}`,
-          { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }
-        );
-        if (vidRes.ok) {
-          const vidData = await vidRes.json() as any;
-          const details = vidData.items?.[0]?.liveStreamingDetails;
-          if (details?.concurrentViewers !== undefined) {
-            viewers = formatCount(parseInt(details.concurrentViewers, 10));
-          }
-          if (details?.activeLiveChatId) {
-            liveChatId = details.activeLiveChatId;
-          }
-        }
+    const chanUrl = `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${encodeURIComponent(channelId)}&key=${apiKey}`;
+    const chanRes = await fetch(chanUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    const chanBody = await chanRes.json() as any;
+    if (!chanRes.ok) {
+      logger.warn({ channelId, status: chanRes.status, error: chanBody?.error?.message }, "[youtube] Channel stats API error — check API key & quota");
+    } else {
+      const subCount = chanBody.items?.[0]?.statistics?.subscriberCount;
+      if (subCount !== undefined) {
+        subs = formatCount(parseInt(subCount, 10));
+        logger.info({ channelId, subs }, "[youtube] Subscriber count fetched");
       } else {
-        liveChatId = null;
-        viewers = null;
+        logger.warn({ channelId, itemCount: chanBody.items?.length ?? 0 }, "[youtube] Channel not found or stats hidden — verify channel ID");
       }
     }
   } catch (e) {
-    logger.warn({ channelId, err: e }, "Failed to fetch live viewer count");
+    logger.warn({ channelId, err: e }, "[youtube] Failed to fetch subscriber count");
+  }
+
+  // search.list costs 100 quota units — only run every 10 minutes to avoid burning daily limit.
+  const now = Date.now();
+  const lastSearch = lastSearchAt.get(channelId) ?? 0;
+  const shouldSearch = now - lastSearch >= SEARCH_INTERVAL_MS;
+
+  if (shouldSearch) {
+    try {
+      logger.info({ channelId, msSinceLastSearch: now - lastSearch }, "[youtube] Running search.list for live video (100 quota units)");
+      const searchRes = await fetch(
+        `https://www.googleapis.com/youtube/v3/search?part=id&channelId=${encodeURIComponent(channelId)}&eventType=live&type=video&key=${apiKey}`,
+        { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }
+      );
+      const searchData = await searchRes.json() as any;
+      if (!searchRes.ok) {
+        logger.warn({ channelId, status: searchRes.status, error: searchData?.error?.message }, "[youtube] Live search API error");
+      } else {
+        lastSearchAt.set(channelId, now);
+        const videoId = searchData.items?.[0]?.id?.videoId ?? null;
+        if (videoId) {
+          const vidRes = await fetch(
+            `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(videoId)}&key=${apiKey}`,
+            { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }
+          );
+          if (vidRes.ok) {
+            const vidData = await vidRes.json() as any;
+            const details = vidData.items?.[0]?.liveStreamingDetails;
+            if (details?.concurrentViewers !== undefined) {
+              viewers = formatCount(parseInt(details.concurrentViewers, 10));
+            }
+            if (details?.activeLiveChatId) {
+              liveChatId = details.activeLiveChatId;
+            }
+          }
+        } else {
+          logger.info({ channelId }, "[youtube] No active live video found for channel");
+          liveChatId = null;
+          viewers = null;
+        }
+      }
+    } catch (e) {
+      logger.warn({ channelId, err: e }, "[youtube] Failed to fetch live viewer count");
+    }
+  } else {
+    logger.debug({ channelId, nextSearchIn: Math.round((SEARCH_INTERVAL_MS - (now - lastSearch)) / 1000) + "s" }, "[youtube] Skipping search.list — within 10-min window, reusing cached live data");
   }
 
   const result: ChannelStats = { subs, viewers, liveChatId, lastFetch: Date.now() };

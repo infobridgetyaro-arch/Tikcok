@@ -462,6 +462,51 @@ export async function registerBintunetRoutes(
     res.json(storage.getStreams());
   });
 
+  // Quick diagnostic endpoint — call this to check your API key and channel ID immediately.
+  // GET /api/youtube/test-stats?channelId=UCxxxxxx
+  app.get("/api/youtube/test-stats", requireAuth, async (req: Request, res: Response): Promise<void> => {
+    const channelId = String(req.query.channelId ?? "").trim();
+    const apiKey = process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY || "";
+
+    if (!apiKey) {
+      res.status(503).json({ ok: false, error: "YOUTUBE_API_KEY is not set on the server" });
+      return;
+    }
+    if (!channelId) {
+      res.status(400).json({ ok: false, error: "channelId query param required" });
+      return;
+    }
+
+    try {
+      const url = `https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&id=${encodeURIComponent(channelId)}&key=${apiKey}`;
+      const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      const body = await r.json() as any;
+
+      if (!r.ok) {
+        res.json({ ok: false, httpStatus: r.status, apiError: body?.error?.message, hint: r.status === 403 ? "API key not authorised — make sure YouTube Data API v3 is enabled in Google Cloud Console" : "Check channel ID and API key" });
+        return;
+      }
+
+      const item = body.items?.[0];
+      if (!item) {
+        res.json({ ok: false, httpStatus: 200, itemCount: 0, hint: "Channel not found — the ID you entered does not exist on YouTube. Double-check the ID." });
+        return;
+      }
+
+      res.json({
+        ok: true,
+        channelId: item.id,
+        title: item.snippet?.title,
+        subscribers: item.statistics?.subscriberCount,
+        hiddenSubscriberCount: item.statistics?.hiddenSubscriberCount,
+        totalViews: item.statistics?.viewCount,
+        thumbnail: item.snippet?.thumbnails?.default?.url,
+      });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   // Verify a YouTube channel URL/handle and return name + thumbnail + resolved ID.
   // Used by the frontend "Verify Channel" button before saving.
   app.post("/api/youtube/verify-channel", requireAuth, async (req: Request, res: Response): Promise<void> => {
