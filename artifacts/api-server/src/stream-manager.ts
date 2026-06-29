@@ -1965,31 +1965,30 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
           }
 
           // ── Slow-encode watchdog ────────────────────────────────────────────
-          // At 0.95x speed, the encoder accumulates 0.05s of lag per real second.
-          // Graceful recovery is attempted before a hard restart:
-          //   Phase 1 (lag 8–12s):  warning logged, no action — minor slowdown.
-          //   Phase 2 (lag 12–16s): "graceful recovery" — SIGTERM → wait 3s →
-          //                          SIGKILL, then restart. Lets FFmpeg flush its
-          //                          RTMP send buffer cleanly so YouTube sees a
-          //                          shorter gap than a cold SIGKILL.
-          //   Phase 3 (lag > 16s):  hard SIGKILL + immediate restart if graceful
-          //                          kill is already pending or has stalled.
+          // Only restarts FFmpeg when there is a genuine, sustained streaming
+          // failure — NOT for temporary dips in the 0.85x–1.00x range.
           //
-          // ── THRESHOLD RATIONALE (DO NOT REDUCE WITHOUT UNDERSTANDING IMPACT) ─
+          // Restart policy:
+          //   • speed ≥ 0.85x:  acceptable — fps_mode=cfr + nal-hrd=cbr keep
+          //       RTMP continuous by duplicating frames and stuffing filler NALs.
+          //       Log periodically; never restart solely because of this dip.
+          //       Temporary fluctuations between 0.85x and 1.00x are ignored.
+          //   • speed < 0.85x sustained for ≥ 5 minutes: genuine performance
+          //       failure — graceful SIGTERM, then 10-second window, then SIGKILL.
           //
-          // • "Fast enough" floor: 0.88x
-          //     Speeds 0.88–1.0x: lag counter DRAINS. No restart triggered.
-          //     fps_mode=cfr + nal-hrd=cbr keep the RTMP stream continuous at
-          //     these speeds — FFmpeg duplicates frames and inserts filler NALs;
-          //     YouTube never sees a gap. The restart ITSELF causes the warning.
+          // Genuine failures (stalled frames, broken RTMP, write errors, process
+          // termination) are handled independently by their own watchdogs and are
+          // not subject to the speed threshold or 5-minute wait.
           //
-          // • Phase 2 trigger: 12.0s accumulated lag (speed < 0.88x sustained)
-          //     Graceful SIGTERM path fires here — gives FFmpeg 3s to flush.
-          //
-          // • Phase 3 trigger: 16.0s accumulated lag
-          //     Hard SIGKILL fires if graceful flush stalled or failed.
-          //
-          // • Cooldown: 3 min between auto-reconnects — unchanged.
+          // ── THRESHOLD RATIONALE ────────────────────────────────────────────
+          // • 0.85x floor: speeds 0.85–1.00x cause PTS drift only after many
+          //     minutes; CBR filler NALs mask the gap entirely from YouTube.
+          //     Restarting at 0.90–0.95x (as previously configured) caused
+          //     unnecessary stream cuts on healthy hardware under load.
+          // • 5-minute timer: short dips routinely resolve without intervention.
+          //     Only a prolonged, unrecovering slowdown warrants a restart.
+          // • 10-second SIGTERM grace: gives FFmpeg time to flush its RTMP send
+          //     buffer so YouTube sees a shorter gap than a cold SIGKILL.
           const speedMatch = trimmed.match(/speed=\s*([\d.]+)x/);
           if (speedMatch) {
             const encSpeed = parseFloat(speedMatch[1]);
@@ -1998,170 +1997,167 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
               const currentProc = activeStreams.get(streamId);
               if (currentProc) {
                 currentProc.lastSpeed = encSpeed;
-                const lastSampleAt = currentProc.lastSpeedSampleAt ?? nowMs;
-                const elapsedSec = Math.min((nowMs - lastSampleAt) / 1000, 10); // cap at 10s gap
                 currentProc.lastSpeedSampleAt = nowMs;
 
-                // Log encoder speed every ~30s at info level, or every ~10s
-                // when it's in the warning band (0.88–0.92x) for diagnosability.
+                // ── Logging ─────────────────────────────────────────────────
+                // Log every 30s normally; every 15s when below the 0.85x floor
+                // so the operator can see the sustained-timer countdown.
                 const lastSpeedLog = currentProc.lastSpeedLogAt ?? 0;
-                const inWarningBand = encSpeed >= 0.88 && encSpeed < 0.92;
-                const logInterval = inWarningBand ? 10_000 : 30_000;
+                const belowFloor = encSpeed < 0.85;
+                const logInterval = belowFloor ? 15_000 : 30_000;
                 if (nowMs - lastSpeedLog >= logInterval) {
                   currentProc.lastSpeedLogAt = nowMs;
-                  const lagSoFar = currentProc.accumulatedLagSec ?? 0;
-                  if (inWarningBand) {
+                  const sustainedSec = currentProc.sustainedSlowSpeedStartAt
+                    ? Math.round((nowMs - currentProc.sustainedSlowSpeedStartAt) / 1000)
+                    : 0;
+                  const SUSTAINED_SLOW_SEC = 300; // 5 minutes
+                  if (belowFloor) {
+                    const remainingSec = Math.max(0, SUSTAINED_SLOW_SEC - sustainedSec);
                     logger.warn(
-                      { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSoFar.toFixed(2) },
-                      "[perf] encoder speed in warning band (0.88–0.92x) — monitoring, no restart",
+                      {
+                        streamId,
+                        encSpeed: encSpeed.toFixed(3),
+                        sustainedSec,
+                        remainingSec,
+                        frames: lastFrameCount,
+                        rtmpErrors: currentProc.reconnectCount ?? 0,
+                        decision: sustainedSec === 0
+                          ? "started_5min_timer"
+                          : `monitoring_restart_in_${remainingSec}s`,
+                      },
+                      "[watchdog] encoder speed below 0.85x floor — monitoring",
                     );
-                    sendLog(streamId, `[perf] Encoder speed ${encSpeed.toFixed(2)}x (warning band 0.88–0.92x) — lag ${lagSoFar.toFixed(1)}s — monitoring`);
-                  } else if (encSpeed < 0.88) {
-                    logger.warn(
-                      { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSoFar.toFixed(2) },
-                      "[perf] encoder speed below floor (< 0.88x) — lag accumulating",
+                    sendLog(streamId,
+                      `[watchdog] Speed ${encSpeed.toFixed(2)}x (below 0.85x floor)` +
+                      ` | sustained: ${sustainedSec}s` +
+                      (sustainedSec > 0 ? ` | restart in ~${remainingSec}s if sustained` : " | timer started") +
+                      ` | frames: ${lastFrameCount}` +
+                      ` | decision: monitoring — no restart yet`,
                     );
-                    sendLog(streamId, `[perf] Encoder speed ${encSpeed.toFixed(2)}x (below 0.88x floor) — lag ${lagSoFar.toFixed(1)}s accumulating`);
                   } else {
                     logger.info(
-                      { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSoFar.toFixed(2) },
-                      "[perf] main encoder speed sample",
+                      {
+                        streamId,
+                        encSpeed: encSpeed.toFixed(3),
+                        frames: lastFrameCount,
+                        decision: "acceptable_no_action",
+                      },
+                      "[perf] encoder speed sample — acceptable (≥ 0.85x), no restart",
                     );
                   }
                 }
 
-                if (encSpeed >= 0.88) {
-                  // Within the "acceptable" speed band — drain the lag counter.
-                  // fps_mode=cfr + nal-hrd=cbr keep RTMP delivery continuous at
-                  // these speeds by duplicating frames and stuffing filler NALs.
-                  currentProc.accumulatedLagSec = Math.max(
-                    0,
-                    (currentProc.accumulatedLagSec ?? 0) - elapsedSec * 0.5,
-                  );
-
-                  // ── Sustained slow-speed watchdog ───────────────────────────
-                  // At 0.88–0.99x the encoder is running below real-time but the
-                  // lag counter drains, so the Phase 2/3 thresholds never fire.
-                  // However, sustained sub-1.0x speed for several minutes causes
-                  // the encoded video PTS to drift behind wall-clock time. The
-                  // RTMP send buffer (8 s) absorbs short dips, but once the PTS
-                  // drift exceeds the buffer the stream cuts.
-                  //
-                  // This watchdog catches that case: if speed has been below 0.99x
-                  // for more than SUSTAINED_SLOW_MS (3 min), trigger a graceful
-                  // SIGTERM restart to reset the pipeline before drift accumulates.
-                  const SUSTAINED_SLOW_MS = 3 * 60 * 1000; // 3 minutes
-                  if (encSpeed < 0.99) {
-                    if (!currentProc.sustainedSlowSpeedStartAt) {
-                      currentProc.sustainedSlowSpeedStartAt = nowMs;
-                    }
-                    const sustainedMs = nowMs - currentProc.sustainedSlowSpeedStartAt;
-                    const cooldownMs = 3 * 60 * 1000;
-                    const cooldownOk =
-                      !currentProc.lastSlowReconnectAt ||
-                      nowMs - currentProc.lastSlowReconnectAt > cooldownMs;
-
-                    if (
-                      sustainedMs >= SUSTAINED_SLOW_MS &&
-                      cooldownOk &&
-                      !restartScheduled.has(streamId) &&
-                      !manuallyStopped.has(streamId) &&
-                      !currentProc.gracefulKillTimer
-                    ) {
-                      currentProc.sustainedSlowSpeedStartAt = undefined;
-                      currentProc.lastSlowReconnectAt = nowMs;
-                      currentProc.recoveryAttempts = (currentProc.recoveryAttempts ?? 0) + 1;
-                      sendLog(
+                if (encSpeed >= 0.85) {
+                  // ── Acceptable band: ≥ 0.85x ────────────────────────────
+                  // If the encoder was previously below the floor, log recovery
+                  // and reset the sustained timer so the 5-minute clock restarts
+                  // fresh if the speed dips below 0.85x again later.
+                  if (currentProc.sustainedSlowSpeedStartAt) {
+                    const hadSustainedSec = Math.round(
+                      (nowMs - currentProc.sustainedSlowSpeedStartAt) / 1000,
+                    );
+                    logger.info(
+                      {
                         streamId,
-                        `[perf] Speed ${encSpeed.toFixed(2)}x for ${Math.round(sustainedMs / 1000)}s — sustained drift, graceful recovery #${currentProc.recoveryAttempts}`,
-                      );
-                      logger.warn(
-                        { streamId, encSpeed: encSpeed.toFixed(3), sustainedSec: Math.round(sustainedMs / 1000) },
-                        "[perf] sustained sub-1.0x speed — graceful restart to prevent PTS drift cuts",
-                      );
-                      try { ffmpegProc.kill("SIGTERM"); } catch {}
-                      currentProc.gracefulKillTimer = setTimeout(() => {
-                        const p = activeStreams.get(streamId);
-                        if (p) p.gracefulKillTimer = undefined;
-                        hardKillAndRestart(streamId, 3000, false, true);
-                      }, 3000);
-                    }
-                  } else {
-                    // Speed ≥ 0.99x — encoder is on pace, clear the drift timer.
+                        encSpeed: encSpeed.toFixed(3),
+                        hadSustainedSec,
+                        decision: "recovered_no_restart",
+                      },
+                      "[watchdog] encoder speed recovered above 0.85x floor — sustained timer reset",
+                    );
+                    sendLog(streamId,
+                      `[watchdog] Speed recovered to ${encSpeed.toFixed(2)}x` +
+                      ` after ${hadSustainedSec}s below floor` +
+                      ` | frames: ${lastFrameCount}` +
+                      ` | decision: no restart needed`,
+                    );
                     currentProc.sustainedSlowSpeedStartAt = undefined;
                   }
+                  // Clear accumulated lag — no longer relevant in the acceptable band.
+                  currentProc.accumulatedLagSec = 0;
                 } else {
-                  // Genuinely slow (< 0.88x) — accumulate lag.
-                  // Clear the sustained-slow timer: time below 0.88x is handled
-                  // by the Phase 2/3 lag watchdog, not the sustained-band one.
-                  // Without this, a dip below 0.88x followed by recovery to 0.89x
-                  // would carry over the earlier timestamp and trigger the sustained
-                  // watchdog prematurely.
-                  currentProc.sustainedSlowSpeedStartAt = undefined;
+                  // ── Below floor (< 0.85x): sustained-failure timer ───────
+                  // Start the 5-minute clock on first sample below the floor.
+                  if (!currentProc.sustainedSlowSpeedStartAt) {
+                    currentProc.sustainedSlowSpeedStartAt = nowMs;
+                    logger.warn(
+                      {
+                        streamId,
+                        encSpeed: encSpeed.toFixed(3),
+                        frames: lastFrameCount,
+                        decision: "started_5min_sustained_timer",
+                      },
+                      "[watchdog] encoder speed dropped below 0.85x floor — starting 5-minute timer",
+                    );
+                    sendLog(streamId,
+                      `[watchdog] Speed ${encSpeed.toFixed(2)}x dropped below 0.85x floor` +
+                      ` | frames: ${lastFrameCount}` +
+                      ` | RTMP reconnects: ${currentProc.reconnectCount ?? 0}` +
+                      ` | decision: starting 5-minute sustained timer`,
+                    );
+                  }
 
-                  // e.g. speed=0.84x → lagDelta = 0.16s per real second
-                  const lagDelta = elapsedSec * (1 - encSpeed);
-                  currentProc.accumulatedLagSec = (currentProc.accumulatedLagSec ?? 0) + lagDelta;
-
-                  const lagSec = currentProc.accumulatedLagSec;
-                  const cooldownMs = 3 * 60 * 1000; // 3 min between auto-reconnects
+                  const sustainedMs = nowMs - currentProc.sustainedSlowSpeedStartAt;
+                  const SUSTAINED_SLOW_MS = 5 * 60 * 1000; // 5 minutes
+                  const cooldownMs = 3 * 60 * 1000;
                   const cooldownOk =
                     !currentProc.lastSlowReconnectAt ||
                     nowMs - currentProc.lastSlowReconnectAt > cooldownMs;
 
                   if (
-                    lagSec >= 16.0 &&
-                    cooldownOk &&
-                    !restartScheduled.has(streamId) &&
-                    !manuallyStopped.has(streamId)
-                  ) {
-                    // Phase 3: hard kill — graceful window already elapsed.
-                    currentProc.accumulatedLagSec = 0;
-                    currentProc.lastSlowReconnectAt = nowMs;
-                    currentProc.recoveryAttempts = 0;
-                    sendLog(
-                      streamId,
-                      `[perf] Severe lag ${lagSec.toFixed(1)}s (speed ${encSpeed.toFixed(2)}x) — graceful recovery window exceeded, hard restart`,
-                    );
-                    logger.warn(
-                      { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSec.toFixed(2), phase: 3 },
-                      "[perf] slow-encode hard restart triggered (lag > 16s)",
-                    );
-                    hardKillAndRestart(streamId, 1000, false, true);
-                  } else if (
-                    lagSec >= 12.0 &&
+                    sustainedMs >= SUSTAINED_SLOW_MS &&
                     cooldownOk &&
                     !restartScheduled.has(streamId) &&
                     !manuallyStopped.has(streamId) &&
-                    !currentProc.gracefulKillTimer  // no graceful kill already in progress
+                    !currentProc.gracefulKillTimer
                   ) {
-                    // Phase 2: graceful kill — SIGTERM then wait, giving FFmpeg
-                    // time to flush its internal RTMP send buffer before dying.
+                    // 5 minutes elapsed at sub-0.85x — genuine sustained failure.
+                    // Send SIGTERM for a clean flush; SIGKILL follows in 10 seconds.
+                    currentProc.sustainedSlowSpeedStartAt = undefined;
                     currentProc.accumulatedLagSec = 0;
                     currentProc.lastSlowReconnectAt = nowMs;
                     currentProc.recoveryAttempts = (currentProc.recoveryAttempts ?? 0) + 1;
-                    sendLog(
-                      streamId,
-                      `[perf] ${lagSec.toFixed(1)}s lag (speed ${encSpeed.toFixed(2)}x) — graceful recovery #${currentProc.recoveryAttempts}: sending SIGTERM, restarting in 3s`,
-                    );
+
+                    const restartReason = [
+                      `speed=${encSpeed.toFixed(2)}x (below 0.85x floor)`,
+                      `sustained=${Math.round(sustainedMs / 1000)}s (threshold: 300s)`,
+                      `frames=${lastFrameCount}`,
+                      `RTMP_reconnects=${currentProc.reconnectCount ?? 0}`,
+                      `recovery=#${currentProc.recoveryAttempts}`,
+                    ].join(" | ");
+
                     logger.warn(
                       {
                         streamId,
                         encSpeed: encSpeed.toFixed(3),
-                        lagSec: lagSec.toFixed(2),
-                        phase: 2,
+                        sustainedSec: Math.round(sustainedMs / 1000),
+                        frames: lastFrameCount,
+                        rtmpReconnects: currentProc.reconnectCount ?? 0,
                         recovery: currentProc.recoveryAttempts,
+                        decision: "restart_triggered_sustained_sub085",
                       },
-                      "[perf] slow-encode graceful restart triggered (lag > 12s)",
+                      "[watchdog] sustained sub-0.85x speed for 5+ minutes — graceful restart triggered",
                     );
-                    // SIGTERM → 3s window → SIGKILL via hardKillAndRestart
-                    // Mark graceful kill in progress so Phase 3 doesn't double-fire.
+                    sendLog(streamId,
+                      `[watchdog] RESTART TRIGGERED: ${restartReason}` +
+                      ` — sending SIGTERM, SIGKILL in 10s if not already exited`,
+                    );
+
                     try { ffmpegProc.kill("SIGTERM"); } catch {}
                     currentProc.gracefulKillTimer = setTimeout(() => {
                       const p = activeStreams.get(streamId);
                       if (p) p.gracefulKillTimer = undefined;
+                      logger.warn(
+                        { streamId, decision: "sigkill_after_10s_grace" },
+                        "[watchdog] 10-second graceful window elapsed — escalating to SIGKILL",
+                      );
+                      sendLog(streamId,
+                        `[watchdog] 10-second SIGTERM grace window elapsed` +
+                        ` | frames: ${lastFrameCount}` +
+                        ` | decision: escalating to SIGKILL and restarting`,
+                      );
                       hardKillAndRestart(streamId, 3000, false, true);
-                    }, 3000);
+                    }, 10_000);
                   }
                 }
               }

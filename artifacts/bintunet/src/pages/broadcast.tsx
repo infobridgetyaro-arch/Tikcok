@@ -1867,11 +1867,9 @@ export default function BroadcastPage() {
         />
       )}
 
-      {/* Chat messages */}
-      {state && !state.breakActive && !state.adActive && (() => {
-        const chatPos = state.chatBurnActive
-          ? (isMobile ? state.mobileChatBurnPosition : state.chatBurnPosition)
-          : undefined;
+      {/* Chat messages — only rendered when chat burn-in is enabled */}
+      {state && state.chatBurnActive && !state.breakActive && !state.adActive && (() => {
+        const chatPos = isMobile ? state.mobileChatBurnPosition : state.chatBurnPosition;
         switch (state.chatStyle) {
           case "TV":      return <TVChat messages={chat} isMobile={isMobile} pos={chatPos} />;
           case "Bubble":  return <BubbleChat messages={chat} isMobile={isMobile} />;
