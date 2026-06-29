@@ -468,7 +468,17 @@ function isYouTubeUrl(url: string): boolean {
   return /youtube\.com|youtu\.be/.test(url);
 }
 
+export function getCurrentOverlayState(): OverlayState {
+  return currentOverlayState;
+}
+
 export function updateStreamOverlays(patch: Partial<OverlayState>) {
+  if (patch.chatBurnMessages !== undefined) {
+    logger.debug(
+      { count: patch.chatBurnMessages.length, chatBurnActive: currentOverlayState.chatBurnActive },
+      "[overlay] chatBurnMessages patch received",
+    );
+  }
   const prevBreakActive = currentOverlayState.breakActive;
   const prevBreakVideoUrl = currentOverlayState.breakVideoUrl ?? "";
   const prevBreakVideoPanX = currentOverlayState.breakVideoPanX ?? 50;

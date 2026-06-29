@@ -1,5 +1,5 @@
 import { storage } from "./storage";
-import { broadcastStream, updateStreamOverlays } from "./stream-manager";
+import { broadcastStream, updateStreamOverlays, getCurrentOverlayState } from "./stream-manager";
 import { logger } from "./lib/logger";
 
 // ── Multi-key pool ──────────────────────────────────────────────────────────
@@ -455,15 +455,41 @@ export function startLiveCountPolling() {
                 const oldest = Array.from(sentIds).slice(0, 500);
                 oldest.forEach((id) => sentIds.delete(id));
               }
-              updateStreamOverlays({
-                chatBurnMessages: newBurnMsgs.slice(-10).map((m) => ({
-                  name: m.authorName,
-                  text: m.text,
-                  photo: m.authorPhoto || undefined,
-                  color: m.isModerator ? "#34d399" : m.isMember ? "#a78bfa" : undefined,
-                  ts: new Date(m.publishedAt).getTime(),
-                })),
-              });
+
+              // Use receive time (Date.now()) rather than publishedAt so Float-style
+              // messages aren't immediately expired — YouTube chat messages are typically
+              // 5–30 s old by the time the poll fetches them, but Float only shows
+              // messages younger than 5.5 s (lifetimeSec).
+              const receiveTs = Date.now();
+              const incoming = newBurnMsgs.slice(-10).map((m) => ({
+                name: m.authorName,
+                text: m.text,
+                photo: m.authorPhoto || undefined,
+                color: m.isModerator ? "#34d399" : m.isMember ? "#a78bfa" : undefined,
+                ts: receiveTs,
+              }));
+
+              // Accumulate into a rolling window (max 20) instead of replacing the
+              // entire array each poll, so Bubble/Sidebar/Ticker styles keep showing
+              // the previous batch while newer messages arrive.
+              const CHAT_BURN_MAX = 20;
+              const currentMessages = getCurrentOverlayState().chatBurnMessages ?? [];
+              const accumulated = [...currentMessages, ...incoming].slice(-CHAT_BURN_MAX);
+
+              const currentState = getCurrentOverlayState();
+              if (!currentState.chatBurnActive) {
+                logger.info(
+                  { streamId: stream.id, newMessages: incoming.length },
+                  "[chat-burn] New chat messages received but chatBurnActive=false — enable via Chat tab to show overlay",
+                );
+              } else {
+                logger.info(
+                  { streamId: stream.id, newMessages: incoming.length, totalInWindow: accumulated.length },
+                  "[chat-burn] Dispatching chat burn messages to overlay",
+                );
+              }
+
+              updateStreamOverlays({ chatBurnMessages: accumulated });
             }
           }
         } catch (e) {

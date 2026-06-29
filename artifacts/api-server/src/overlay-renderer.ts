@@ -2,6 +2,7 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { Readable } from "stream";
 import QRCode from "qrcode";
 import type { GiftDef, GiftQueueItem } from "./gift-system";
+import { logger } from "./lib/logger";
 
 export interface OverlayPosition {
   x: number; // 0–100 % from left
@@ -316,6 +317,7 @@ export class OverlayRenderer {
   private avatarCache = new Map<string, import("@napi-rs/canvas").Image | null>();
 
   private _panelAlpha = 1;
+  private _renderErrorCount = 0;
 
   // News animation tracking
   private newsAnimStartT = -100; // default → animProg = 1 (no animation on boot)
@@ -473,8 +475,13 @@ export class OverlayRenderer {
           });
           return;
         }
-      } catch {
-        // swallow render errors — keep the pipe alive
+      } catch (err) {
+        // log render errors but keep the pipe alive so FFmpeg doesn't stall
+        this._renderErrorCount++;
+        // Rate-limit to one log per 100 errors to avoid flooding
+        if (this._renderErrorCount % 100 === 1) {
+          logger.warn({ err, count: this._renderErrorCount }, "[overlay] Frame render error — check draw functions");
+        }
       }
       const elapsed = Date.now() - tickStart;
       this.timer = setTimeout(tick, Math.max(0, intervalMs - elapsed));
