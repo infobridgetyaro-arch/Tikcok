@@ -1,0 +1,187 @@
+
+93
+[13:44:17] --- Starting stream ---
+
+[13:44:17] Quality: best | FPS: 30 | Layout: mobile | Preset: veryfast
+
+[13:44:17] Audio: On | Auto-restart: Off | Sample rate: 48000 Hz
+
+[13:44:17] Video: H.264 High profile L4.1 | CBR | 2s keyframes | yuv420p
+
+[13:44:17] Starting TikTok self-healing relay for @soulless200gaming (pipe mode — no URL expiry)...
+
+[13:44:17] TikTok source ready [pipe mode — streamlink → stdin, self-healing] — launching FFmpeg...
+
+[13:44:17] Output: YouTube
+
+[13:44:17] Launching FFmpeg (1s GOP, 5s RTMP timeout, stall watchdog active)...
+
+[13:44:18] [relay:tiktok_pipe] Starting — URL: https://www.tiktok.com/@soulless200gaming/live
+
+[13:44:25] [relay] streamlink 7.1 detected
+
+[13:44:25] [relay] Querying available streams for: https://www.tiktok.com/@soulless200gaming/live
+
+[13:44:27] [relay] Available streams: ao, ld, hd, worst, best
+
+[13:44:27] [relay] Selected quality: best
+
+[13:44:27] [relay:tiktok_pipe] $ streamlink --stdout --loglevel warning --http-header User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 --http-header Referer=https://www.tiktok.com/ --http-header Accept-Language=en-US,en;q=0.9 --http-timeout 20 --stream-segment-timeout 15 --stream-timeout 60 --retry-streams 10 --retry-max 10 --retry-open 5 --hls-live-edge 3 https://www.tiktok.com/@soulless200gaming/live best
+
+[13:44:29] [relay:tiktok_pipe] ✓ Source connected — piping to FFmpeg stdin (first chunk: 8192 B)
+
+[13:44:29] [ffmpeg] [aist#5:0/pcm_s16le @ 0x3986adc0]
+
+[13:44:29] [ffmpeg] Guessed Channel Layout: mono
+
+[13:44:29] [ffmpeg] [aist#6:0/pcm_f32le @ 0x3996e8c0] Guessed Channel Layout: stereo
+
+[13:44:29] [ffmpeg] [swscaler @ 0x7f1bf427f9c0] deprecated pixel format used, make sure you did set range correctly
+
+[13:44:29] Streaming! Encoding and forwarding frames...
+
+[13:44:29] Progress: 1 frames | N/A | N/A
+
+[13:44:30] [perf] Encoder speed 0.36x (below 0.88x floor) — lag 0.0s accumulating
+
+[13:44:40] [perf] Encoder speed 0.88x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:44:50] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:45:00] Progress: 823 frames | N/A | 00:00:27.43
+
+[13:45:00] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:45:10] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:45:20] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:45:30] Progress: 1629 frames | N/A | 00:00:54.27
+
+[13:45:30] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:45:40] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:45:50] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:46:00] Progress: 2436 frames | N/A | 00:01:21.20
+
+[13:46:00] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:46:10] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:46:20] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:46:30] Progress: 3237 frames | N/A | 00:01:47.88
+
+[13:46:30] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:46:40] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:46:50] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:47:00] Progress: 4045 frames | N/A | 00:02:14.83
+
+[13:47:00] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:47:10] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:47:20] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:47:30] Progress: 4835 frames | N/A | 00:02:41.16
+
+[13:47:30] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:44:17] --- Starting stream ---
+
+[13:44:17] Quality: best | FPS: 30 | Layout: mobile | Preset: veryfast
+
+[13:44:17] Audio: On | Auto-restart: Off | Sample rate: 48000 Hz
+
+[13:44:17] Video: H.264 High profile L4.1 | CBR | 2s keyframes | yuv420p
+
+[13:44:17] Starting TikTok self-healing relay for @soulless200gaming (pipe mode — no URL expiry)...
+
+[13:44:17] TikTok source ready [pipe mode — streamlink → stdin, self-healing] — launching FFmpeg...
+
+[13:44:17] Output: YouTube
+
+[13:44:17] Launching FFmpeg (1s GOP, 5s RTMP timeout, stall watchdog active)...
+
+[13:44:18] [relay:tiktok_pipe] Starting — URL: https://www.tiktok.com/@soulless200gaming/live
+
+[13:44:25] [relay] streamlink 7.1 detected
+
+[13:44:25] [relay] Querying available streams for: https://www.tiktok.com/@soulless200gaming/live
+
+[13:44:27] [relay] Available streams: ao, ld, hd, worst, best
+
+[13:44:27] [relay] Selected quality: best
+
+[13:44:27] [relay:tiktok_pipe] $ streamlink --stdout --loglevel warning --http-header User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 --http-header Referer=https://www.tiktok.com/ --http-header Accept-Language=en-US,en;q=0.9 --http-timeout 20 --stream-segment-timeout 15 --stream-timeout 60 --retry-streams 10 --retry-max 10 --retry-open 5 --hls-live-edge 3 https://www.tiktok.com/@soulless200gaming/live best
+
+[13:44:29] [relay:tiktok_pipe] ✓ Source connected — piping to FFmpeg stdin (first chunk: 8192 B)
+
+[13:44:29] [ffmpeg] [aist#5:0/pcm_s16le @ 0x3986adc0]
+
+[13:44:29] [ffmpeg] Guessed Channel Layout: mono
+
+[13:44:29] [ffmpeg] [aist#6:0/pcm_f32le @ 0x3996e8c0] Guessed Channel Layout: stereo
+
+[13:44:29] [ffmpeg] [swscaler @ 0x7f1bf427f9c0] deprecated pixel format used, make sure you did set range correctly
+
+[13:44:29] Streaming! Encoding and forwarding frames...
+
+[13:44:29] Progress: 1 frames | N/A | N/A
+
+[13:44:30] [perf] Encoder speed 0.36x (below 0.88x floor) — lag 0.0s accumulating
+
+[13:44:40] [perf] Encoder speed 0.88x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:44:50] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:45:00] Progress: 823 frames | N/A | 00:00:27.43
+
+[13:45:00] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:45:10] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:45:20] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:45:30] Progress: 1629 frames | N/A | 00:00:54.27
+
+[13:45:30] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:45:40] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:45:50] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:46:00] Progress: 2436 frames | N/A | 00:01:21.20
+
+[13:46:00] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:46:10] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:46:20] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:46:30] Progress: 3237 frames | N/A | 00:01:47.88
+
+[13:46:30] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:46:40] [perf] Encoder speed 0.90x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:46:50] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:47:00] Progress: 4045 frames | N/A | 00:02:14.83
+
+[13:47:00] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:47:10] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:47:20] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:47:30] Progress: 4835 frames | N/A | 00:02:41.16
+
+[13:47:30] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring
+
+[13:47:40] [perf] Encoder speed 0.89x (warning band 0.88–0.92x) — lag 0.0s — monitoring

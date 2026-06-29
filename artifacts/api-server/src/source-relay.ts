@@ -556,7 +556,17 @@ export class SourceRelay {
         "--retry-streams", "10",
         "--retry-max", "10",
         "--retry-open", "5",
-        "--hls-live-edge", "3",
+        // hls-live-edge 2 (was 3): fetch segments one step closer to the live
+        // head. At edge=3 TikTok's CDN introduces a ~6-9s additional delay
+        // between the segment being muxed and streamlink delivering it, which
+        // stalls FFmpeg stdin during normal operation and manifests as speed
+        // dipping below 1.0x at every segment boundary.
+        "--hls-live-edge", "2",
+        // hls-segment-stream-data: begin piping each HLS segment to stdout as
+        // soon as bytes arrive, rather than waiting for the full segment to be
+        // fetched. Reduces per-segment latency by ~1-2s and prevents the stdin
+        // stall that causes FFmpeg speed to drop during segment transitions.
+        "--hls-segment-stream-data",
         `https://www.tiktok.com/@${username}/live`,
         resolvedQuality,
       ],

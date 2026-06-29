@@ -1,7 +1,12 @@
 /**
  * BintuNet AI Stream Controller
- * Uses OpenAI GPT-4o-mini to understand natural language stream commands
- * and return structured actions that the frontend executes via REST API.
+ * Uses Groq (llama-3.3-70b-versatile) or OpenAI (gpt-4o-mini) to understand
+ * natural language stream commands and return structured actions.
+ *
+ * Provider auto-detection:
+ *   GROQ_API_KEY set            → Groq  (https://api.groq.com/openai/v1)
+ *   OPENAI_API_KEY starts gsk_  → Groq  (key placed in wrong var — handled)
+ *   OPENAI_API_KEY starts sk-   → OpenAI (https://api.openai.com/v1)
  */
 
 import OpenAI from "openai";
@@ -134,24 +139,76 @@ export interface AIResponse {
   error: string | null;
 }
 
+// ── Provider resolution ───────────────────────────────────────────────────────
+// Supports Groq (llama-3.3-70b-versatile) and OpenAI (gpt-4o-mini).
+// Groq keys start with "gsk_"; OpenAI keys start with "sk-".
+// GROQ_API_KEY takes priority; OPENAI_API_KEY is checked next and auto-routed.
+
+interface ProviderConfig {
+  apiKey: string;
+  baseURL: string;
+  model: string;
+  providerName: string;
+}
+
+function resolveProvider(): ProviderConfig | null {
+  const groqKey = process.env.GROQ_API_KEY;
+  const openaiKey =
+    process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+
+  // Prefer explicit GROQ_API_KEY
+  if (groqKey) {
+    return {
+      apiKey: groqKey,
+      baseURL: "https://api.groq.com/openai/v1",
+      model: "llama-3.3-70b-versatile",
+      providerName: "Groq",
+    };
+  }
+
+  if (openaiKey) {
+    // Groq keys start with "gsk_" — user may have pasted into the OpenAI slot
+    if (openaiKey.startsWith("gsk_")) {
+      return {
+        apiKey: openaiKey,
+        baseURL: "https://api.groq.com/openai/v1",
+        model: "llama-3.3-70b-versatile",
+        providerName: "Groq",
+      };
+    }
+    // Standard OpenAI key
+    const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined;
+    return {
+      apiKey: openaiKey,
+      baseURL: baseURL ?? "https://api.openai.com/v1",
+      model: "gpt-4o-mini",
+      providerName: "OpenAI",
+    };
+  }
+
+  return null;
+}
+
 export async function processAIMessage(
   userMessage: string,
   history: AIMessage[],
 ): Promise<AIResponse> {
-  const apiKey =
-    process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
-  const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined;
+  const provider = resolveProvider();
 
-  if (!apiKey) {
+  if (!provider) {
     return {
-      message: "⚠️ AI assistant not configured. Add the OpenAI integration in Replit or set **OPENAI_API_KEY** in environment secrets to enable the AI controller.",
+      message:
+        "⚠️ AI assistant not configured. Set **GROQ_API_KEY** (or **OPENAI_API_KEY**) in Replit Secrets to enable the AI controller.",
       action: null,
       pendingContext: null,
-      error: "No OpenAI API key configured",
+      error: "No AI API key configured",
     };
   }
 
-  const client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
+  const client = new OpenAI({
+    apiKey: provider.apiKey,
+    baseURL: provider.baseURL,
+  });
 
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     { role: "system", content: SYSTEM_PROMPT },
@@ -161,7 +218,7 @@ export async function processAIMessage(
 
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: provider.model,
       messages,
       temperature: 0.3,
       max_tokens: 512,
@@ -189,11 +246,15 @@ export async function processAIMessage(
       error: parsed.error ?? null,
     };
   } catch (e: any) {
-    const msg = e?.status === 401
-      ? "Invalid OpenAI API key. Please check your OPENAI_API_KEY secret."
-      : e?.status === 429
-      ? "OpenAI rate limit hit. Please wait a moment and try again."
-      : `AI error: ${e?.message ?? "Unknown error"}`;
+    const status = e?.status;
+    const msg =
+      status === 401
+        ? `Invalid ${provider.providerName} API key. Please check your secret.`
+        : status === 429
+          ? `${provider.providerName} rate limit hit. Please wait a moment and try again.`
+          : status === 503 || status === 502
+            ? `${provider.providerName} is temporarily unavailable. Retrying shortly.`
+            : `AI error: ${e?.message ?? "Unknown error"}`;
 
     return {
       message: `⚠️ ${msg}`,
