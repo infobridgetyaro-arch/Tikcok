@@ -493,3 +493,130 @@ export function getApiKeyStatus(): { total: number; active: number; exhausted: n
     currentIndex: currentKeyIndex,
   };
 }
+
+// ── Per-key detailed telemetry ───────────────────────────────────────────────
+interface KeyTelemetry {
+  totalRequests: number;
+  requestTimestamps: number[];  // rolling window for req/min
+  errorsTotal: number;
+  lastSuccessAt: number | null;
+  lastErrorAt: number | null;
+  lastErrorMsg: string | null;
+}
+const keyTelemetry: Map<number, KeyTelemetry> = new Map();
+const startedAt = Date.now();
+
+const eventLog: Array<{ ts: number; type: "rotate" | "exhaust" | "error" | "success"; keyIndex: number; msg: string }> = [];
+
+function getTelemetry(idx: number): KeyTelemetry {
+  if (!keyTelemetry.has(idx)) {
+    keyTelemetry.set(idx, {
+      totalRequests: 0,
+      requestTimestamps: [],
+      errorsTotal: 0,
+      lastSuccessAt: null,
+      lastErrorAt: null,
+      lastErrorMsg: null,
+    });
+  }
+  return keyTelemetry.get(idx)!;
+}
+
+export function recordApiRequest(success: boolean, errorMsg?: string) {
+  const idx = currentKeyIndex;
+  const t   = getTelemetry(idx);
+  const now = Date.now();
+  t.totalRequests++;
+  t.requestTimestamps.push(now);
+  // Keep only last 2 minutes for rolling window
+  const cutoff = now - 120000;
+  t.requestTimestamps = t.requestTimestamps.filter((ts) => ts > cutoff);
+  if (success) {
+    t.lastSuccessAt = now;
+    if (t.totalRequests % 50 === 1) {
+      eventLog.push({ ts: now, type: "success", keyIndex: idx, msg: `Key #${idx + 1}: ${t.totalRequests} requests served` });
+    }
+  } else {
+    t.errorsTotal++;
+    t.lastErrorAt  = now;
+    t.lastErrorMsg = errorMsg || "Unknown error";
+    eventLog.push({ ts: now, type: "error", keyIndex: idx, msg: `Key #${idx + 1}: ${errorMsg || "error"}` });
+  }
+  if (eventLog.length > 100) eventLog.splice(0, eventLog.length - 100);
+}
+
+export function recordKeyRotation(reason: string) {
+  const now = Date.now();
+  const idx = currentKeyIndex;
+  eventLog.push({ ts: now, type: "rotate", keyIndex: idx, msg: `Rotated to Key #${idx + 1}: ${reason}` });
+  if (eventLog.length > 100) eventLog.splice(0, eventLog.length - 100);
+}
+
+export function forceRotateToKey(targetIndex: number): boolean {
+  if (targetIndex < 0 || targetIndex >= apiKeys.length) return false;
+  if (exhaustedUntil.has(targetIndex)) return false;
+  currentKeyIndex = targetIndex;
+  recordKeyRotation(`Manual switch to Key #${targetIndex + 1}`);
+  return true;
+}
+
+function computeHealthScore(idx: number): number {
+  if (exhaustedUntil.has(idx)) return 0;
+  const t = keyTelemetry.get(idx);
+  if (!t || t.totalRequests === 0) return 100;
+  const errorRate = t.totalRequests > 0 ? t.errorsTotal / t.totalRequests : 0;
+  const now = Date.now();
+  const recentReqs = t.requestTimestamps.filter((ts) => ts > now - 60000).length;
+  const ratePenalty = recentReqs > 45 ? Math.min(30, (recentReqs - 45) * 2) : 0;
+  return Math.max(0, Math.round(100 - errorRate * 100 - ratePenalty));
+}
+
+function maskApiKey(key: string): string {
+  if (key.length <= 8) return "••••••••";
+  return key.slice(0, 6) + "••••••••" + key.slice(-4);
+}
+
+export function getDetailedApiStatus() {
+  const now = Date.now();
+  // Compute quota reset (midnight Pacific = 08:00 UTC)
+  const nextReset = new Date();
+  nextReset.setUTCHours(8, 0, 0, 0);
+  if (nextReset.getTime() <= now) nextReset.setUTCDate(nextReset.getUTCDate() + 1);
+  const quotaResetAt = nextReset.getTime();
+
+  const keys = apiKeys.map((_, idx) => {
+    const t = keyTelemetry.get(idx);
+    const recentReqs = t
+      ? t.requestTimestamps.filter((ts) => ts > now - 60000).length
+      : 0;
+    return {
+      index: idx,
+      masked: maskApiKey(apiKeys[idx]),
+      isActive: idx === currentKeyIndex && !exhaustedUntil.has(idx),
+      isExhausted: exhaustedUntil.has(idx),
+      totalRequests: t?.totalRequests ?? 0,
+      requestsLastMinute: recentReqs,
+      errorsTotal: t?.errorsTotal ?? 0,
+      lastSuccessAt: t?.lastSuccessAt ?? null,
+      lastErrorAt: t?.lastErrorAt ?? null,
+      lastErrorMsg: t?.lastErrorMsg ?? null,
+      quotaResetAt: exhaustedUntil.has(idx) ? quotaResetAt : null,
+      healthScore: computeHealthScore(idx),
+    };
+  });
+
+  const totalRequests = keys.reduce((s, k) => s + k.totalRequests, 0);
+  const totalErrors   = keys.reduce((s, k) => s + k.errorsTotal, 0);
+
+  return {
+    totalKeys: apiKeys.length,
+    activeKeyIndex: currentKeyIndex,
+    allExhausted: exhaustedUntil.size === apiKeys.length && apiKeys.length > 0,
+    quotaResetAt,
+    keys,
+    totalRequestsAllKeys: totalRequests,
+    totalErrors,
+    uptimeSec: Math.round((now - startedAt) / 1000),
+    eventLog: [...eventLog],
+  };
+}

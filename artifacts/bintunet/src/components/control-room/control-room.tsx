@@ -13,6 +13,8 @@ import { MultiViewPanel } from "./multi-view-panel";
 import { AIPanel } from "./ai-panel";
 import { DonationPanel, type DonationRecord } from "./donation-panel";
 import { GiftPopup, type GiftEvent } from "./gift-popup";
+import { YouTubeApiPanel } from "./youtube-api-panel";
+import { Key } from "lucide-react";
 import { useWebSocket } from "@/hooks/use-websocket";
 import { toast } from "sonner";
 
@@ -143,7 +145,7 @@ interface ControlRoomProps {
   streamProcStats?: Record<string, { cpu: number; mem: number; frames?: number; uptime?: number }>;
 }
 
-type Tab = "ai" | "news" | "ads" | "break" | "chat" | "stats" | "subs" | "bg" | "alerts" | "mic" | "qr" | "donate" | "screen" | "music" | "stage";
+type Tab = "ai" | "news" | "ads" | "break" | "chat" | "stats" | "subs" | "bg" | "alerts" | "mic" | "qr" | "donate" | "screen" | "music" | "stage" | "yt-api";
 type EditMode = "desktop" | "mobile";
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode; accent: string }[] = [
@@ -162,6 +164,7 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode; accent: string }[] 
   { id: "screen", label: "Screen",  icon: <MonitorUp size={13} />,                   accent: "#818cf8" },
   { id: "music",  label: "Music",    icon: <Music size={13} />,                       accent: "#f472b6" },
   { id: "stage",  label: "Stage",    icon: <LayoutGrid size={13} />,                  accent: "#a78bfa" },
+  { id: "yt-api", label: "YT Keys",  icon: <Key size={13} />,                         accent: "#ef4444" },
 ];
 
 const NEWS_STYLES       = ["Al Jazeera", "CNN", "BBC", "Bloomberg", "Sky News", "Neon Wire", "Float Glass", "Sports", "Cinematic", "Gold Luxury", "Minimal"] as const;
@@ -4120,6 +4123,10 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
           {/* ── STAGE / MULTI-VIEW ── */}
           {activeTab === "stage" && (
             <MultiViewPanel streams={streams} procStats={streamProcStats} />
+          )}
+
+          {activeTab === "yt-api" && (
+            <YouTubeApiPanel />
           )}
 
         </div>

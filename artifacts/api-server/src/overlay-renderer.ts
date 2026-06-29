@@ -2288,51 +2288,66 @@ export class OverlayRenderer {
 
   private drawBubbleChat() {
     const { ctx, W, H, state } = this;
-    const msgs = state.chatBurnMessages.slice(-5);
+    const msgs = state.chatBurnMessages.slice(-6);
     if (!msgs.length) return;
     const effPos = this.pos(state.chatBurnPosition, state.mobileChatBurnPosition);
     const bx = this.px(effPos.x, W);
     const by = this.px(effPos.y, H);
-    const rowH = Math.round(H * 0.064);
-    const gap = Math.round(H * 0.009);
-    const cardW = Math.round(W * 0.46);
-    const radius = Math.round(rowH * 0.32);
-    const avatarR = Math.round(rowH * 0.30);
-    const accentBarW = Math.round(rowH * 0.065);
-    const padLeft = accentBarW + Math.round(rowH * 0.25);
-    const avatarX = bx + padLeft + avatarR;
-    const textX = avatarX + avatarR + Math.round(rowH * 0.18);
-    const fontSize = Math.round(rowH * 0.295);
+    const rowH   = Math.round(H * 0.072);
+    const gap    = Math.round(H * 0.009);
+    const cardW  = Math.round(W * 0.44);
+    const radius = Math.round(rowH * 0.3);
+    const avatarR = Math.round(rowH * 0.28);
+    const accentW = Math.round(rowH * 0.062);
+    const padL    = accentW + Math.round(rowH * 0.22);
+    const avatarX = bx + padL + avatarR;
+    const textX   = avatarX + avatarR + Math.round(rowH * 0.16);
     const nameFontSize = Math.round(rowH * 0.28);
+    const fontSize     = Math.round(rowH * 0.29);
     ctx.textBaseline = "middle";
+
     msgs.forEach((msg, i) => {
       const my = by + i * (rowH + gap);
       if (my + rowH > H) return;
-      const accentColor = msg.color || "#06b6d4";
-      const cy = my + rowH / 2;
+      const ac  = msg.color || "#06b6d4";
+      const cy  = my + rowH / 2;
 
-      // Card shadow
+      // Card shadow + base
       ctx.save();
-      ctx.shadowColor = "rgba(0,0,0,0.55)";
-      ctx.shadowBlur = 12;
-      ctx.shadowOffsetY = 3;
-      ctx.fillStyle = "rgba(10,13,28,0.92)";
+      ctx.shadowColor  = "rgba(0,0,0,0.6)";
+      ctx.shadowBlur   = 16;
+      ctx.shadowOffsetY = 4;
+      ctx.fillStyle = "rgba(6,8,22,0.93)";
       this.fillRR(bx, my, cardW, rowH, radius);
       ctx.restore();
 
-      // Subtle border
+      // Card border
       ctx.strokeStyle = "rgba(255,255,255,0.09)";
-      ctx.lineWidth = 1;
+      ctx.lineWidth   = 1;
       this.strokeRR(bx, my, cardW, rowH, radius);
 
-      // Left accent bar (StreamYard-style colour stripe)
-      ctx.fillStyle = accentColor;
-      this.fillRR(bx, my, accentBarW, rowH, radius);
-      // cover right half of accent bar with card colour to make it flush
-      ctx.fillStyle = "rgba(10,13,28,0.92)";
-      ctx.fillRect(bx + accentBarW / 2, my, accentBarW, rowH);
+      // Left accent bar
+      ctx.save();
+      this.clipRR(bx, my, accentW + radius, rowH, radius);
+      ctx.fillStyle = ac;
+      ctx.fillRect(bx, my, accentW, rowH);
+      ctx.restore();
 
-      // Avatar — use cached profile photo, else coloured initial circle
+      // Accent glow sweep
+      const aGlow = ctx.createLinearGradient(bx + accentW, 0, bx + accentW + 48, 0);
+      aGlow.addColorStop(0, `${ac}28`);
+      aGlow.addColorStop(1, "transparent");
+      ctx.fillStyle = aGlow;
+      ctx.fillRect(bx + accentW, my, 48, rowH);
+
+      // Top shine line
+      const shine = ctx.createLinearGradient(bx, my, bx + cardW * 0.6, my);
+      shine.addColorStop(0, "rgba(255,255,255,0.07)");
+      shine.addColorStop(1, "transparent");
+      ctx.fillStyle = shine;
+      ctx.fillRect(bx + accentW, my, cardW - accentW, 1);
+
+      // Avatar
       const cachedImg = msg.photo ? this.avatarCache.get(msg.photo) : undefined;
       if (cachedImg) {
         ctx.save();
@@ -2341,39 +2356,43 @@ export class OverlayRenderer {
         ctx.clip();
         ctx.drawImage(cachedImg, avatarX - avatarR, cy - avatarR, avatarR * 2, avatarR * 2);
         ctx.restore();
-        // thin ring
         ctx.beginPath();
-        ctx.arc(avatarX, cy, avatarR + 0.8, 0, Math.PI * 2);
-        ctx.strokeStyle = `${accentColor}88`;
+        ctx.arc(avatarX, cy, avatarR + 1, 0, Math.PI * 2);
+        ctx.strokeStyle = `${ac}99`;
         ctx.lineWidth = 1.5;
         ctx.stroke();
       } else {
-        // Coloured initial circle fallback
-        ctx.fillStyle = accentColor;
+        // Gradient initial circle
+        const gAvatar = ctx.createRadialGradient(avatarX - avatarR * 0.25, cy - avatarR * 0.25, 0, avatarX, cy, avatarR);
+        gAvatar.addColorStop(0, `${ac}cc`);
+        gAvatar.addColorStop(1, `${ac}77`);
+        ctx.fillStyle = gAvatar;
         ctx.beginPath();
         ctx.arc(avatarX, cy, avatarR, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = "#fff";
-        ctx.font = `bold ${Math.round(avatarR * 0.98)}px sans-serif`;
+        ctx.font = `bold ${Math.round(avatarR * 0.92)}px sans-serif`;
         ctx.textAlign = "center";
         ctx.fillText((msg.name[0] || "?").toUpperCase(), avatarX, cy);
       }
 
-      // Username (bold, accent colour)
+      // Name
       ctx.font = `700 ${nameFontSize}px sans-serif`;
       ctx.textAlign = "left";
-      ctx.fillStyle = accentColor;
-      const maxNameW = Math.round(cardW * 0.38);
+      ctx.fillStyle = ac;
+      const maxNameW = Math.round(cardW * 0.36);
       let dName = msg.name;
-      while (dName.length > 2 && ctx.measureText(dName).width > maxNameW) dName = dName.slice(0, -2) + "…";
-      ctx.fillText(dName, textX, my + rowH * 0.30);
+      while (dName.length > 2 && ctx.measureText(dName).width > maxNameW)
+        dName = dName.slice(0, -2) + "…";
+      ctx.fillText(dName, textX, my + rowH * 0.29);
 
-      // Message text (light grey)
+      // Message text
       ctx.font = `${fontSize}px sans-serif`;
-      ctx.fillStyle = "rgba(226,232,240,0.92)";
+      ctx.fillStyle = "rgba(228,235,255,0.92)";
       const available = cardW - (textX - bx) - Math.round(rowH * 0.2);
       let txt = msg.text;
-      while (txt.length > 3 && ctx.measureText(txt).width > available) txt = txt.slice(0, -4) + "…";
+      while (txt.length > 3 && ctx.measureText(txt).width > available)
+        txt = txt.slice(0, -4) + "…";
       ctx.fillText(txt, textX, my + rowH * 0.70);
     });
     ctx.textBaseline = "alphabetic";
@@ -2381,42 +2400,59 @@ export class OverlayRenderer {
 
   private drawBubbleChatMobile() {
     const { ctx, W, H, state } = this;
-    const msgs = state.chatBurnMessages.slice(-5);
+    const msgs = state.chatBurnMessages.slice(-6);
     if (!msgs.length) return;
     const effPos = this.pos(state.chatBurnPosition, state.mobileChatBurnPosition);
-    const bx = this.px(effPos.x, W);
-    const by = this.px(effPos.y, H);
-    const cardW = Math.round(W * 0.88);
-    const rowH = Math.round(H * 0.043);
-    const gap = Math.round(H * 0.007);
-    const radius = Math.round(rowH * 0.4);
+    const bx     = this.px(effPos.x, W);
+    const by     = this.px(effPos.y, H);
+    const cardW  = Math.round(W * 0.90);
+    const rowH   = Math.round(H * 0.044);
+    const gap    = Math.round(H * 0.006);
+    const radius = Math.round(rowH * 0.38);
     const fontSize = Math.round(rowH * 0.36);
-    const padX = Math.round(rowH * 0.35);
+    const padX   = Math.round(rowH * 0.35);
+    const accentW = Math.round(rowH * 0.065);
     ctx.textBaseline = "middle";
+
     msgs.forEach((msg, i) => {
       const my = by + i * (rowH + gap);
       if (my + rowH > H) return;
-      const avatarColor = msg.color || "#e8b4b8";
+      const ac = msg.color || "#06b6d4";
       const cy = my + rowH / 2;
-      // Rounded card
-      ctx.fillStyle = "rgba(8,10,22,0.88)";
+
+      // Card
+      ctx.save();
+      ctx.shadowColor  = "rgba(0,0,0,0.55)";
+      ctx.shadowBlur   = 10;
+      ctx.shadowOffsetY = 2;
+      ctx.fillStyle = "rgba(6,8,22,0.91)";
       this.fillRR(bx, my, cardW, rowH, radius);
-      ctx.strokeStyle = "rgba(255,255,255,0.10)";
-      ctx.lineWidth = 1;
+      ctx.restore();
+      ctx.strokeStyle = "rgba(255,255,255,0.09)";
+      ctx.lineWidth   = 1;
       this.strokeRR(bx, my, cardW, rowH, radius);
-      // Username + message inline
+
+      // Left accent
+      ctx.save();
+      this.clipRR(bx, my, accentW + radius, rowH, radius);
+      ctx.fillStyle = ac;
+      ctx.fillRect(bx, my, accentW, rowH);
+      ctx.restore();
+
+      // name: message inline
       const nameStr = msg.name + ": ";
       ctx.font = `bold ${fontSize}px sans-serif`;
       ctx.textAlign = "left";
-      ctx.fillStyle = avatarColor;
-      ctx.fillText(nameStr, bx + padX, cy);
+      ctx.fillStyle = ac;
+      ctx.fillText(nameStr, bx + padX + accentW, cy);
       const nameW = ctx.measureText(nameStr).width;
-      ctx.fillStyle = "rgba(232,232,238,0.95)";
-      ctx.font = `${Math.round(fontSize * 0.93)}px sans-serif`;
-      const available = cardW - nameW - padX * 2;
+      ctx.fillStyle = "rgba(228,235,255,0.94)";
+      ctx.font = `${Math.round(fontSize * 0.92)}px sans-serif`;
+      const available = cardW - nameW - padX * 2 - accentW;
       let txt = msg.text;
-      while (txt.length > 3 && ctx.measureText(txt).width > available) txt = txt.slice(0, -4) + "…";
-      ctx.fillText(txt, bx + padX + nameW, cy);
+      while (txt.length > 3 && ctx.measureText(txt).width > available)
+        txt = txt.slice(0, -4) + "…";
+      ctx.fillText(txt, bx + padX + accentW + nameW, cy);
     });
     ctx.textBaseline = "alphabetic";
   }
@@ -2424,164 +2460,241 @@ export class OverlayRenderer {
   private drawFloatChat() {
     const { ctx, W, H, state } = this;
     const now = Date.now();
-    const effPos = this.pos(state.chatBurnPosition, state.mobileChatBurnPosition);
-    const baseX = this.px(effPos.x, W);
-    const baseY = this.px(effPos.y, H);
-    const lifetimeSec = 5;
-    const fontSize = Math.round(H * 0.038);
-    const padX = Math.round(fontSize * 0.5);
-    const padY = Math.round(fontSize * 0.32);
-    const cardH = fontSize + padY * 2;
-    const radius = Math.round(cardH * 0.42);
+    const effPos   = this.pos(state.chatBurnPosition, state.mobileChatBurnPosition);
+    const baseX    = this.px(effPos.x, W);
+    const baseY    = this.px(effPos.y, H);
+    const lifetimeSec = 5.5;
+    const fontSize = Math.round(H * 0.037);
+    const padX     = Math.round(fontSize * 0.55);
+    const padY     = Math.round(fontSize * 0.34);
+    const cardH    = fontSize + padY * 2;
+    const radius   = Math.round(cardH * 0.44);
+
     for (const msg of state.chatBurnMessages) {
       const ageSec = (now - msg.ts) / 1000;
       if (ageSec > lifetimeSec) continue;
-      const hash = [...msg.name].reduce((acc, c) => acc + c.charCodeAt(0), 0);
-      const spread = (hash % 11) / 10;
-      const mx = baseX + Math.round(spread * Math.min(W * 0.4, W - baseX - fontSize * 8));
-      const my = baseY - Math.round((ageSec / lifetimeSec) * H * 0.25);
-      const alpha = ageSec > lifetimeSec * 0.7
-        ? 1 - (ageSec - lifetimeSec * 0.7) / (lifetimeSec * 0.3)
+      const hash   = [...msg.name].reduce((acc, c) => acc + c.charCodeAt(0), 0);
+      const spread = (hash % 13) / 12;
+      const mx     = baseX + Math.round(spread * Math.min(W * 0.42, W - baseX - fontSize * 9));
+      const rise   = (ageSec / lifetimeSec) * H * 0.26;
+      const my     = baseY - Math.round(rise);
+      const fadeStart = lifetimeSec * 0.65;
+      const alpha  = ageSec > fadeStart
+        ? 1 - (ageSec - fadeStart) / (lifetimeSec - fadeStart)
         : 1;
       if (alpha <= 0) continue;
+
+      ctx.save();
       ctx.globalAlpha = this._panelAlpha * alpha;
+
       ctx.font = `bold ${fontSize}px sans-serif`;
-      const nameLabel = `${msg.name}: `;
+      const nameLabel  = `${msg.name}: `;
       const nameLabelW = ctx.measureText(nameLabel).width;
       ctx.font = `${fontSize}px sans-serif`;
-      const msgW = ctx.measureText(msg.text).width;
+      const msgW  = ctx.measureText(msg.text).width;
       const cardW = nameLabelW + msgW + padX * 2;
       const cardTop = my - Math.round(cardH / 2);
-      // Rounded frosted card
-      ctx.fillStyle = "rgba(8,10,22,0.82)";
+
+      // Frosted glass card
+      ctx.fillStyle = "rgba(6,8,22,0.84)";
       this.fillRR(mx - padX, cardTop, cardW, cardH, radius);
       ctx.strokeStyle = "rgba(255,255,255,0.10)";
-      ctx.lineWidth = 1;
+      ctx.lineWidth   = 1;
       this.strokeRR(mx - padX, cardTop, cardW, cardH, radius);
-      // Username in user color
+
+      // Accent top stripe
+      const ac = msg.color || "#a78bfa";
+      const topStripe = ctx.createLinearGradient(mx - padX, 0, mx - padX + cardW * 0.5, 0);
+      topStripe.addColorStop(0, `${ac}55`);
+      topStripe.addColorStop(1, "transparent");
+      ctx.fillStyle = topStripe;
+      ctx.fillRect(mx - padX + radius, cardTop, cardW - radius * 2, 1.5);
+
+      // Username
       ctx.font = `bold ${fontSize}px sans-serif`;
-      ctx.textAlign = "left";
+      ctx.textAlign    = "left";
       ctx.textBaseline = "middle";
-      ctx.fillStyle = msg.color || "#a78bfa";
+      ctx.fillStyle    = ac;
       ctx.fillText(nameLabel, mx, my);
-      // Message text
-      ctx.font = `${fontSize}px sans-serif`;
-      ctx.fillStyle = "#fff";
+
+      // Message
+      ctx.font = `${Math.round(fontSize * 0.94)}px sans-serif`;
+      ctx.fillStyle = "rgba(235,240,255,0.95)";
       ctx.fillText(msg.text, mx + nameLabelW, my);
-      ctx.globalAlpha = 1;
+
+      ctx.restore();
     }
     ctx.textBaseline = "alphabetic";
   }
 
   private drawSidebarChat() {
     const { ctx, W, H, state } = this;
-    const msgs = state.chatBurnMessages.slice(-8);
+    const msgs = state.chatBurnMessages.slice(-9);
     if (!msgs.length) return;
     const effPos = this.pos(state.chatBurnPosition, state.mobileChatBurnPosition);
-    const panelW = Math.round(W * 0.3);
-    const px2 = this.px(effPos.x, W);
-    const py2 = this.px(effPos.y, H);
-    const headerH = Math.round(H * 0.033);
-    const lineH = Math.round(H * 0.055);
-    const panelH = Math.min(H - py2 - 8, headerH + msgs.length * lineH + 14);
-    const fontSize = Math.round(lineH * 0.38);
-    const radius = Math.round(panelH * 0.04);
-    // Rounded panel background
-    ctx.fillStyle = "rgba(6,8,20,0.90)";
+    const panelW = Math.round(W * 0.30);
+    const px2    = this.px(effPos.x, W);
+    const py2    = this.px(effPos.y, H);
+    const headerH = Math.round(H * 0.034);
+    const lineH   = Math.round(H * 0.054);
+    const panelH  = Math.min(H - py2 - 8, headerH + msgs.length * lineH + 16);
+    const fontSize = Math.round(lineH * 0.37);
+    const radius   = Math.round(panelH * 0.04);
+
+    // Panel base
+    ctx.save();
+    ctx.shadowColor  = "rgba(0,0,0,0.7)";
+    ctx.shadowBlur   = 20;
+    ctx.shadowOffsetX = 4;
+    ctx.fillStyle = "rgba(5,7,18,0.92)";
     this.fillRR(px2, py2, panelW, panelH, radius);
-    // Header row (clipped accent gradient)
+    ctx.restore();
+
+    // Header accent gradient (clipped)
     ctx.save();
     this.clipRR(px2, py2, panelW, panelH, radius);
     const hGrad = ctx.createLinearGradient(px2, py2, px2 + panelW, py2);
-    hGrad.addColorStop(0, "rgba(170,0,0,0.88)");
-    hGrad.addColorStop(1, "rgba(120,0,0,0.70)");
+    hGrad.addColorStop(0, "rgba(129,140,248,0.9)");
+    hGrad.addColorStop(0.5, "rgba(99,102,241,0.75)");
+    hGrad.addColorStop(1, "rgba(79,70,229,0.6)");
     ctx.fillStyle = hGrad;
     ctx.fillRect(px2, py2, panelW, headerH);
     ctx.restore();
+
     // Panel border
-    ctx.strokeStyle = "rgba(255,255,255,0.09)";
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(129,140,248,0.25)";
+    ctx.lineWidth   = 1;
     this.strokeRR(px2, py2, panelW, panelH, radius);
+
     // Header label
-    ctx.fillStyle = "#fff";
-    ctx.font = `bold ${Math.round(headerH * 0.5)}px sans-serif`;
-    ctx.textAlign = "center";
+    ctx.fillStyle    = "#fff";
+    ctx.font         = `800 ${Math.round(headerH * 0.48)}px sans-serif`;
+    ctx.textAlign    = "center";
     ctx.textBaseline = "middle";
     ctx.fillText("● LIVE CHAT", px2 + panelW / 2, py2 + headerH / 2);
-    // Messages
+
+    // Alternating row background + messages
     msgs.forEach((msg, i) => {
-      const my = py2 + headerH + 7 + i * lineH;
+      const my = py2 + headerH + 8 + i * lineH;
       if (my + lineH > py2 + panelH - 4) return;
+
+      // Alternating row tint
+      if (i % 2 === 0) {
+        ctx.fillStyle = "rgba(255,255,255,0.025)";
+        ctx.fillRect(px2 + 1, my, panelW - 2, lineH);
+      }
+
+      // Row separator
       if (i > 0) {
-        ctx.fillStyle = "rgba(255,255,255,0.05)";
+        ctx.fillStyle = "rgba(255,255,255,0.06)";
         ctx.fillRect(px2 + 8, my - 1, panelW - 16, 1);
       }
-      ctx.font = `bold ${fontSize}px sans-serif`;
-      ctx.textAlign = "left";
-      ctx.textBaseline = "top";
-      ctx.fillStyle = msg.color || "#a78bfa";
-      const nameStr = msg.name + ": ";
-      ctx.fillText(nameStr, px2 + 10, my);
-      const nameW = ctx.measureText(nameStr).width;
-      ctx.fillStyle = "rgba(232,232,238,0.85)";
-      ctx.font = `${Math.round(fontSize * 0.92)}px sans-serif`;
-      const available = panelW - 16 - nameW;
+
+      const ac = msg.color || "#818cf8";
+
+      // Color dot
+      ctx.fillStyle = ac;
+      ctx.beginPath();
+      ctx.arc(px2 + 7, my + lineH / 2, Math.round(lineH * 0.085), 0, Math.PI * 2);
+      ctx.fill();
+
+      // Name
+      ctx.font = `700 ${fontSize}px sans-serif`;
+      ctx.textAlign    = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle    = ac;
+      const nameStr = msg.name + ":";
+      let dName = nameStr;
+      const maxNameW = Math.round(panelW * 0.44);
+      while (dName.length > 3 && ctx.measureText(dName).width > maxNameW)
+        dName = dName.slice(0, -2) + "…";
+      ctx.fillText(dName, px2 + 16, my + lineH / 2);
+      const nameW = ctx.measureText(dName).width;
+
+      // Message
+      ctx.fillStyle = "rgba(224,230,255,0.85)";
+      ctx.font = `${Math.round(fontSize * 0.91)}px sans-serif`;
+      const available = panelW - 18 - nameW - 6;
       let txt = msg.text;
-      while (txt.length > 3 && ctx.measureText(txt).width > available) txt = txt.slice(0, -4) + "…";
-      ctx.fillText(txt, px2 + 10 + nameW, my);
+      while (txt.length > 3 && ctx.measureText(txt).width > available)
+        txt = txt.slice(0, -4) + "…";
+      ctx.fillText(txt, px2 + 16 + nameW + 4, my + lineH / 2);
     });
     ctx.textBaseline = "alphabetic";
   }
 
   private drawSidebarChatMobile() {
     const { ctx, W, H, state } = this;
-    const msgs = state.chatBurnMessages.slice(-6);
+    const msgs = state.chatBurnMessages.slice(-7);
     if (!msgs.length) return;
     const effPos = this.pos(state.chatBurnPosition, state.mobileChatBurnPosition);
-    const panelW = Math.round(W * 0.88);
-    const px2 = this.px(effPos.x, W);
-    const py2 = this.px(effPos.y, H);
+    const panelW = Math.round(W * 0.90);
+    const px2    = this.px(effPos.x, W);
+    const py2    = this.px(effPos.y, H);
     const headerH = Math.round(H * 0.028);
-    const lineH = Math.round(H * 0.04);
-    const panelH = headerH + msgs.length * (lineH + 4) + 10;
-    const fontSize = Math.round(lineH * 0.38);
-    const radius = 10;
-    // Rounded panel
-    ctx.fillStyle = "rgba(6,8,20,0.90)";
+    const lineH   = Math.round(H * 0.041);
+    const panelH  = headerH + msgs.length * (lineH + 3) + 10;
+    const fontSize = Math.round(lineH * 0.37);
+    const radius   = 11;
+
+    // Panel
+    ctx.save();
+    ctx.shadowColor  = "rgba(0,0,0,0.65)";
+    ctx.shadowBlur   = 14;
+    ctx.shadowOffsetY = 3;
+    ctx.fillStyle = "rgba(5,7,18,0.92)";
     this.fillRR(px2, py2, panelW, panelH, radius);
+    ctx.restore();
+
     // Header gradient
     ctx.save();
     this.clipRR(px2, py2, panelW, panelH, radius);
     const hg = ctx.createLinearGradient(px2, py2, px2 + panelW, py2);
-    hg.addColorStop(0, "rgba(170,0,0,0.88)");
-    hg.addColorStop(1, "rgba(120,0,0,0.70)");
+    hg.addColorStop(0, "rgba(129,140,248,0.9)");
+    hg.addColorStop(1, "rgba(79,70,229,0.65)");
     ctx.fillStyle = hg;
     ctx.fillRect(px2, py2, panelW, headerH);
     ctx.restore();
-    ctx.strokeStyle = "rgba(255,255,255,0.09)";
-    ctx.lineWidth = 1;
+
+    ctx.strokeStyle = "rgba(129,140,248,0.22)";
+    ctx.lineWidth   = 1;
     this.strokeRR(px2, py2, panelW, panelH, radius);
+
     // Header label
-    ctx.fillStyle = "#fff";
-    ctx.font = `bold ${Math.round(headerH * 0.5)}px sans-serif`;
-    ctx.textAlign = "center";
+    ctx.fillStyle    = "#fff";
+    ctx.font         = `800 ${Math.round(headerH * 0.48)}px sans-serif`;
+    ctx.textAlign    = "center";
     ctx.textBaseline = "middle";
     ctx.fillText("● LIVE CHAT", px2 + panelW / 2, py2 + headerH / 2);
+
     msgs.forEach((msg, i) => {
-      const my = py2 + headerH + 5 + i * (lineH + 4);
-      ctx.font = `bold ${fontSize}px sans-serif`;
-      ctx.textAlign = "left";
-      ctx.textBaseline = "top";
-      ctx.fillStyle = msg.color || "#a78bfa";
-      const nameStr = msg.name + ": ";
-      ctx.fillText(nameStr, px2 + 8, my);
-      const nameW = ctx.measureText(nameStr).width;
-      ctx.fillStyle = "rgba(232,232,238,0.85)";
-      ctx.font = `${Math.round(fontSize * 0.92)}px sans-serif`;
-      const available = panelW - 16 - nameW;
+      const my = py2 + headerH + 5 + i * (lineH + 3);
+      const ac = msg.color || "#818cf8";
+
+      // Dot
+      ctx.fillStyle = ac;
+      ctx.beginPath();
+      ctx.arc(px2 + 8, my + lineH / 2, Math.round(lineH * 0.09), 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.font = `700 ${fontSize}px sans-serif`;
+      ctx.textAlign    = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle    = ac;
+      const nameStr = msg.name + ":";
+      let dName = nameStr;
+      while (dName.length > 3 && ctx.measureText(dName).width > panelW * 0.38)
+        dName = dName.slice(0, -2) + "…";
+      ctx.fillText(dName, px2 + 18, my + lineH / 2);
+      const nameW = ctx.measureText(dName).width;
+
+      ctx.fillStyle = "rgba(224,230,255,0.85)";
+      ctx.font = `${Math.round(fontSize * 0.91)}px sans-serif`;
+      const available = panelW - 22 - nameW - 5;
       let txt = msg.text;
-      while (txt.length > 3 && ctx.measureText(txt).width > available) txt = txt.slice(0, -4) + "…";
-      ctx.fillText(txt, px2 + 8 + nameW, my);
+      while (txt.length > 3 && ctx.measureText(txt).width > available)
+        txt = txt.slice(0, -4) + "…";
+      ctx.fillText(txt, px2 + 18 + nameW + 4, my + lineH / 2);
     });
     ctx.textBaseline = "alphabetic";
   }
@@ -2592,132 +2705,188 @@ export class OverlayRenderer {
     if (!msgs.length) return;
     const msg = msgs[msgs.length - 1];
     const effPos = this.pos(state.chatBurnPosition, state.mobileChatBurnPosition);
-    const bw = this.isVertical ? Math.round(W * 0.88) : Math.round(W * 0.58);
-    const bh = Math.round(H * 0.13);
+    const bw = this.isVertical ? Math.round(W * 0.90) : Math.round(W * 0.56);
+    const bh = Math.round(H * 0.135);
     const bx = this.px(effPos.x, W);
     const by = this.px(effPos.y, H);
     const radius = Math.round(bh * 0.13);
-    const avatarColor = msg.color || "#cc0001";
-    // Rounded card — dark gradient background
-    const bgGrad = ctx.createLinearGradient(bx, by, bx + bw, by + bh);
-    bgGrad.addColorStop(0, "rgba(10,10,22,0.96)");
-    bgGrad.addColorStop(1, "rgba(8,8,16,0.93)");
+    const ac     = msg.color || "#818cf8";
+
+    // Card shadow
+    ctx.save();
+    ctx.shadowColor  = "rgba(0,0,0,0.75)";
+    ctx.shadowBlur   = 24;
+    ctx.shadowOffsetY = 6;
+    const bgGrad = ctx.createLinearGradient(bx, by, bx, by + bh);
+    bgGrad.addColorStop(0, "rgba(10,10,24,0.97)");
+    bgGrad.addColorStop(1, "rgba(6,7,18,0.94)");
     ctx.fillStyle = bgGrad;
     this.fillRR(bx, by, bw, bh, radius);
-    // Left accent stripe + top gradient line (clipped to card)
+    ctx.restore();
+
+    // Interior decorations (clipped)
     ctx.save();
     this.clipRR(bx, by, bw, bh, radius);
-    ctx.fillStyle = avatarColor;
+
+    // Left accent stripe
+    ctx.fillStyle = ac;
     ctx.fillRect(bx, by, 5, bh);
-    const topLineGrad = ctx.createLinearGradient(bx, by, bx + bw, by);
-    topLineGrad.addColorStop(0, `${avatarColor}cc`);
-    topLineGrad.addColorStop(0.55, `${avatarColor}44`);
-    topLineGrad.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = topLineGrad;
+
+    // Subtle gradient wash from left
+    const leftWash = ctx.createLinearGradient(bx + 5, 0, bx + bw * 0.45, 0);
+    leftWash.addColorStop(0, `${ac}18`);
+    leftWash.addColorStop(1, "transparent");
+    ctx.fillStyle = leftWash;
+    ctx.fillRect(bx + 5, by, bw, bh);
+
+    // Top accent line
+    const topLine = ctx.createLinearGradient(bx, by, bx + bw * 0.6, by);
+    topLine.addColorStop(0, `${ac}bb`);
+    topLine.addColorStop(0.4, `${ac}44`);
+    topLine.addColorStop(1, "transparent");
+    ctx.fillStyle = topLine;
     ctx.fillRect(bx, by, bw, 2);
+
     ctx.restore();
-    // Card border
-    ctx.strokeStyle = "rgba(255,255,255,0.10)";
-    ctx.lineWidth = 1;
+
+    // Border
+    ctx.strokeStyle = `${ac}33`;
+    ctx.lineWidth   = 1;
     this.strokeRR(bx, by, bw, bh, radius);
-    // "NEW MESSAGE" label at top
-    const badgeLabelFs = Math.round(bh * 0.13);
-    ctx.fillStyle = avatarColor;
-    ctx.font = `bold ${badgeLabelFs}px sans-serif`;
-    ctx.textAlign = "left";
+
+    // "NEW MESSAGE" badge
+    const badgeFs = Math.round(bh * 0.12);
+    ctx.fillStyle    = ac;
+    ctx.font         = `800 ${badgeFs}px sans-serif`;
+    ctx.textAlign    = "left";
     ctx.textBaseline = "top";
     ctx.fillText("● NEW MESSAGE", bx + 16, by + bh * 0.08);
-    // Avatar circle with ring
-    const avatarR = Math.round(bh * 0.23);
-    const avatarCX = bx + avatarR + 14;
-    const avatarCY = by + bh * 0.58;
-    ctx.fillStyle = avatarColor;
-    ctx.beginPath();
-    ctx.arc(avatarCX, avatarCY, avatarR, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.22)";
-    ctx.lineWidth = 2;
+
+    // Avatar
+    const avatarR  = Math.round(bh * 0.22);
+    const avatarCX = bx + avatarR + 16;
+    const avatarCY = by + bh * 0.60;
+    const cachedImg = msg.photo ? this.avatarCache.get(msg.photo) : undefined;
+    if (cachedImg) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(avatarCX, avatarCY, avatarR, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(cachedImg, avatarCX - avatarR, avatarCY - avatarR, avatarR * 2, avatarR * 2);
+      ctx.restore();
+    } else {
+      const gAvatar = ctx.createRadialGradient(avatarCX - avatarR * 0.3, avatarCY - avatarR * 0.3, 0, avatarCX, avatarCY, avatarR);
+      gAvatar.addColorStop(0, `${ac}cc`);
+      gAvatar.addColorStop(1, `${ac}66`);
+      ctx.fillStyle = gAvatar;
+      ctx.beginPath();
+      ctx.arc(avatarCX, avatarCY, avatarR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle    = "#fff";
+      ctx.font         = `bold ${Math.round(avatarR * 0.88)}px sans-serif`;
+      ctx.textAlign    = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText((msg.name[0] || "?").toUpperCase(), avatarCX, avatarCY);
+    }
+
+    // Avatar ring
     ctx.beginPath();
     ctx.arc(avatarCX, avatarCY, avatarR + 2, 0, Math.PI * 2);
+    ctx.strokeStyle = `${ac}66`;
+    ctx.lineWidth   = 2;
     ctx.stroke();
-    ctx.fillStyle = "#fff";
-    ctx.font = `bold ${Math.round(avatarR * 0.9)}px sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText((msg.name[0] || "?").toUpperCase(), avatarCX, avatarCY);
+
     // Username
-    const textX = bx + avatarR * 2 + 24;
-    const fs1 = Math.round(bh * 0.2);
-    ctx.font = `bold ${fs1}px sans-serif`;
-    ctx.textAlign = "left";
-    ctx.fillStyle = avatarColor;
+    const textX = bx + avatarR * 2 + 28;
+    const fs1   = Math.round(bh * 0.19);
+    ctx.font         = `800 ${fs1}px sans-serif`;
+    ctx.textAlign    = "left";
     ctx.textBaseline = "middle";
-    ctx.fillText(msg.name, textX, by + bh * 0.44);
-    // Message text
-    const fs2 = Math.round(bh * 0.27);
-    ctx.font = `${fs2}px sans-serif`;
-    ctx.fillStyle = "rgba(235,235,240,0.96)";
+    ctx.fillStyle    = ac;
+    ctx.fillText(msg.name, textX, by + bh * 0.43);
+
+    // Message text (wrapping)
+    const fs2      = Math.round(bh * 0.24);
+    ctx.font       = `${fs2}px sans-serif`;
+    ctx.fillStyle  = "rgba(232,238,255,0.97)";
     ctx.textBaseline = "top";
+    const maxTxtW  = bw - (textX - bx) - 14;
     let txt = msg.text;
-    while (txt.length > 3 && ctx.measureText(txt).width > bw - (textX - bx) - 14) txt = txt.slice(0, -4) + "…";
+    while (txt.length > 3 && ctx.measureText(txt).width > maxTxtW)
+      txt = txt.slice(0, -4) + "…";
     ctx.fillText(txt, textX, by + bh * 0.58);
     ctx.textBaseline = "alphabetic";
   }
 
   private drawTickerChat(t: number) {
     const { ctx, W, H, state } = this;
-    const msgs = state.chatBurnMessages.slice(-12);
+    const msgs = state.chatBurnMessages;
     if (!msgs.length) return;
-    const effPos = this.pos(state.chatBurnPosition, state.mobileChatBurnPosition);
-    const bh = Math.max(30, Math.round(H * 0.052));
-    const by2 = this.px(effPos.y, H);
-    const y = by2 > 0 ? Math.min(H - bh, by2) : H - bh;
-    const badgeW = Math.round(W * (this.isVertical ? 0.21 : 0.1));
-    // Full-width dark bar
-    ctx.fillStyle = "rgba(8,10,18,0.96)";
-    ctx.fillRect(0, y, W, bh);
-    // Top accent gradient line
-    const topLineGrad = ctx.createLinearGradient(0, y, W, y);
-    topLineGrad.addColorStop(0, "rgba(204,0,1,0.92)");
-    topLineGrad.addColorStop(0.5, "rgba(204,0,1,0.45)");
-    topLineGrad.addColorStop(1, "rgba(204,0,1,0)");
-    ctx.fillStyle = topLineGrad;
-    ctx.fillRect(0, y, W, 2);
-    // Rounded CHAT pill badge (inside bar, vertically centered)
-    const badgePad = Math.round(bh * 0.14);
-    const pillH = Math.round(bh * 0.66);
-    const pillY = y + Math.round((bh - pillH) / 2);
-    const pillW = badgeW - badgePad * 2;
-    const pillR = Math.round(pillH * 0.38);
-    const badgeGrad = ctx.createLinearGradient(badgePad, pillY, badgePad + pillW, pillY);
-    badgeGrad.addColorStop(0, "rgba(204,0,1,1)");
-    badgeGrad.addColorStop(1, "rgba(155,0,0,0.88)");
-    ctx.fillStyle = badgeGrad;
-    this.fillRR(badgePad, pillY, pillW, pillH, pillR);
-    ctx.fillStyle = "#fff";
-    ctx.font = `bold ${Math.round(bh * 0.3)}px sans-serif`;
-    ctx.textAlign = "center";
+    const bh     = Math.max(38, Math.round(H * 0.062));
+    const r      = Math.round(bh * 0.35);
+    const pad    = Math.round(bh * 0.18);
+    const accent = "#6366f1";
+
+    // Badge area measurements
+    const badgeInner = this.newsLogoImg ? bh * 1.6 : bh * 2.2;
+    const badgeW     = Math.round(badgeInner + pad * 2);
+    const y          = H - bh - 6;
+
+    // Full bar — deep dark glass
+    this.fillRR(0, y, W, bh, r);
+    ctx.fillStyle = "rgba(5,6,18,0.94)";
+    ctx.fill();
+
+    // Top accent stripe
+    ctx.save();
+    this.clipRR(0, y, W, 3, 1);
+    const topG = ctx.createLinearGradient(0, 0, W, 0);
+    topG.addColorStop(0, accent);
+    topG.addColorStop(0.35, `${accent}99`);
+    topG.addColorStop(1, "transparent");
+    ctx.fillStyle = topG;
+    ctx.fillRect(0, y, W, 3);
+    ctx.restore();
+
+    // Badge pill (left)
+    this.fillRR(0, y, badgeW, bh, r);
+    const badgeG = ctx.createLinearGradient(0, y, badgeW, y + bh);
+    badgeG.addColorStop(0, accent);
+    badgeG.addColorStop(1, `${accent}cc`);
+    ctx.fillStyle = badgeG;
+    ctx.fill();
+
+    // Badge cover right edge to stay flush
+    ctx.fillStyle = "rgba(5,6,18,0.94)";
+    ctx.fillRect(badgeW - r, y, r, bh);
+
+    // Badge label
+    const pillW = badgeW - pad;
+    ctx.fillStyle    = "#fff";
+    ctx.font         = `800 ${Math.round(bh * 0.31)}px sans-serif`;
+    ctx.textAlign    = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("● CHAT", badgePad + pillW / 2, y + bh / 2 + 1);
-    // Thin vertical separator
-    ctx.fillStyle = "rgba(255,255,255,0.12)";
+    ctx.fillText("● CHAT", pad + pillW / 2, y + bh / 2 + 1);
+
+    // Vertical separator
+    ctx.fillStyle = "rgba(255,255,255,0.14)";
     ctx.fillRect(badgeW, y + bh * 0.18, 1, bh * 0.64);
-    // Scrolling chat messages
-    const full = msgs.map((m) => `${m.name}: ${m.text}`).join("     ·     ") + "     ·     ";
-    const scrollFontSize = Math.round(bh * 0.31);
+
+    // Scrolling text
+    const full  = msgs.map((m) => `${m.name}: ${m.text}`).join("     ·     ") + "     ·     ";
+    const scrollFontSize = Math.round(bh * 0.30);
     ctx.font = `${scrollFontSize}px sans-serif`;
-    const tw = ctx.measureText(full).width;
+    const tw   = ctx.measureText(full).width;
     const area = W - badgeW - 10;
-    const speed = W * 0.065;
+    const speed  = W * 0.065;
     const offset = (t * speed) % (tw || 1);
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(badgeW + 10, y, area, bh);
-    ctx.clip();
-    ctx.fillStyle = "rgba(235,235,235,0.92)";
-    ctx.textAlign = "left";
+    this.clipRR(badgeW + 10, y, area, bh, 0);
+    ctx.fillStyle    = "rgba(232,238,255,0.92)";
+    ctx.textAlign    = "left";
     ctx.textBaseline = "middle";
-    for (let i = 0; i < 3; i++) ctx.fillText(full, badgeW + 10 - offset + i * (tw + 20), y + bh / 2 + 1);
+    for (let i = 0; i < 3; i++)
+      ctx.fillText(full, badgeW + 10 - offset + i * (tw + 20), y + bh / 2 + 1);
     ctx.restore();
   }
 

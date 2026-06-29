@@ -52,7 +52,7 @@ import {
 } from "./oauth2-manager";
 import { getTikTokStreamUrl } from "./tiktok-extractor";
 import { getYouTubeStreamUrl } from "./youtube-source";
-import { startLiveCountPolling, stopLiveCountPolling, getLiveChatId, fetchLiveChat, getLiveStats, triggerStatsPollNow, getApiKeyStatus } from "./youtube-counter";
+import { startLiveCountPolling, stopLiveCountPolling, getLiveChatId, fetchLiveChat, getLiveStats, triggerStatsPollNow, getApiKeyStatus, getDetailedApiStatus, forceRotateToKey } from "./youtube-counter";
 import type { OverlayPosition } from "./overlay-renderer";
 import { registerDonationGateway, setDonationCallback, getGatewayPaymentUrl, getQRScanCount, getGiftQueue } from "./donation-gateway";
 import type { GiftQueueItem } from "./gift-system";
@@ -510,6 +510,18 @@ export async function registerBintunetRoutes(
   // GET /api/youtube/key-status — shows how many API keys are configured and which are exhausted
   app.get("/api/youtube/key-status", requireAuth, (_req: Request, res: Response): void => {
     res.json(getApiKeyStatus());
+  });
+
+  // GET /api/youtube/detailed-status — per-key telemetry for the API management dashboard
+  app.get("/api/youtube/detailed-status", requireAuth, (_req: Request, res: Response): void => {
+    res.json(getDetailedApiStatus());
+  });
+
+  // POST /api/youtube/force-rotate — manually switch to a specific key by index
+  app.post("/api/youtube/force-rotate", requireAuth, (req: Request, res: Response): void => {
+    const idx = Number(req.body?.index ?? -1);
+    const ok  = forceRotateToKey(idx);
+    res.json({ ok, activeIndex: ok ? idx : undefined });
   });
 
   // Resolve a YouTube handle (e.g. @officialjaydaniels or custom URL) → channel ID.
