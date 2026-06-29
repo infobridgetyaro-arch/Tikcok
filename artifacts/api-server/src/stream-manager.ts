@@ -854,14 +854,18 @@ function buildFFmpegArgs(
   );
 
   // ── Input 3: background gradient raw-RGBA pipe (fd 3) ────────────────────
-  // thread_queue_size=8: at 5fps each frame is ~3.7MB; 8 frames = 30MB max queue.
-  // 512 (the old value) would allocate ~1.9GB and trigger the OOM killer (SIGKILL).
+  // thread_queue_size=4: at 2fps each frame is ~3.7–8MB; 4 frames = 15–33MB max queue.
+  // Overlay is rendered at 2fps (reduced from 5fps) — the overlay content is
+  // largely static (chat, news bar, gradient) so 2fps is indistinguishable
+  // visually while cutting canvas-render CPU and pipe I/O by ~60%.
+  // FFmpeg's fps_mode=cfr on the video output duplicates overlay frames between
+  // render ticks seamlessly — no stutter or tearing visible to viewers.
   args.push(
     "-f", "rawvideo",
     "-pix_fmt", "rgba",
     "-video_size", `${scaleW}x${scaleH}`,
-    "-framerate", "5",
-    "-thread_queue_size", "8",
+    "-framerate", "2",
+    "-thread_queue_size", "4",
     "-i", "pipe:3",
   );
 
@@ -870,8 +874,8 @@ function buildFFmpegArgs(
     "-f", "rawvideo",
     "-pix_fmt", "rgba",
     "-video_size", `${scaleW}x${scaleH}`,
-    "-framerate", "5",
-    "-thread_queue_size", "8",
+    "-framerate", "2",
+    "-thread_queue_size", "4",
     "-i", "pipe:4",
   );
 
@@ -927,19 +931,19 @@ function buildFFmpegArgs(
     args.push("-loop", "1", "-thread_queue_size", "8", "-i", xspaceImageUrl);
   }
 
-  // threads=0: auto-detect (all available cores).
-  // The filter graph has 7 inputs, 4 overlay operations, scale/pad/crop chains,
-  // and an x264 encode — all running in real-time.  Capping at 2 threads on a
-  // shared CPU means the encoder falls behind real-time, drops frames, and
-  // YouTube sees gaps that trigger "not receiving enough video" warnings.
-  // filter_threads=4: the filter graph runs in a separate thread pool from the
-  // codec; giving it explicit threads prevents the overlays from starving x264.
+  // threads=0: auto-detect (all available cores for x264).
+  // filter_threads=2 / filter_complex_threads=2: reduced from 4.
+  //   On CPU-constrained VPS hosts (1–2 cores), 4 filter threads competed
+  //   directly with the x264 encoder threads, causing context-switch overhead
+  //   that pushed encoder speed below real-time (0.82–0.88x) and buffering.
+  //   2 filter threads are enough for a 4-layer rgba overlay chain while
+  //   leaving headroom for x264 to run without competing for scheduler time.
   // max_interleave_delta=0: don't buffer A/V waiting to interleave — emit each
   // packet as soon as it's ready so RTMP data flows at a constant rate.
   args.push(
     "-threads", "0",
-    "-filter_threads", "4",
-    "-filter_complex_threads", "4",
+    "-filter_threads", "2",
+    "-filter_complex_threads", "2",
     "-max_muxing_queue_size", "2048",
     "-max_interleave_delta", "0",
   );
@@ -1013,19 +1017,23 @@ function buildFFmpegArgs(
       // For video loops: eof_action=repeat on the UI overlay keeps rendering if the video
       // file temporarily stalls; the video itself loops via -stream_loop -1.
       filterGraph = [
-        `[3:v]format=rgba,scale=${scaleW}:${scaleH}:flags=fast_bilinear[_bg]`,
+        // pipe:3 is already rgba at scaleW×scaleH — no scale needed.
+        `[3:v]format=rgba[_bg]`,
         `[1:v][_bg]overlay=0:0:format=auto[_base]`,
+        // input 7 (bg video/image) may be any resolution — scale+pad required.
         `[7:v]scale=${scaleW}:${scaleH}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${scaleW}:${scaleH}:(ow-iw)/2:(oh-ih)/2,format=rgba[_img]`,
         `[_base][_img]overlay=0:0:format=auto[_baseImg]`,
-        `[4:v]scale=${scaleW}:${scaleH}:flags=fast_bilinear[_ui]`,
+        // pipe:4 is already rgba at scaleW×scaleH — no scale needed.
+        `[4:v]format=rgba[_ui]`,
         `[_baseImg][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[_final]`,
         audioFilter,
       ].join(";");
     } else {
       filterGraph = [
-        `[3:v]format=rgba,scale=${scaleW}:${scaleH}:flags=fast_bilinear[_bg]`,
+        // pipe:3/pipe:4 are already rgba at scaleW×scaleH — no scale needed.
+        `[3:v]format=rgba[_bg]`,
         `[1:v][_bg]overlay=0:0:format=auto[_base]`,
-        `[4:v]scale=${scaleW}:${scaleH}:flags=fast_bilinear[_ui]`,
+        `[4:v]format=rgba[_ui]`,
         `[_base][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[_final]`,
         audioFilter,
       ].join(";");
@@ -1055,15 +1063,16 @@ function buildFFmpegArgs(
 
     filterGraph = [
       videoSrcFilter,
-      // Step 1: gradient pipe scales to fill the frame.
-      `[3:v]format=rgba,scale=${scaleW}:${scaleH}:flags=fast_bilinear[_bg]`,
+      // Step 1: gradient pipe — pipe:3 is already rgba at scaleW×scaleH, no scale needed.
+      `[3:v]format=rgba[_bg]`,
       // Step 2: black fallback base + gradient on top → solid coloured background.
       `[1:v][_bg]overlay=0:0:format=auto[_base]`,
       // Step 3: video (yuva420p — transparent bars where no video pixels exist)
       // laid on top of the gradient background.
       // eof_action=repeat: freeze last video frame during brief reconnect gaps.
       `[_base][_src]overlay=0:0:format=auto:eof_action=repeat[_composed]`,
-      `[4:v]scale=${scaleW}:${scaleH}:flags=fast_bilinear[_ui]`,
+      // pipe:4 is already rgba at scaleW×scaleH — no scale needed.
+      `[4:v]format=rgba[_ui]`,
       `[_composed][_ui]overlay=0:0:format=auto:eof_action=repeat,format=yuv420p[_final]`,
       audioFilter,
     ].join(";");
@@ -1358,9 +1367,9 @@ async function getXSpaceAudioUrl(spaceUrl: string): Promise<string> {
 }
 
 // ── Frame-stall watchdog ──────────────────────────────────────────────────────
-// 30 s: tolerant enough to survive HLS segment gaps and brief network hiccups,
-// while still fast enough to catch a dead source before the YouTube platform
-// buffer fully drains (~60 s).
+// Monitors encoded OUTPUT frame progress (frame= counter from FFmpeg stderr),
+// NOT overlay-pipe frame count or source frame count.  The overlay pipes render
+// at 2 fps (500 ms interval), well within the 15 s stall threshold.
 // 15 s: YouTube gives ~2 min of grace for "no data"; we need each stall+restart
 // cycle to finish well under 30 s so multiple incidents don't accumulate to 2 min.
 // With the 90-second URL pre-fetch the restart itself takes < 5 s (no streamlink
@@ -1804,11 +1813,14 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
     uiPipe.on("error", () => {});
     micPipe5.on("error", () => {});
 
-    // 5fps matches the declared -framerate on pipe:3 and pipe:4.
-    // Lower rate prevents OOM: each 1280×720 RGBA frame is ~3.7MB;
-    // 5fps × 2 pipes = ~37MB/s vs 10fps × 2 = ~74MB/s through Node.js.
-    bgRenderer.startWritingTo(bgPipe, 5);
-    uiRenderer.startWritingTo(uiPipe, 5);
+    // 2fps matches the declared -framerate on pipe:3 and pipe:4.
+    // Reduced from 5fps: canvas rendering (chat, gradients, text shadows) is
+    // CPU-intensive. At 2fps this drops from 10 renders/sec to 4 renders/sec
+    // — a ~60% cut in canvas CPU and pipe I/O (~32MB/s vs ~79MB/s).
+    // FFmpeg's fps_mode=cfr duplicates overlay frames between ticks;
+    // the overlay content is largely static so 2fps is visually seamless.
+    bgRenderer.startWritingTo(bgPipe, 2);
+    uiRenderer.startWritingTo(uiPipe, 2);
 
     // Mic audio pipe: continuously writes PCM16 silence (or real mic audio) to pipe:5
     const micPipe = new MicAudioPipe();
