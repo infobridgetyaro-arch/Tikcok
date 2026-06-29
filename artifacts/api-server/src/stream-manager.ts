@@ -715,9 +715,15 @@ function buildFFmpegArgs(
     //   segment boundary. Without low_delay the decoder stalls ~30ms per
     //   segment waiting for the SEI, which cumulatively causes speed=0.97x and
     //   a minor RTMP bitrate deficiency that YouTube flags as insufficient data.
+    //
+    // analyzeduration/probesize: 2 seconds / 2 MB is sufficient for MPEG-TS
+    //   (the container is self-describing; the PMT arrives in the first few
+    //   packets).  The previous 10s/10MB value extended every restart by ~8s
+    //   of probe silence — enough for YouTube Studio to flag "poor stream
+    //   health" after a routine reconnect.
     args.push(
-      "-analyzeduration", "10000000",
-      "-probesize", "10000000",
+      "-analyzeduration", "2000000",
+      "-probesize", "2000000",
       "-thread_queue_size", "4096",
       "-fflags", "+genpts+discardcorrupt",
       "-flags", "low_delay",
@@ -755,11 +761,17 @@ function buildFFmpegArgs(
     // low_delay: identical reasoning as youtube_pipe — avoids SEI stall at HLS
     // segment boundaries that accumulates into speed=0.97x lag and RTMP drops.
     //
-    // analyzeduration/probesize: give FFmpeg enough budget to parse the container
-    // header from the first streamlink chunks before it starts encoding.
+    // analyzeduration/probesize: 2 seconds / 2 MB is sufficient for MPEG-TS
+    //   (self-describing container; PMT arrives in the first few packets).
+    //   The previous 10s/10MB value extended every restart by ~8 extra seconds
+    //   of probe-only silence before FFmpeg produced a single RTMP frame.
+    //   YouTube Studio detects probe-silence as "not receiving enough video",
+    //   which was the primary driver of the "Poor stream health" rating that
+    //   appeared consistently at ~90 s (probe 10s + restart overhead = gap
+    //   long enough to trigger the warning in consecutive restart cycles).
     args.push(
-      "-analyzeduration", "10000000",
-      "-probesize", "10000000",
+      "-analyzeduration", "2000000",
+      "-probesize", "2000000",
       "-thread_queue_size", "4096",
       "-fflags", "+genpts+discardcorrupt",
       "-flags", "low_delay",
@@ -1880,16 +1892,35 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
           // At 0.95x speed, the encoder accumulates 0.05s of lag per real second.
           // After significant lag accumulates, trigger a clean RTMP reconnect.
           //
-          // IMPORTANT thresholds (tuned from production data):
-          //   • "Fast enough" floor: 0.92x — speeds 0.92–1.0x are normal when the
-          //     input pipe (yt-dlp/streamlink) is the bottleneck. Do NOT restart for
-          //     these; the restart gap (5–15s) is far worse than the minor slowdown.
-          //     Previously this was 0.97x, which caused the encoder to restart every
-          //     ~61s when the yt-dlp pipe ran at 0.96x, triggering YouTube's
-          //     "not receiving enough data" disconnect at ~2:10.
-          //   • Lag trigger: 8.0s — only restart when genuinely far behind (< 0.92x
-          //     sustained long enough). Previously 2.5s, which was too sensitive.
-          //   • Cooldown: 3 min between auto-reconnects to prevent thrash loops.
+          // ── THRESHOLD RATIONALE (DO NOT REDUCE WITHOUT UNDERSTANDING IMPACT) ─
+          //
+          // • "Fast enough" floor: 0.88x
+          //     Speeds 0.88–1.0x: lag counter DRAINS. No restart triggered.
+          //     At 0.91x the old floor of 0.92x caused lag to accumulate at
+          //     0.09s/s, reaching the 8.0s trigger in exactly 89 s — producing
+          //     the systematic "Poor stream health" warning at ~90 s that
+          //     YouTube Studio reported. With 0.88x floor, 0.91x is inside the
+          //     acceptable band and the restart never fires. fps_mode=cfr +
+          //     nal-hrd=cbr keep the RTMP stream continuous even at 0.91x —
+          //     FFmpeg duplicates frames and inserts filler NALs; YouTube never
+          //     sees a gap. The restart ITSELF was the cause of the warning.
+          //
+          // • Lag trigger: 12.0s (raised from 8.0s)
+          //     Only restart when the encoder is genuinely and severely behind.
+          //     At 0.84x (below 0.88x floor): lag accumulates at 0.16s/s, so
+          //     12.0s is reached in ~75 s — still responsive, but gives more
+          //     room before inflicting an RTMP gap on a borderline-slow server.
+          //
+          // • Restart delay: 3000ms (raised from 1500ms)
+          //     Lets the RTMP send buffer drain cleanly before the new TCP
+          //     connection lands, preventing YouTube from seeing back-to-back
+          //     gaps if two slow-encode restarts happen close together.
+          //
+          // • Cooldown: 3 min between auto-reconnects — unchanged.
+          //
+          // Previous values that caused the 90-second cycle:
+          //   floor=0.92x, trigger=8.0s, delay=1500ms
+          //   → restart every ~89s + 13–17s gap = 90s pattern in YouTube Studio
           const speedMatch = trimmed.match(/speed=\s*([\d.]+)x/);
           if (speedMatch) {
             const encSpeed = parseFloat(speedMatch[1]);
@@ -1901,29 +1932,40 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                 const elapsedSec = Math.min((nowMs - lastSampleAt) / 1000, 10); // cap at 10s gap
                 currentProc.lastSpeedSampleAt = nowMs;
 
-                // Log encoder speed to server logs every ~30s for diagnosability.
-                // Previously these stats were only forwarded to the frontend via WS.
+                // Log encoder speed every ~30s at info level, or every ~10s
+                // when it's in the warning band (0.88–0.92x) for diagnosability.
                 const lastSpeedLog = currentProc.lastSpeedLogAt ?? 0;
-                if (nowMs - lastSpeedLog >= 30_000) {
+                const inWarningBand = encSpeed >= 0.88 && encSpeed < 0.92;
+                const logInterval = inWarningBand ? 10_000 : 30_000;
+                if (nowMs - lastSpeedLog >= logInterval) {
                   currentProc.lastSpeedLogAt = nowMs;
                   const lagSoFar = currentProc.accumulatedLagSec ?? 0;
-                  logger.info(
-                    { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSoFar.toFixed(2) },
-                    "[perf] main encoder speed sample",
-                  );
+                  if (inWarningBand) {
+                    logger.warn(
+                      { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSoFar.toFixed(2) },
+                      "[perf] encoder speed in warning band (0.88–0.92x) — monitoring, no restart",
+                    );
+                  } else {
+                    logger.info(
+                      { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSoFar.toFixed(2) },
+                      "[perf] main encoder speed sample",
+                    );
+                  }
                 }
 
-                if (encSpeed >= 0.92) {
-                  // Within normal range — drain lag counter slowly.
-                  // 0.92–1.0x is acceptable: the input pipe is the bottleneck, not
-                  // the CPU. Restarting here creates a damaging RTMP gap.
+                if (encSpeed >= 0.88) {
+                  // Within acceptable range — drain lag counter slowly.
+                  // 0.88–1.0x: the encoder or input pipe is slightly behind
+                  // real-time but fps_mode=cfr + nal-hrd=cbr keep RTMP delivery
+                  // perfectly continuous. A restart here would create a 5–15s
+                  // RTMP gap (far worse than the minor slowdown).
                   currentProc.accumulatedLagSec = Math.max(
                     0,
                     (currentProc.accumulatedLagSec ?? 0) - elapsedSec * 0.5,
                   );
                 } else {
-                  // Genuinely slow (< 0.92x) — accumulate lag.
-                  // e.g. speed=0.85x → lagDelta = 0.15s per real second
+                  // Genuinely slow (< 0.88x) — accumulate lag.
+                  // e.g. speed=0.84x → lagDelta = 0.16s per real second
                   const lagDelta = elapsedSec * (1 - encSpeed);
                   currentProc.accumulatedLagSec = (currentProc.accumulatedLagSec ?? 0) + lagDelta;
 
@@ -1934,7 +1976,7 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                     nowMs - currentProc.lastSlowReconnectAt > cooldownMs;
 
                   if (
-                    lagSec >= 8.0 &&
+                    lagSec >= 12.0 &&
                     cooldownOk &&
                     !restartScheduled.has(streamId) &&
                     !manuallyStopped.has(streamId)
@@ -1943,13 +1985,13 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                     currentProc.lastSlowReconnectAt = nowMs;
                     sendLog(
                       streamId,
-                      `[perf] ~${lagSec.toFixed(1)}s of encoding lag accumulated (speed ${encSpeed.toFixed(2)}x) — reconnecting before YouTube shows buffering error...`,
+                      `[perf] ~${lagSec.toFixed(1)}s of encoding lag accumulated (speed ${encSpeed.toFixed(2)}x) — reconnecting to reset encoder state...`,
                     );
                     logger.warn(
                       { streamId, encSpeed: encSpeed.toFixed(3), lagSec: lagSec.toFixed(2) },
-                      "[perf] slow-encode restart triggered",
+                      "[perf] slow-encode restart triggered (speed < 0.88x sustained)",
                     );
-                    hardKillAndRestart(streamId, 1500, false, true /* keepStatus=reconnecting */);
+                    hardKillAndRestart(streamId, 3000, false, true /* keepStatus=reconnecting */);
                   }
                 }
               }
