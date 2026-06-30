@@ -439,7 +439,7 @@ export function StatsPanel({ streams, streamStats, procStats = {} }: StatsPanelP
         <StatCard
           icon={<MessageSquare size={14} />}
           label="Chat Active"
-          value={totalChatStreams > 0 ? totalChatStreams.toString() : null}
+          value={totalChatStreams > 0 ? "Active" : null}
           color="#60a5fa"
           gradient="rgba(96,165,250,0.08), rgba(96,165,250,0.03)"
           loading={!statsReceived}

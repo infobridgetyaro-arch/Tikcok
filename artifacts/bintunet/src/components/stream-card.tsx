@@ -467,14 +467,6 @@ export function StreamCard({
                 {locked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
               </button>
             )}
-            {/* Inline subs / viewers — always visible when data is available */}
-            {stream.youtubeChannelId && stats && (stats.subs || stats.viewers) && (
-              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20 text-[10px] font-semibold text-red-300">
-                {stats.subs && <span title="Subscribers">👥 {stats.subs}</span>}
-                {stats.subs && stats.viewers && <span className="text-red-400/40">·</span>}
-                {stats.viewers && <span title="Live viewers">👁 {stats.viewers}</span>}
-              </div>
-            )}
             {stream.youtubeChannelId && (
               <button
                 onClick={() => setShowStats((v) => !v)}

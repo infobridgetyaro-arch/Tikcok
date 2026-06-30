@@ -194,14 +194,20 @@ function useMessageQueue<T extends { id: string }>(messages: T[], max: number, e
   const [queue, setQueue] = useState<Q[]>([]);
   const counter = useRef(0);
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  // Track which IDs we've already enqueued so batch arrivals all get shown
+  const processedIds = useRef<Set<string>>(new Set());
 
-  useEffect(() => {
-    if (!messages.length) return;
-    const last = messages[messages.length - 1];
+  const enqueue = useRef((msg: T) => {
     const key = counter.current++;
+    processedIds.current.add(msg.id);
+    // Trim processed set to avoid unbounded growth
+    if (processedIds.current.size > 500) {
+      const oldest = Array.from(processedIds.current).slice(0, 200);
+      oldest.forEach((id) => processedIds.current.delete(id));
+    }
     setQueue((prev) => {
-      if (prev.find((m) => m.id === last.id)) return prev;
-      return [...prev.slice(-(max - 1)), { ...last, _key: key, phase: "enter" }];
+      if (prev.find((m) => m.id === msg.id)) return prev;
+      return [...prev.slice(-(max - 1)), { ...msg, _key: key, phase: "enter" }];
     });
     const t1 = setTimeout(() =>
       setQueue((p) => p.map((m) => m._key === key ? { ...m, phase: "visible" as const } : m)), 40);
@@ -212,8 +218,17 @@ function useMessageQueue<T extends { id: string }>(messages: T[], max: number, e
     }, expireMs);
     timers.current.set(key, t1);
     timers.current.set(key + 5e5, t2);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [messages, max, expireMs]);
+  });
+
+  useEffect(() => {
+    if (!messages.length) return;
+    // Process every new message in the batch, staggered so each one is visible
+    const newMsgs = messages.filter((m) => !processedIds.current.has(m.id));
+    newMsgs.forEach((msg, i) => {
+      const t = setTimeout(() => enqueue.current(msg), i * 600);
+      timers.current.set(counter.current + i * 1e8, t);
+    });
+  }, [messages]);
 
   useEffect(() => () => { timers.current.forEach(clearTimeout); }, []);
   return queue;

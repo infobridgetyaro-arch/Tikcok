@@ -108,7 +108,7 @@ const DEFAULT_CHAT_POLL_MS = 5_000;
 const MIN_CHAT_POLL_MS = 3_000;
 
 const lastSearchAt = new Map<string, number>();
-const SEARCH_INTERVAL_MS = 20 * 60 * 1000;
+const SEARCH_INTERVAL_MS = 2 * 60 * 1000; // 2 min — keeps viewers count fresh
 
 const burnSentMessageIds = new Map<string, Set<string>>();
 
