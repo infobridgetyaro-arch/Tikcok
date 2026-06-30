@@ -1394,19 +1394,59 @@ const SESSION_REFRESH_MS = 3 * 60 * 60 * 1000; // 3 hours
 function makeStallWatchdog(
   streamId: string,
   getLastFrame: () => number,
+  getRelay: () => SourceRelay | undefined,
   trigger: () => void,
+  intervalMs: number,
 ): NodeJS.Timeout {
   let lastSeenFrame = getLastFrame();
   return setInterval(() => {
+    const relay = getRelay();
     const currentFrame = getLastFrame();
+
+    // ── Relay-aware suppression ──────────────────────────────────────────────
+    // While the relay is in reconnecting/recovering state, FFmpeg has no data
+    // from pipe:0 — frame count will stall by design. Suppress the watchdog
+    // UNLESS the recovery deadline has passed (relay stuck, genuine failure).
+    if (relay?.isStalled()) {
+      if (relay.isRecoveryDeadlineExceeded()) {
+        const elapsedMs = relay.getReconnectStartedAt()
+          ? Date.now() - relay.getReconnectStartedAt()!
+          : 0;
+        logger.warn(
+          { streamId, elapsedMs, relayState: relay.getStatus() },
+          "[watchdog] relay recovery deadline exceeded — restarting FFmpeg",
+        );
+        sendLog(
+          streamId,
+          `[watchdog] Relay recovery deadline exceeded (${Math.round(elapsedMs / 1000)}s) — restarting FFmpeg`,
+        );
+        lastSeenFrame = currentFrame; // reset so post-restart baseline is clean
+        trigger();
+      } else {
+        const elapsedMs = relay.getReconnectStartedAt()
+          ? Date.now() - relay.getReconnectStartedAt()!
+          : 0;
+        logger.info(
+          { streamId, elapsedMs, relayState: relay.getStatus() },
+          "[watchdog] suppressed — relay reconnecting",
+        );
+        // Reset baseline so the watchdog doesn't immediately re-fire when frames resume.
+        lastSeenFrame = currentFrame;
+      }
+      return;
+    }
+
     if (currentFrame === lastSeenFrame) {
       logger.warn({ streamId, frame: currentFrame }, "Frame stall detected — triggering restart");
-      sendLog(streamId, `Frame stall detected (no new frames for ${STALL_TIMEOUT_MS / 1000}s) — restarting...`);
+      sendLog(
+        streamId,
+        `Frame stall detected (no new frames for ${Math.round(intervalMs / 1000)}s) — restarting...`,
+      );
       trigger();
     } else {
       lastSeenFrame = currentFrame;
     }
-  }, STALL_TIMEOUT_MS);
+  }, intervalMs);
 }
 
 function stopBreakDecoder(streamId: string): void {
@@ -1881,7 +1921,32 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
         onEvent: (evt) => {
           if (evt.type === "log" && evt.message) sendLog(streamId, evt.message);
           else if (evt.type === "warn" && evt.message) sendLog(streamId, evt.message);
-          else if (evt.type === "health" && evt.kbps !== undefined && evt.kbps > 0) {
+          else if (evt.type === "status") {
+            const s = evt.status;
+            if (s === "reconnecting") {
+              sendLog(
+                streamId,
+                `[relay] Source disconnected — reconnecting` +
+                ` (attempt #${evt.totalRestarts ?? 0}, consecutive: ${evt.consecutiveFailures ?? 0})`,
+              );
+            } else if (s === "recovering") {
+              sendLog(streamId, `[relay] New source process started — waiting for first frame...`);
+            } else if (s === "running" && evt.recoveryMs != null) {
+              sendLog(
+                streamId,
+                `[relay] Recovered in ${(evt.recoveryMs / 1000).toFixed(1)}s` +
+                ` — RTMP session preserved, no FFmpeg restart`,
+              );
+            } else if (s === "failed") {
+              sendLog(streamId, `[relay] Consecutive failure threshold reached — performing full pipeline restart`);
+              const proc = activeStreams.get(streamId);
+              if (proc?.ffmpegProcess === ffmpegProc) hardKillAndRestart(streamId, 2000);
+            }
+          } else if (evt.type === "fatal" && evt.message) {
+            sendLog(streamId, `[relay] Fatal: ${evt.message}`);
+            const proc = activeStreams.get(streamId);
+            if (proc?.ffmpegProcess === ffmpegProc) hardKillAndRestart(streamId, 1000);
+          } else if (evt.type === "health" && evt.kbps !== undefined && evt.kbps > 0) {
             // Persist newly resolved quality back to the module-level cache
             // so the next hardKillAndRestart can skip the probe too.
             const resolved = relay.getCachedQuality();
@@ -1919,6 +1984,19 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
         const proc = activeStreams.get(streamId);
         if (!proc || proc.ffmpegProcess !== ffmpegProc) {
           if (healthMonitor) { clearInterval(healthMonitor); healthMonitor = null; }
+          return;
+        }
+        // During relay reconnect, FFmpeg silence is expected — don't emit "degraded".
+        // Emit "reconnecting" once so the UI can show the correct state.
+        if (proc.sourceRelay?.isStalled()) {
+          if (!healthWarned) {
+            healthWarned = true;
+            broadcastStream(streamId, "stream_health", {
+              status: "reconnecting",
+              relayState: proc.sourceRelay.getStatus(),
+              message: `Relay reconnecting — FFmpeg waiting for source data`,
+            });
+          }
           return;
         }
         if (silentMs >= HEALTH_WARN_MS && !healthWarned) {
@@ -2069,7 +2147,18 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                   }
                 }
 
-                if (encSpeed >= 0.85) {
+                // ── Relay-aware: suppress speed watchdog during reconnect ──────
+                // When the relay is reconnecting, FFmpeg has no source data —
+                // encoder speed will be near 0 by design. Reset any partially-
+                // accumulated sustained-slow timer so a reconnect gap never
+                // triggers the 5-minute restart threshold.
+                if (currentProc.sourceRelay?.isStalled()) {
+                  if (currentProc.sustainedSlowSpeedStartAt) {
+                    currentProc.sustainedSlowSpeedStartAt = undefined;
+                    currentProc.accumulatedLagSec = 0;
+                  }
+                  // Skip all speed-watchdog accumulation while relay is recovering.
+                } else if (encSpeed >= 0.85) {
                   // ── Acceptable band: ≥ 0.85x ────────────────────────────
                   // If the encoder was previously below the floor, log recovery
                   // and reset the sustained timer so the 5-minute clock restarts
@@ -2262,15 +2351,25 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
             const camUrl = cameraLinks.get(streamId);
             if (camUrl) broadcastStream(streamId, "camera_link", { url: camUrl });
 
+            // Pipe-mode sources have a SourceRelay managing reconnection —
+            // allow the full 90-second recovery deadline before escalating.
+            // Direct-URL sources have no relay; use the standard 15-second timeout.
+            const stallIntervalMs =
+              (resolvedType === "tiktok_pipe" || resolvedType === "youtube_pipe")
+                ? 90_000
+                : STALL_TIMEOUT_MS;
+
             stallWatchdog = makeStallWatchdog(
               streamId,
               () => lastFrameCount,
+              () => activeStreams.get(streamId)?.sourceRelay,
               () => {
                 sendLog(streamId, `[watchdog] No new frames detected — reconnecting to recover...`);
                 urlCache.delete(streamId);
                 const proc = activeStreams.get(streamId);
                 if (proc?.ffmpegProcess === ffmpegProc) hardKillAndRestart(streamId, 1000);
               },
+              stallIntervalMs,
             );
             if (liveProc) liveProc.stallWatchdog = stallWatchdog;
             startHealthMonitor();
@@ -2286,6 +2385,26 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
                 streamId,
                 `Progress: ${frameMatch[1]} frames | ${sizeMatch ? sizeMatch[1] : ""} | ${timeMatch ? timeMatch[1] : ""}`,
               );
+            }
+            // ── Relay periodic stats ──────────────────────────────────────────
+            const liveProc30 = activeStreams.get(streamId);
+            const relay30 = liveProc30?.sourceRelay;
+            if (relay30) {
+              const avgRecoveryMs = relay30.getTotalRecoveries() > 0
+                ? Math.round(relay30.getTotalRecoveryMs() / relay30.getTotalRecoveries())
+                : null;
+              logger.info({
+                streamId,
+                relayState: relay30.getStatus(),
+                relayRestarts: relay30.getTotalRestarts(),
+                relayConsecutiveFailures: relay30.getConsecutiveFailures(),
+                relayTotalRecoveries: relay30.getTotalRecoveries(),
+                avgRecoveryMs,
+                longestOutageMs: relay30.getLongestOutageMs(),
+                bytesRelayed: relay30.getBytesRelayed(),
+                lastFrameAt: relay30.getLastFrameAt(),
+                uptimeMs: relay30.getUptimeMs(),
+              }, "[relay] periodic stats");
             }
           }
           return;
@@ -2728,6 +2847,19 @@ export function isStreamActive(streamId: string): boolean {
 // Returns a complete read-only view of the circuit-breaker, backoff, and
 // restart-lock state for a single stream.  Used by the /recovery-status route.
 
+export interface RelayMetrics {
+  state: string;
+  restarts: number;
+  consecutiveFailures: number;
+  totalRecoveries: number;
+  avgRecoveryMs: number | null;
+  longestOutageMs: number;
+  bytesRelayed: number;
+  lastFrameAt: number | null;
+  lastRecoveredAt: number | null;
+  uptimeMs: number;
+}
+
 export interface RecoverySnapshot {
   streamId: string;
   timestamp: number;
@@ -2750,6 +2882,7 @@ export interface RecoverySnapshot {
   restartPending: boolean;
   manuallyStopped: boolean;
   isActive: boolean;
+  relay: RelayMetrics | null;
 }
 
 export function getRecoverySnapshot(streamId: string): RecoverySnapshot {
@@ -2766,6 +2899,24 @@ export function getRecoverySnapshot(streamId: string): RecoverySnapshot {
 
   const attemptCount = restartBackoff.get(streamId) ?? 0;
   const nextDelayMs = BACKOFF_DELAYS_MS[Math.min(attemptCount, BACKOFF_DELAYS_MS.length - 1)];
+
+  const relayInst = activeStreams.get(streamId)?.sourceRelay ?? null;
+  const relay: RelayMetrics | null = relayInst
+    ? {
+        state: relayInst.getStatus(),
+        restarts: relayInst.getTotalRestarts(),
+        consecutiveFailures: relayInst.getConsecutiveFailures(),
+        totalRecoveries: relayInst.getTotalRecoveries(),
+        avgRecoveryMs: relayInst.getTotalRecoveries() > 0
+          ? Math.round(relayInst.getTotalRecoveryMs() / relayInst.getTotalRecoveries())
+          : null,
+        longestOutageMs: relayInst.getLongestOutageMs(),
+        bytesRelayed: relayInst.getBytesRelayed(),
+        lastFrameAt: relayInst.getLastFrameAt(),
+        lastRecoveredAt: relayInst.getLastRecoveredAt(),
+        uptimeMs: relayInst.getUptimeMs(),
+      }
+    : null;
 
   return {
     streamId,
@@ -2789,6 +2940,7 @@ export function getRecoverySnapshot(streamId: string): RecoverySnapshot {
     restartPending: restartScheduled.has(streamId),
     manuallyStopped: manuallyStopped.has(streamId),
     isActive: activeStreams.has(streamId),
+    relay,
   };
 }
 

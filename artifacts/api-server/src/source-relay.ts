@@ -105,15 +105,30 @@ function spawnCollect(
 // ── Timing constants ──────────────────────────────────────────────────────────
 
 /**
- * Backoff schedule (ms) for consecutive NETWORK / SOURCE failures.
+ * Exponential backoff schedule (ms) for consecutive NETWORK / SOURCE failures.
+ * ±10% jitter is applied at runtime to prevent synchronized reconnect storms.
  * Config errors (bad flags, ENOENT) do NOT use this — they fail permanently.
  */
-const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 20_000, 30_000, 60_000];
+const BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000, 60_000];
+
+/**
+ * Recovery deadline (ms): if the relay has not produced its first frame within
+ * this window after a reconnect starts, the stall watchdog in stream-manager
+ * treats it as a genuine failure and performs a controlled FFmpeg restart.
+ */
+const RECOVERY_DEADLINE_MS = 90_000;
 
 /**
  * How many consecutive failures trigger a "source may be offline" warning.
  */
 const WARN_AFTER_FAILURES = 5;
+
+/**
+ * Default maximum consecutive network/source failures before the relay
+ * transitions to "failed" state and stops retrying. The caller must perform
+ * a full pipeline restart (via the fatal onEvent callback).
+ */
+const DEFAULT_MAX_CONSECUTIVE_FAILURES = 20;
 
 /**
  * Startup watchdog (ms): if no bytes arrive after spawning, treat as offline.
@@ -183,11 +198,13 @@ const STREAMLINK_CONFIG_ERROR: unique symbol = Symbol("streamlink_config_error")
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type RelayStatus =
-  | "starting"      // waiting for first bytes from source process
-  | "running"       // bytes are flowing to FFmpeg stdin
-  | "reconnecting"  // source died (network/source), waiting before next spawn
-  | "failed"        // permanent failure — config error or binary not found
-  | "stopped";      // stop() was called
+  | "starting"            // relay created, first spawn not yet begun
+  | "waiting_for_source"  // first spawn running, no bytes received yet (startup window)
+  | "running"             // bytes are flowing to FFmpeg stdin
+  | "reconnecting"        // source exited, waiting in backoff before next spawn
+  | "recovering"          // spawn running after reconnect, waiting for first byte
+  | "failed"              // hit maxConsecutiveFailures or config error — stop retrying
+  | "stopped";            // stop() was called
 
 export interface RelayEvent {
   type: "log" | "warn" | "status" | "health" | "fatal";
@@ -197,6 +214,8 @@ export interface RelayEvent {
   kbps?: number;
   consecutiveFailures?: number;
   totalRestarts?: number;
+  /** Set on status="running" after a reconnect: ms from disconnect to first frame. */
+  recoveryMs?: number;
 }
 
 export interface SourceRelayOptions {
@@ -225,6 +244,12 @@ export interface SourceRelayOptions {
   ffmpegStdin: NodeJS.WritableStream;
   /** Called for every relay event (logs, status changes, health). */
   onEvent: (event: RelayEvent) => void;
+  /**
+   * How many consecutive network/source failures before the relay transitions
+   * to "failed" state and stops retrying. Defaults to 20.
+   * The caller's onEvent will receive { type: "fatal" } at this threshold.
+   */
+  maxConsecutiveFailures?: number;
 }
 
 // ── SourceRelay class ─────────────────────────────────────────────────────────
@@ -275,6 +300,19 @@ export class SourceRelay {
   // probe delay on all reconnects after the first successful one.
   private cachedResolvedQuality: string | null = null;
 
+  // ── Recovery state machine ──────────────────────────────────────────────────
+  // Timestamps for computing recovery duration and enforcing the deadline.
+  private reconnectStartedAt: number | null = null;
+  private recoveryDeadline: number | null = null;
+  // Cumulative recovery stats exposed via getters for the dashboard API.
+  private totalRecoveries = 0;
+  private longestOutageMs = 0;
+  private totalRecoveryMs = 0;
+  private lastFrameAt: number | null = null;
+  private lastRecoveredAt: number | null = null;
+  private readonly createdAt = Date.now();
+  private readonly maxConsecutiveFailures: number;
+
   constructor(opts: SourceRelayOptions) {
     this.streamId = opts.streamId;
     this.sourceType = opts.sourceType;
@@ -282,6 +320,7 @@ export class SourceRelay {
     this.quality = opts.quality;
     this.ffmpegStdin = opts.ffmpegStdin;
     this.onEvent = opts.onEvent;
+    this.maxConsecutiveFailures = opts.maxConsecutiveFailures ?? DEFAULT_MAX_CONSECUTIVE_FAILURES;
     // Seed from the externally persisted cache (survives hardKillAndRestart).
     if (opts.cachedQuality) this.cachedResolvedQuality = opts.cachedQuality;
   }
@@ -352,9 +391,39 @@ export class SourceRelay {
   /** Returns the resolved quality name once a probe has succeeded, else null. */
   getCachedQuality(): string | null { return this.cachedResolvedQuality; }
 
+  // ── Recovery observability ─────────────────────────────────────────────────
+
+  /**
+   * True while the relay is in a transient non-running state (reconnecting or
+   * recovering). Stream-manager uses this to suppress watchdog restarts during
+   * expected reconnect gaps.
+   */
+  isStalled(): boolean {
+    return this.status === "reconnecting" || this.status === "recovering";
+  }
+
+  /**
+   * True when reconnectStartedAt + RECOVERY_DEADLINE_MS has elapsed without
+   * a first frame being received. The stall watchdog escalates to an FFmpeg
+   * restart when this returns true.
+   */
+  isRecoveryDeadlineExceeded(): boolean {
+    return this.recoveryDeadline !== null && Date.now() > this.recoveryDeadline;
+  }
+
+  getReconnectStartedAt(): number | null { return this.reconnectStartedAt; }
+  getConsecutiveFailures(): number { return this.consecutiveFailures; }
+  getTotalRecoveries(): number { return this.totalRecoveries; }
+  getLongestOutageMs(): number { return this.longestOutageMs; }
+  getTotalRecoveryMs(): number { return this.totalRecoveryMs; }
+  getLastFrameAt(): number | null { return this.lastFrameAt; }
+  getLastRecoveredAt(): number | null { return this.lastRecoveredAt; }
+  /** Milliseconds since this relay instance was created. */
+  getUptimeMs(): number { return Date.now() - this.createdAt; }
+
   // ── Private helpers ────────────────────────────────────────────────────────
 
-  private _setStatus(s: RelayStatus): void {
+  private _setStatus(s: RelayStatus, meta?: { recoveryMs?: number }): void {
     if (this.status === s) return;
     this.status = s;
     this.onEvent({
@@ -362,6 +431,7 @@ export class SourceRelay {
       status: s,
       totalRestarts: this.totalRestarts,
       consecutiveFailures: this.consecutiveFailures,
+      recoveryMs: meta?.recoveryMs,
     });
   }
 
@@ -735,6 +805,11 @@ export class SourceRelay {
     }
     this._spawning = true;
 
+    // Transition to the appropriate spawn-phase state before the quality probe.
+    // totalRestarts > 0 means _scheduleRetry() has run at least once, so this
+    // is a reconnect spawn → "recovering". The very first spawn is "waiting_for_source".
+    this._setStatus(this.totalRestarts > 0 ? "recovering" : "waiting_for_source");
+
     // ── Quality / format-selector resolution ──────────────────────────────────
     //
     //  TikTok  → streamlink: query `streamlink --json` to discover available
@@ -899,11 +974,45 @@ export class SourceRelay {
         gotData = true;
         clearTimeout(startupWatchdog);
         this.consecutiveFailures = 0;
-        this._setStatus("running");
-        this._log(
-          `[relay:${this.sourceType}] ✓ Source connected — piping to FFmpeg stdin ` +
-          `(first chunk: ${chunk.length} B)`,
-        );
+        this.lastFrameAt = Date.now();
+
+        // ── Frame-based recovery confirmation ────────────────────────────────
+        // Declare recovery only when the first real data chunk arrives from the
+        // new process — not when Streamlink connects or the quality probe ends.
+        const wasRecovering = this.status === "recovering";
+        let recoveryMs: number | undefined;
+
+        if (wasRecovering && this.reconnectStartedAt !== null) {
+          recoveryMs = Date.now() - this.reconnectStartedAt;
+          this.totalRecoveries++;
+          this.totalRecoveryMs += recoveryMs;
+          if (recoveryMs > this.longestOutageMs) this.longestOutageMs = recoveryMs;
+          this.lastRecoveredAt = Date.now();
+          logger.info(
+            {
+              streamId: this.streamId,
+              recoveryMs,
+              restarts: this.totalRestarts,
+              consecutiveFailures: 0,
+            },
+            `[relay] state=running recovery=${(recoveryMs / 1000).toFixed(1)}s`,
+          );
+          this._log(
+            `[relay:${this.sourceType}] ✓ Recovered in ${(recoveryMs / 1000).toFixed(1)}s` +
+            ` (reconnect #${this.totalRestarts}, consecutive failures reset)` +
+            ` — first chunk: ${chunk.length} B`,
+          );
+        } else {
+          this._log(
+            `[relay:${this.sourceType}] ✓ Source connected — piping to FFmpeg stdin` +
+            ` (first chunk: ${chunk.length} B)`,
+          );
+        }
+
+        // Clear reconnect timing state before emitting the "running" status event.
+        this.reconnectStartedAt = null;
+        this.recoveryDeadline = null;
+        this._setStatus("running", recoveryMs !== undefined ? { recoveryMs } : undefined);
       }
 
       sessionBytes += chunk.length;
@@ -1043,6 +1152,23 @@ export class SourceRelay {
     this.consecutiveFailures++;
     this.totalRestarts++;
 
+    // ── Consecutive-failure threshold: escalate to "failed" ──────────────────
+    // Stops retrying and emits a fatal event so stream-manager can perform a
+    // controlled FFmpeg restart. Distinct from permanent config errors —
+    // "failed" from excessive retries is recoverable via a new SourceRelay.
+    if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
+      logger.error(
+        { streamId: this.streamId, consecutiveFailures: this.consecutiveFailures },
+        "[relay] consecutive failure threshold reached — escalating to failed state",
+      );
+      this._fatal(
+        `[relay] ${this.consecutiveFailures} consecutive failures exceeded ` +
+        `threshold of ${this.maxConsecutiveFailures} — source appears persistently ` +
+        `unavailable. Full pipeline restart required.`,
+      );
+      return;
+    }
+
     if (this.consecutiveFailures >= WARN_AFTER_FAILURES) {
       this._warn(
         `[relay] ${this.consecutiveFailures} consecutive failures — ` +
@@ -1050,20 +1176,29 @@ export class SourceRelay {
       );
     }
 
+    // ── Exponential backoff with ±10% jitter ─────────────────────────────────
+    // Jitter prevents synchronized reconnect storms when multiple relay instances
+    // hit the same backoff level simultaneously (e.g. platform-wide outage).
     const backoffIdx = Math.min(this.consecutiveFailures - 1, BACKOFF_MS.length - 1);
-    const delayMs = BACKOFF_MS[backoffIdx];
+    const baseDelay = BACKOFF_MS[backoffIdx];
+    const jitter = baseDelay * (Math.random() * 0.2 - 0.1); // ±10%
+    const delayMs = Math.round(baseDelay + jitter);
 
     this._warn(
-      `[relay] Retry #${this.totalRestarts} in ${delayMs / 1000}s ` +
-      `(consecutive failures: ${this.consecutiveFailures})`,
+      `[relay] Retry #${this.totalRestarts} in ${(delayMs / 1000).toFixed(1)}s ` +
+      `(consecutive: ${this.consecutiveFailures}/${this.maxConsecutiveFailures})`,
     );
 
+    // Record when this reconnect window started — used for recovery duration
+    // and the deadline check in the stall watchdog.
+    this.reconnectStartedAt = Date.now();
+    this.recoveryDeadline = this.reconnectStartedAt + RECOVERY_DEADLINE_MS;
     this._setStatus("reconnecting");
 
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
       if (!this.stopped && !this.permanentlyFailed) {
-        this._setStatus("starting");
+        // _spawn() sets state to "recovering" (totalRestarts > 0 path).
         this._spawn().catch((err) => {
           this._warn(`[relay] Unexpected spawn error: ${err?.message ?? err}`);
           this._scheduleRetry();
