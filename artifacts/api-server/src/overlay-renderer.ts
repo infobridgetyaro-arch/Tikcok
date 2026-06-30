@@ -31,10 +31,11 @@ export interface OverlayState {
   newsText: string;
   newsTitle: string;     // optional header/title (shown in Lower Third, Breaking, etc.)
   newsBgColor: string;   // background/accent color for news bar (default "#cc0001")
-  newsStyle: string;     // "Ticker" | "Breaking" | "Lower Third" | "Spotlight" | "Crawl" | "Pop-up" | "Scroll Banner"
-  newsAnimation: string; // "None" | "Fade" | "→" | "←" | "↓" | "↙" | "↗" | "Typewriter" | "Pop-in" | "Letter Fade" | "Bounce" | "Reveal"
+  newsStyle: string;     // "Al Jazeera" | "CNN" | "BBC" | "Bloomberg" | "Sky News" | "Neon Wire" | "Float Glass" | "Sports" | "Cinematic" | "Gold Luxury" | "Minimal"
+  newsAnimation: string; // "None"|"Fade"|"Slide Left"|"Slide Right"|"Pop Up"|"Drop Down"|"Fade Slide"|"Typewriter"|"Scramble"|"Word Reveal"|"Zoom"|"Elastic"|"Flip"|"Glitch"|"Wipe"
   newsPosition: OverlayPosition;
-  newsLogo: string;  // base64 data URL for channel logo (optional; replaces "● LIVE" badge)
+  newsLogo: string;      // base64 data URL for channel logo (optional; replaces "● LIVE" badge)
+  newsScrollSpeed: number; // pixels-per-second multiplier (10=fast … 60=slow); default 30
 
   // ── Ads ──────────────────────────────────────────────────────────────────
   adActive: boolean;
@@ -160,10 +161,11 @@ export function defaultOverlayState(): OverlayState {
     newsText: "Welcome to the live stream! Stay tuned for more updates.",
     newsTitle: "",
     newsBgColor: "#cc0001",
-    newsStyle: "Ticker",
+    newsStyle: "Al Jazeera",
     newsAnimation: "Fade",
     newsPosition: { x: 0, y: 95 },
     newsLogo: "",
+    newsScrollSpeed: 30,
     adActive: false,
     adText: "Big Sale — 50% Off Today Only!",
     adSub: "Use code LIVE at checkout.",
@@ -626,10 +628,14 @@ export class OverlayRenderer {
 
   // ── Animated text helper ──────────────────────────────────────────────────
 
+  /** Scramble chars: random ASCII resolving to correct letters with stagger */
+  private _scrambleChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&?";
+
   /**
-   * Draws text with a character-level entry animation.
-   * For whole-overlay animations (Fade, Slide etc.) the caller handles the ctx transform.
-   * This method handles: Typewriter, Pop-in, Letter Fade, Bounce, Reveal.
+   * Draws text with a character-level or word-level entry animation.
+   * For whole-overlay animations (Fade, Slide etc.) the caller handles ctx transform.
+   * This method handles char/word anims: Typewriter, Pop-in, Letter Fade, Bounce,
+   * Wipe, Scramble, Word Reveal, Zoom, Elastic, Flip, Glitch.
    * For other animations or progress >= 1, draws normally.
    */
   private drawAnimText(
@@ -638,7 +644,10 @@ export class OverlayRenderer {
     anim: string, progress: number,
   ) {
     const { ctx } = this;
-    const CHAR_ANIMS = ["Typewriter", "Pop-in", "Letter Fade", "Bounce", "Reveal"];
+    const CHAR_ANIMS = [
+      "Typewriter", "Pop-in", "Letter Fade", "Bounce", "Reveal", "Wipe",
+      "Scramble", "Word Reveal", "Zoom", "Elastic", "Flip", "Glitch",
+    ];
 
     if (!CHAR_ANIMS.includes(anim) || progress >= 1) {
       ctx.font = font;
@@ -649,11 +658,11 @@ export class OverlayRenderer {
 
     ctx.font = font;
 
+    // ── Typewriter ────────────────────────────────────────────────────────────
     if (anim === "Typewriter") {
       const vis = Math.floor(this.easeInOut(progress) * text.length);
       ctx.fillStyle = color;
       ctx.fillText(text.slice(0, vis), x, y);
-      // blinking cursor
       const cursorX = x + ctx.measureText(text.slice(0, vis)).width + 2;
       const blink = (Math.floor(Date.now() / 400) % 2 === 0) ? 0.9 : 0;
       const fs = parseFloat(font) || 14;
@@ -665,7 +674,8 @@ export class OverlayRenderer {
       return;
     }
 
-    if (anim === "Reveal") {
+    // ── Wipe / Reveal — horizontal clip ──────────────────────────────────────
+    if (anim === "Reveal" || anim === "Wipe") {
       const totalW = ctx.measureText(text).width;
       ctx.save();
       ctx.beginPath();
@@ -677,7 +687,75 @@ export class OverlayRenderer {
       return;
     }
 
-    // Pop-in, Letter Fade, Bounce — char-by-char with stagger
+    // ── Scramble — random chars resolving left-to-right ───────────────────────
+    if (anim === "Scramble") {
+      const chars = text.split("");
+      const sc = this._scrambleChars;
+      const now = Date.now();
+      let cx = x;
+      chars.forEach((ch, i) => {
+        ctx.font = font;
+        const cw = ctx.measureText(ch).width;
+        // Each char resolves when its t_char > 0.5
+        const t_char = Math.max(0, Math.min(1, (progress * chars.length - i)));
+        if (t_char <= 0) { cx += cw; return; }
+        const display = t_char >= 0.5 ? ch : sc[Math.floor((now / 80 + i * 17) % sc.length)];
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, t_char * 2) * this._panelAlpha;
+        ctx.fillStyle = t_char >= 0.5 ? color : "#00ff88";
+        ctx.fillText(display, cx, y);
+        ctx.restore();
+        cx += cw;
+      });
+      return;
+    }
+
+    // ── Word Reveal — words appear one by one ─────────────────────────────────
+    if (anim === "Word Reveal") {
+      const words = text.split(" ");
+      const visWords = Math.floor(this.easeInOut(progress) * words.length);
+      let cx = x;
+      words.forEach((word, i) => {
+        ctx.font = font;
+        const ww = ctx.measureText(word + " ").width;
+        if (i < visWords) {
+          ctx.save();
+          ctx.globalAlpha = 1 * this._panelAlpha;
+          ctx.fillStyle = color;
+          ctx.fillText(word, cx, y);
+          ctx.restore();
+        } else if (i === visWords) {
+          // Partial fade for current word
+          const wordProg = (this.easeInOut(progress) * words.length) - visWords;
+          ctx.save();
+          ctx.globalAlpha = wordProg * this._panelAlpha;
+          ctx.fillStyle = color;
+          ctx.fillText(word, cx, y);
+          ctx.restore();
+        }
+        cx += ww;
+      });
+      return;
+    }
+
+    // ── Zoom — text scales from 1.5x to 1x ────────────────────────────────────
+    if (anim === "Zoom") {
+      const ep = this.easeInOut(progress);
+      const scale = 1.5 - ep * 0.5;
+      const totalW = ctx.measureText(text).width;
+      ctx.save();
+      ctx.translate(x + totalW / 2, y);
+      ctx.scale(scale, scale);
+      ctx.globalAlpha = ep * this._panelAlpha;
+      ctx.fillStyle = color;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, 0, 0);
+      ctx.restore();
+      return;
+    }
+
+    // ── Char-by-char animations: Pop-in, Letter Fade, Bounce, Elastic, Flip, Glitch ──
     const chars = text.split("");
     let cx = x;
 
@@ -710,6 +788,39 @@ export class OverlayRenderer {
           ctx.globalAlpha = t_char > 0.05 ? this._panelAlpha : 0;
           ctx.fillStyle = color;
           ctx.fillText(ch, cx, y + yOff);
+          break;
+        }
+        case "Elastic": {
+          const scale = this.easeElastic(t_char);
+          const yOff = (1 - this.easeElastic(t_char)) * 24;
+          ctx.translate(cx + cw / 2, y + yOff);
+          ctx.scale(scale, scale);
+          ctx.globalAlpha = t_char > 0.02 ? this._panelAlpha : 0;
+          ctx.fillStyle = color;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(ch, 0, 0);
+          break;
+        }
+        case "Flip": {
+          // Simulate vertical flip with scaleY
+          const scaleY = t_char < 0.5 ? Math.abs(Math.cos(t_char * Math.PI)) : 1;
+          ctx.translate(cx + cw / 2, y);
+          ctx.scale(1, scaleY);
+          ctx.globalAlpha = this.easeInOut(t_char) * this._panelAlpha;
+          ctx.fillStyle = color;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(ch, 0, 0);
+          break;
+        }
+        case "Glitch": {
+          // Random x-jitter that settles
+          const jitter = t_char < 0.8 ? (Math.random() - 0.5) * 8 * (1 - t_char) : 0;
+          const jitterY = t_char < 0.8 ? (Math.random() - 0.5) * 4 * (1 - t_char) : 0;
+          ctx.globalAlpha = this.easeInOut(Math.min(1, t_char * 1.5)) * this._panelAlpha;
+          ctx.fillStyle = t_char < 0.6 ? "#00ffff" : color;
+          ctx.fillText(ch, cx + jitter, y + jitterY);
           break;
         }
       }
@@ -2905,21 +3016,23 @@ export class OverlayRenderer {
     ctx.fillStyle = "rgba(255,255,255,0.14)";
     ctx.fillRect(badgeW, y + bh * 0.18, 1, bh * 0.64);
 
-    // Scrolling text
-    const full  = msgs.map((m) => `${m.name}: ${m.text}`).join("     ·     ") + "     ·     ";
+    // Seamlessly scrolling chat text
+    const chatUnit = msgs.map((m) => `${m.name}: ${m.text}`).join("     ·     ") + "     ·     ";
     const scrollFontSize = Math.round(bh * 0.30);
-    ctx.font = `${scrollFontSize}px sans-serif`;
-    const tw   = ctx.measureText(full).width;
     const area = W - badgeW - 10;
-    const speed  = W * 0.065;
-    const offset = ((t - this.chatScrollStartT) * speed) % (tw || 1);
+    const chatFont = `${scrollFontSize}px sans-serif`;
+    ctx.font = chatFont;
+    const chatTw   = ctx.measureText(chatUnit).width || 1;
+    const chatSpd  = this.tickerPxPerSec();
+    const chatOff  = ((t - this.chatScrollStartT) * chatSpd) % chatTw;
+    const chatCopies = Math.ceil(area / chatTw) + 2;
     ctx.save();
     this.clipRR(badgeW + 10, y, area, bh, 0);
     ctx.fillStyle    = "rgba(232,238,255,0.92)";
     ctx.textAlign    = "left";
     ctx.textBaseline = "middle";
-    for (let i = 0; i < 3; i++)
-      ctx.fillText(full, badgeW + 10 - offset + i * (tw + 20), y + bh / 2 + 1);
+    for (let i = 0; i < chatCopies; i++)
+      ctx.fillText(chatUnit, badgeW + 10 - chatOff + i * chatTw, y + bh / 2 + 1);
     ctx.restore();
   }
 
@@ -2930,120 +3043,721 @@ export class OverlayRenderer {
     const animProg = Math.min(1, (t - this.newsAnimStartT) / ANIM_DUR);
     this._newsAnimProg = animProg;
     const anim = state.newsAnimation || "Fade";
-    const CHAR_ANIMS = ["Typewriter", "Pop-in", "Letter Fade", "Bounce", "Reveal"];
+
+    // Character/word-level animations — whole-overlay transform is skipped for these
+    const CHAR_ANIMS = [
+      "Typewriter", "Pop-in", "Letter Fade", "Bounce", "Reveal", "Wipe",
+      "Scramble", "Word Reveal", "Zoom", "Elastic", "Flip", "Glitch",
+    ];
     const isCharAnim = CHAR_ANIMS.includes(anim);
 
     const effPos = this.pos(state.newsPosition, state.mobileNewsPosition);
     const xBase = this.px(effPos.x, this.W);
     const yBase = this.px(effPos.y, this.H);
 
-    const { ctx, W } = this;
+    const { ctx, W, H } = this;
     ctx.save();
 
-    // Apply whole-overlay animations (not for char-level anims)
+    // Apply whole-overlay entry animations (skip for char-level anims)
     if (animProg < 1 && !isCharAnim) {
       const ep = this.easeInOut(animProg);
       switch (anim) {
-        case "Fade": ctx.globalAlpha *= ep; break;
-        case "→":   ctx.translate(-(1 - ep) * W * 0.5, 0); break;
-        case "←":   ctx.translate( (1 - ep) * W * 0.5, 0); break;
-        case "↓":   ctx.translate(0, -(1 - ep) * 80); break;
-        case "↙":   ctx.translate( (1 - ep) * W * 0.3, -(1 - ep) * 50); break;
-        case "↗":   ctx.translate(-(1 - ep) * W * 0.3,  (1 - ep) * 50); break;
+        // Classic directional slides
+        case "Fade":
+          ctx.globalAlpha *= ep;
+          break;
+        case "Slide Left":
+        case "←":
+          ctx.translate((1 - ep) * W * 0.5, 0);
+          break;
+        case "Slide Right":
+        case "→":
+          ctx.translate(-(1 - ep) * W * 0.5, 0);
+          break;
+        case "Pop Up":
+        case "↓":
+          ctx.translate(0, (1 - ep) * 80);
+          break;
+        case "Drop Down":
+          ctx.translate(0, -(1 - ep) * 80);
+          break;
+        case "↙":
+          ctx.translate((1 - ep) * W * 0.3, -(1 - ep) * 50);
+          break;
+        case "↗":
+          ctx.translate(-(1 - ep) * W * 0.3, (1 - ep) * 50);
+          break;
+        // Combined animations
+        case "Fade Slide":
+          ctx.globalAlpha *= ep;
+          ctx.translate(0, (1 - ep) * 40);
+          break;
+        // Zoom in then settle
+        case "Zoom": {
+          const scale = 0.7 + ep * 0.3;
+          ctx.globalAlpha *= ep;
+          ctx.translate(W / 2, H / 2);
+          ctx.scale(scale, scale);
+          ctx.translate(-W / 2, -H / 2);
+          break;
+        }
+        // Elastic overshoot from below
+        case "Elastic": {
+          const off = (1 - this.easeElastic(ep)) * 60;
+          ctx.translate(0, off);
+          break;
+        }
+        // Vertical flip (scaleY 0 → 1)
+        case "Flip": {
+          const scaleY = ep;
+          ctx.translate(0, H / 2);
+          ctx.scale(1, scaleY);
+          ctx.translate(0, -H / 2);
+          ctx.globalAlpha *= Math.min(1, ep * 2);
+          break;
+        }
+        // Glitch horizontal jitter settling to position
+        case "Glitch": {
+          const settle = ep;
+          const jitter = settle < 0.85 ? (Math.random() - 0.5) * 12 * (1 - settle) : 0;
+          ctx.translate(jitter, 0);
+          ctx.globalAlpha *= Math.min(1, ep * 1.5);
+          break;
+        }
       }
     }
 
+    // ── Route to the correct broadcaster style ────────────────────────────────
     switch (state.newsStyle) {
-      case "Breaking":      this.drawBreaking(yBase); break;
-      case "Lower Third":   this.drawLowerThird(xBase, yBase); break;
-      case "Spotlight":     this.drawSpotlight(); break;
-      case "Pop-up":        this.drawNewsPopup(); break;
+      case "CNN":          this.drawTickerCNN(t, yBase); break;
+      case "BBC":          this.drawTickerBBC(t, yBase); break;
+      case "Bloomberg":    this.drawTickerBloomberg(t, yBase); break;
+      case "Sky News":     this.drawTickerSkyNews(t, yBase); break;
+      case "Neon Wire":    this.drawTickerNeonWire(t, yBase); break;
+      case "Float Glass":  this.drawTickerFloatGlass(t, yBase); break;
+      case "Sports":       this.drawTickerSports(t, yBase); break;
+      case "Cinematic":    this.drawTickerCinematic(t, yBase); break;
+      case "Gold Luxury":  this.drawTickerGoldLuxury(t, yBase); break;
+      case "Minimal":      this.drawTickerMinimal(t, yBase); break;
+      // Legacy style names (backward compat)
+      case "Breaking":     this.drawBreaking(yBase); break;
+      case "Lower Third":  this.drawLowerThird(xBase, yBase); break;
+      case "Spotlight":    this.drawSpotlight(); break;
+      case "Pop-up":       this.drawNewsPopup(); break;
       case "Scroll Banner": this.drawScrollBanner(t, yBase); break;
-      case "Crawl":
+      // Al Jazeera = default + explicit
+      case "Al Jazeera":
       case "Ticker":
-      default:              this.drawTicker(t, yBase); break;
+      case "Crawl":
+      default:             this.drawTickerAlJazeera(t, yBase); break;
     }
 
     ctx.restore();
   }
 
-  private drawTicker(t: number, yBase: number) {
+  // ── Shared ticker scroll helper ────────────────────────────────────────────
+  /** Pixel-per-second speed from the user's newsScrollSpeed setting (10=fast … 60=slow) */
+  private tickerPxPerSec(): number {
+    const spd = this.state.newsScrollSpeed || 30;
+    // Map: speed=10 → W/8 px/s (very fast), speed=60 → W/48 px/s (slow)
+    return this.W / (spd * 0.4 + 4);
+  }
+
+  /**
+   * Draw seamlessly looping text inside a clipped region.
+   * textY is the baseline Y for ctx.fillText.
+   */
+  private drawScrollText(
+    areaX: number, areaY: number, areaW: number, areaH: number,
+    clipR: number, textY: number,
+    text: string, font: string, color: string,
+    t: number, startT: number,
+  ) {
+    const { ctx } = this;
+    ctx.font = font;
+    const sep    = "   ◆   ";
+    const unit   = text + sep;
+    const tw     = ctx.measureText(unit).width || 1;
+    const speed  = this.tickerPxPerSec();
+    const off    = ((t - startT) * speed) % tw;
+    const copies = Math.ceil(areaW / tw) + 2;
+
+    this.clipRoundRect(areaX, areaY, areaW, areaH, clipR, () => {
+      ctx.fillStyle    = color;
+      ctx.textAlign    = "left";
+      ctx.textBaseline = "middle";
+      for (let i = 0; i < copies; i++) {
+        ctx.fillText(unit, areaX - off + i * tw, textY);
+      }
+    });
+  }
+
+  // ── 1. Al Jazeera style — squared badge, red left block, clean bold text ───
+  private drawTickerAlJazeera(t: number, yBase: number) {
     const { ctx, W, H, state } = this;
     const bh     = Math.max(38, Math.round(H * 0.062));
-    const r      = Math.round(bh * 0.36);          // corner radius
-    const pad    = Math.round(bh * 0.18);
-    const accent = state.newsBgColor || "#e5000a";
+    const accent = state.newsBgColor || "#cc0001";
+    const y      = yBase > 0 ? Math.min(H - bh - 6, yBase) : H - bh - 6;
 
-    // Badge pill width
-    const badgeInner = this.newsLogoImg ? bh * 1.6 : bh * 2.1;
-    const badgeW     = Math.round(badgeInner + pad * 2);
-    const y          = yBase > 0 ? Math.min(H - bh - 6, yBase) : H - bh - 6;
+    // Full dark bar — sharp edges (Al Jazeera style, no radius)
+    ctx.fillStyle = "rgba(4,4,12,0.96)";
+    ctx.fillRect(0, y, W, bh);
 
-    // ── Full bar — dark glass ─────────────────────────────────────────────
-    const barX = 0;
-    this.roundRect(barX, y, W, bh, r);
-    ctx.fillStyle = "rgba(6,6,14,0.93)";
-    ctx.fill();
-
-    // Top accent stripe (clipped to bar shape)
-    this.clipRoundRect(barX, y, W, 3, 1, () => {
-      const g = ctx.createLinearGradient(0, 0, W, 0);
-      g.addColorStop(0, accent);
-      g.addColorStop(0.5, "#ffffff44");
-      g.addColorStop(1, "transparent");
-      ctx.fillStyle = g;
-      ctx.fillRect(0, y, W, 3);
-    });
-
-    // ── Badge pill (left-anchored, full-height) ───────────────────────────
-    this.roundRect(barX, y, badgeW, bh, r);
+    // 3px red bottom stripe
     ctx.fillStyle = accent;
-    ctx.fill();
+    ctx.fillRect(0, y + bh - 3, W, 3);
 
+    // Left badge — solid accent block
+    const badgeW = this.newsLogoImg ? Math.round(bh * 2.2) : Math.round(bh * 2.4);
+    ctx.fillStyle = accent;
+    ctx.fillRect(0, y, badgeW, bh);
+
+    // Badge content
     if (this.newsLogoImg) {
-      const img  = this.newsLogoImg;
+      const img = this.newsLogoImg;
+      const pad = Math.round(bh * 0.14);
       const maxH = bh - pad * 2;
       const sc   = Math.min(maxH / img.height, (badgeW - pad * 2) / img.width);
-      const dw   = Math.round(img.width * sc);
-      const dh   = Math.round(img.height * sc);
-      this.clipRoundRect(barX, y, badgeW, bh, r, () => {
-        ctx.drawImage(img, Math.round((badgeW - dw) / 2), y + Math.round((bh - dh) / 2), dw, dh);
-      });
+      const dw = Math.round(img.width * sc); const dh = Math.round(img.height * sc);
+      ctx.save(); ctx.beginPath(); ctx.rect(0, y, badgeW, bh); ctx.clip();
+      ctx.drawImage(img, Math.round((badgeW - dw) / 2), y + Math.round((bh - dh) / 2), dw, dh);
+      ctx.restore();
     } else {
-      ctx.fillStyle = "#fff";
-      ctx.font      = `900 ${Math.round(bh * 0.32)}px sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.shadowColor  = "rgba(0,0,0,0.4)";
-      ctx.shadowBlur   = 4;
-      ctx.fillText("● LIVE", badgeW / 2, y + bh / 2 + 1);
+      const label = (state.newsTitle || "● LIVE").toUpperCase();
+      ctx.fillStyle = "#fff"; ctx.font = `900 ${Math.round(bh * 0.31)}px sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(label, badgeW / 2, y + bh / 2);
+    }
+
+    // Thin white separator
+    ctx.fillStyle = "rgba(255,255,255,0.18)";
+    ctx.fillRect(badgeW, y + bh * 0.12, 1, bh * 0.76);
+
+    // Scrolling text
+    const areaX = badgeW + 14; const areaW = W - areaX - 8;
+    const fs = Math.round(bh * 0.34);
+    this.drawScrollText(areaX, y + 2, areaW, bh - 4, 0,
+      y + bh / 2, state.newsText, `600 ${fs}px sans-serif`,
+      "rgba(240,240,240,0.97)", t, this.newsScrollStartT);
+  }
+
+  // ── 2. CNN style — charcoal bar, bold scarlet badge, heavy uppercase text ──
+  private drawTickerCNN(t: number, yBase: number) {
+    const { ctx, W, H, state } = this;
+    const bh     = Math.max(40, Math.round(H * 0.066));
+    const accent = state.newsBgColor || "#c00000";
+    const y      = yBase > 0 ? Math.min(H - bh - 6, yBase) : H - bh - 6;
+
+    // Deep charcoal bar
+    ctx.fillStyle = "rgba(18,18,22,0.97)";
+    ctx.fillRect(0, y, W, bh);
+
+    // Red top line (thin)
+    ctx.fillStyle = accent;
+    ctx.fillRect(0, y, W, 3);
+
+    // Bold rectangular badge — left edge flush
+    const bw2 = this.newsLogoImg ? Math.round(bh * 2.0) : Math.round(bh * 2.2);
+    const g   = ctx.createLinearGradient(0, y, 0, y + bh);
+    g.addColorStop(0, accent); g.addColorStop(1, `${accent}cc`);
+    ctx.fillStyle = g; ctx.fillRect(0, y + 3, bw2, bh - 3);
+
+    if (this.newsLogoImg) {
+      const img = this.newsLogoImg;
+      const pad = Math.round(bh * 0.15);
+      const maxH = bh - pad * 2;
+      const sc = Math.min(maxH / img.height, (bw2 - pad * 2) / img.width);
+      const dw = Math.round(img.width * sc); const dh = Math.round(img.height * sc);
+      ctx.save(); ctx.beginPath(); ctx.rect(0, y, bw2, bh); ctx.clip();
+      ctx.drawImage(img, Math.round((bw2 - dw) / 2), y + Math.round((bh - dh) / 2), dw, dh);
+      ctx.restore();
+    } else {
+      const label = (state.newsTitle || "CNN").toUpperCase();
+      ctx.fillStyle = "#fff"; ctx.font = `900 ${Math.round(bh * 0.36)}px sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.shadowColor = "rgba(0,0,0,0.4)"; ctx.shadowBlur = 3;
+      ctx.fillText(label, bw2 / 2, y + bh / 2 + 1);
       ctx.shadowBlur = 0;
     }
 
-    // ── Separator ─────────────────────────────────────────────────────────
-    ctx.fillStyle = "rgba(255,255,255,0.15)";
-    ctx.fillRect(badgeW + 1, y + bh * 0.15, 1, bh * 0.70);
+    // ▸ triangle pointer on right edge of badge
+    ctx.fillStyle = accent;
+    ctx.beginPath();
+    ctx.moveTo(bw2, y + 3); ctx.lineTo(bw2 + 14, y + bh / 2); ctx.lineTo(bw2, y + bh);
+    ctx.fill();
 
-    // ── Scrolling news text ───────────────────────────────────────────────
+    // Separator gap — use pointer as separator
+    const areaX = bw2 + 18; const areaW = W - areaX - 8;
     const fs    = Math.round(bh * 0.33);
-    const font  = `600 ${fs}px sans-serif`;
-    ctx.font    = font;
-    const sep   = "   ◆   ";
-    const full  = state.newsText + sep + state.newsText;
-    const tw    = ctx.measureText(full).width;
-    const areaX = badgeW + 16;
-    const areaW = W - areaX - 8;
-    const speed = W * 0.07;
-    const off   = ((t - this.newsScrollStartT) * speed) % (tw || 1);
+    this.drawScrollText(areaX, y + 2, areaW, bh - 4, 0,
+      y + bh / 2, state.newsText, `700 ${fs}px sans-serif`,
+      "rgba(240,240,240,0.97)", t, this.newsScrollStartT);
+  }
 
-    this.clipRoundRect(areaX, y + 2, areaW, bh - 4, r - 2, () => {
-      ctx.fillStyle    = "rgba(240,240,240,0.96)";
-      ctx.textAlign    = "left";
-      ctx.textBaseline = "middle";
-      for (let i = 0; i < 3; i++) {
-        ctx.fillText(full, areaX - off + i * (tw + 24), y + bh / 2 + 1);
-      }
+  // ── 3. BBC style — navy/dark bar, BBC red pill, tight white text ────────────
+  private drawTickerBBC(t: number, yBase: number) {
+    const { ctx, W, H, state } = this;
+    const bh     = Math.max(38, Math.round(H * 0.062));
+    const accent = state.newsBgColor || "#bb1919";
+    const r      = Math.round(bh * 0.16);   // subtle rounding
+    const y      = yBase > 0 ? Math.min(H - bh - 6, yBase) : H - bh - 6;
+
+    // Dark bar with slight blue tint (BBC look)
+    ctx.fillStyle = "rgba(6,10,28,0.97)";
+    this.roundRect(0, y, W, bh, r); ctx.fill();
+
+    // 4px vertical accent stripe on far left
+    ctx.fillStyle = accent; ctx.fillRect(0, y, 4, bh);
+
+    // Badge — compact pill with rounded corners
+    const bw2 = this.newsLogoImg ? Math.round(bh * 1.8) : Math.round(bh * 1.7);
+    const bx  = 10; const by = y + Math.round(bh * 0.12);
+    const bH2 = Math.round(bh * 0.76);
+    this.roundRect(bx, by, bw2, bH2, Math.round(bH2 * 0.3));
+    ctx.fillStyle = accent; ctx.fill();
+
+    if (this.newsLogoImg) {
+      const img = this.newsLogoImg;
+      const pad = Math.round(bH2 * 0.15);
+      const maxH = bH2 - pad * 2;
+      const sc = Math.min(maxH / img.height, (bw2 - pad * 2) / img.width);
+      const dw = Math.round(img.width * sc); const dh = Math.round(img.height * sc);
+      ctx.save(); this.roundRect(bx, by, bw2, bH2, Math.round(bH2 * 0.3)); ctx.clip();
+      ctx.drawImage(img, bx + Math.round((bw2 - dw) / 2), by + Math.round((bH2 - dh) / 2), dw, dh);
+      ctx.restore();
+    } else {
+      const label = (state.newsTitle || "BBC NEWS").toUpperCase();
+      ctx.fillStyle = "#fff"; ctx.font = `900 ${Math.round(bH2 * 0.40)}px sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(label, bx + bw2 / 2, by + bH2 / 2);
+    }
+
+    // Separator
+    const sepX = bx + bw2 + 10;
+    ctx.fillStyle = "rgba(255,255,255,0.14)"; ctx.fillRect(sepX, y + bh * 0.15, 1, bh * 0.70);
+
+    // Scrolling text
+    const areaX = sepX + 10; const areaW = W - areaX - 8;
+    const fs    = Math.round(bh * 0.32);
+    this.drawScrollText(areaX, y + 2, areaW, bh - 4, Math.max(0, r - 2),
+      y + bh / 2, state.newsText, `600 ${fs}px sans-serif`,
+      "rgba(230,230,235,0.97)", t, this.newsScrollStartT);
+  }
+
+  // ── 4. Bloomberg style — matte black, amber/gold, financial terminal feel ──
+  private drawTickerBloomberg(t: number, yBase: number) {
+    const { ctx, W, H, state } = this;
+    const bh     = Math.max(36, Math.round(H * 0.058));
+    const accent = state.newsBgColor || "#f59e0b";
+    const y      = yBase > 0 ? Math.min(H - bh - 4, yBase) : H - bh - 4;
+
+    // Matte near-black bar
+    ctx.fillStyle = "rgba(8,8,10,0.98)";
+    ctx.fillRect(0, y, W, bh);
+
+    // Thin top gold line
+    const lineG = ctx.createLinearGradient(0, 0, W, 0);
+    lineG.addColorStop(0, accent); lineG.addColorStop(0.5, "#fde68a"); lineG.addColorStop(1, accent);
+    ctx.fillStyle = lineG; ctx.fillRect(0, y, W, 2);
+
+    // Badge — gold angled block
+    const bw2 = this.newsLogoImg ? Math.round(bh * 2.1) : Math.round(bh * 2.4);
+    ctx.fillStyle = accent;
+    ctx.fillRect(0, y + 2, bw2, bh - 2);
+
+    // Angled right edge for dynamic look
+    ctx.fillStyle = accent;
+    ctx.beginPath(); ctx.moveTo(bw2, y + 2); ctx.lineTo(bw2 + 12, y + 2);
+    ctx.lineTo(bw2, y + bh); ctx.fill();
+
+    if (this.newsLogoImg) {
+      const img = this.newsLogoImg;
+      const pad = Math.round(bh * 0.12);
+      const maxH = bh - pad * 2;
+      const sc = Math.min(maxH / img.height, (bw2 - pad * 2) / img.width);
+      const dw = Math.round(img.width * sc); const dh = Math.round(img.height * sc);
+      ctx.save(); ctx.beginPath(); ctx.rect(0, y, bw2, bh); ctx.clip();
+      ctx.drawImage(img, Math.round((bw2 - dw) / 2), y + Math.round((bh - dh) / 2), dw, dh);
+      ctx.restore();
+    } else {
+      const label = (state.newsTitle || "BLOOMBERG").toUpperCase();
+      ctx.fillStyle = "#000"; ctx.font = `900 ${Math.round(bh * 0.29)}px sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(label, bw2 / 2, y + bh / 2 + 1);
+    }
+
+    // Text area — monospaced feel
+    const areaX = bw2 + 16; const areaW = W - areaX - 8;
+    const fs    = Math.round(bh * 0.33);
+    this.drawScrollText(areaX, y + 2, areaW, bh - 4, 0,
+      y + bh / 2, state.newsText, `600 ${fs}px "Courier New", monospace`,
+      "#f5e08a", t, this.newsScrollStartT);
+  }
+
+  // ── 5. Sky News — sky blue + white, clean modern British broadcast ──────────
+  private drawTickerSkyNews(t: number, yBase: number) {
+    const { ctx, W, H, state } = this;
+    const bh     = Math.max(40, Math.round(H * 0.066));
+    const accent = state.newsBgColor || "#0072bc";
+    const r      = Math.round(bh * 0.30);
+    const y      = yBase > 0 ? Math.min(H - bh - 6, yBase) : H - bh - 6;
+
+    // White/light-grey main bar (Sky look: light not dark)
+    this.roundRect(0, y, W, bh, r);
+    ctx.fillStyle = "rgba(240,245,250,0.97)"; ctx.fill();
+
+    // Thin blue top accent
+    this.clipRoundRect(0, y, W, 4, r, () => {
+      ctx.fillStyle = accent; ctx.fillRect(0, y, W, 4);
     });
+
+    // Left sky-blue rounded badge
+    const bw2 = this.newsLogoImg ? Math.round(bh * 2.0) : Math.round(bh * 2.2);
+    this.roundRect(4, y + 4, bw2, bh - 8, Math.round((bh - 8) * 0.35));
+    const bg2 = ctx.createLinearGradient(4, y, 4, y + bh);
+    bg2.addColorStop(0, accent); bg2.addColorStop(1, `${accent}dd`);
+    ctx.fillStyle = bg2; ctx.fill();
+
+    if (this.newsLogoImg) {
+      const img = this.newsLogoImg;
+      const pad = Math.round(bh * 0.14);
+      const maxH = (bh - 8) - pad * 2;
+      const sc = Math.min(maxH / img.height, (bw2 - pad * 2) / img.width);
+      const dw = Math.round(img.width * sc); const dh = Math.round(img.height * sc);
+      ctx.save(); this.roundRect(4, y + 4, bw2, bh - 8, Math.round((bh - 8) * 0.35)); ctx.clip();
+      ctx.drawImage(img, 4 + Math.round((bw2 - dw) / 2), y + 4 + Math.round(((bh - 8) - dh) / 2), dw, dh);
+      ctx.restore();
+    } else {
+      const label = (state.newsTitle || "SKY NEWS").toUpperCase();
+      ctx.fillStyle = "#fff"; ctx.font = `800 ${Math.round(bh * 0.30)}px sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(label, 4 + bw2 / 2, y + bh / 2);
+    }
+
+    const sepX = 4 + bw2 + 8;
+    ctx.fillStyle = "rgba(0,0,0,0.12)"; ctx.fillRect(sepX, y + bh * 0.15, 1, bh * 0.70);
+
+    const areaX = sepX + 10; const areaW = W - areaX - 8;
+    const fs    = Math.round(bh * 0.32);
+    this.drawScrollText(areaX, y + 2, areaW, bh - 4, Math.max(0, r - 2),
+      y + bh / 2, state.newsText, `600 ${fs}px sans-serif`,
+      "rgba(10,10,30,0.95)", t, this.newsScrollStartT);
+  }
+
+  // ── 6. Neon Wire — dark bar, neon cyan glow border, sci-fi feel ────────────
+  private drawTickerNeonWire(t: number, yBase: number) {
+    const { ctx, W, H, state } = this;
+    const bh     = Math.max(38, Math.round(H * 0.062));
+    const accent = state.newsBgColor || "#00ffcc";
+    const r      = Math.round(bh * 0.30);
+    const y      = yBase > 0 ? Math.min(H - bh - 6, yBase) : H - bh - 6;
+
+    // Dark semi-transparent bar
+    this.roundRect(0, y, W, bh, r);
+    ctx.fillStyle = "rgba(2,10,22,0.95)"; ctx.fill();
+
+    // Neon glow border
+    this.roundRect(0, y, W, bh, r);
+    ctx.strokeStyle = accent; ctx.lineWidth = 1.5;
+    ctx.shadowColor = accent; ctx.shadowBlur = 8;
+    ctx.stroke(); ctx.shadowBlur = 0;
+
+    // Animated scan line
+    const scanPos = ((t * 0.3) % 1) * W;
+    const scanG = ctx.createLinearGradient(scanPos - 60, 0, scanPos + 60, 0);
+    scanG.addColorStop(0, "transparent");
+    scanG.addColorStop(0.5, `${accent}30`);
+    scanG.addColorStop(1, "transparent");
+    this.clipRoundRect(0, y, W, bh, r, () => {
+      ctx.fillStyle = scanG; ctx.fillRect(0, y, W, bh);
+    });
+
+    // Left neon badge
+    const bw2 = this.newsLogoImg ? Math.round(bh * 1.9) : Math.round(bh * 2.1);
+    this.roundRect(6, y + 5, bw2, bh - 10, Math.round((bh - 10) * 0.4));
+    ctx.fillStyle = `${accent}22`; ctx.fill();
+    this.roundRect(6, y + 5, bw2, bh - 10, Math.round((bh - 10) * 0.4));
+    ctx.strokeStyle = accent; ctx.lineWidth = 1;
+    ctx.shadowColor = accent; ctx.shadowBlur = 6; ctx.stroke(); ctx.shadowBlur = 0;
+
+    if (this.newsLogoImg) {
+      const img = this.newsLogoImg;
+      const pad = Math.round(bh * 0.15);
+      const maxH = (bh - 10) - pad * 2;
+      const sc = Math.min(maxH / img.height, (bw2 - pad * 2) / img.width);
+      const dw = Math.round(img.width * sc); const dh = Math.round(img.height * sc);
+      ctx.save(); this.roundRect(6, y + 5, bw2, bh - 10, Math.round((bh - 10) * 0.4)); ctx.clip();
+      ctx.drawImage(img, 6 + Math.round((bw2 - dw) / 2), y + 5 + Math.round(((bh - 10) - dh) / 2), dw, dh);
+      ctx.restore();
+    } else {
+      const label = (state.newsTitle || "◈ LIVE").toUpperCase();
+      ctx.fillStyle = accent; ctx.font = `700 ${Math.round(bh * 0.29)}px sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.shadowColor = accent; ctx.shadowBlur = 6;
+      ctx.fillText(label, 6 + bw2 / 2, y + bh / 2);
+      ctx.shadowBlur = 0;
+    }
+
+    ctx.fillStyle = `${accent}30`; ctx.fillRect(6 + bw2 + 8, y + bh * 0.15, 1, bh * 0.70);
+
+    const areaX = 6 + bw2 + 14; const areaW = W - areaX - 10;
+    const fs    = Math.round(bh * 0.32);
+    this.drawScrollText(areaX, y + 2, areaW, bh - 4, Math.max(0, r - 2),
+      y + bh / 2, state.newsText, `600 ${fs}px sans-serif`,
+      accent, t, this.newsScrollStartT);
+  }
+
+  // ── 7. Float Glass — frosted glass, semi-transparent, elegant ──────────────
+  private drawTickerFloatGlass(t: number, yBase: number) {
+    const { ctx, W, H, state } = this;
+    const bh     = Math.max(42, Math.round(H * 0.068));
+    const accent = state.newsBgColor || "#818cf8";
+    const r      = Math.round(bh * 0.38);
+    const margin = 12;
+    const y      = yBase > 0 ? Math.min(H - bh - margin, yBase) : H - bh - margin;
+
+    // Frosted glass base
+    this.roundRect(margin, y, W - margin * 2, bh, r);
+    ctx.fillStyle = "rgba(255,255,255,0.13)"; ctx.fill();
+
+    // Glass shimmer highlight along top
+    this.clipRoundRect(margin, y, W - margin * 2, bh / 2, r, () => {
+      const shimG = ctx.createLinearGradient(0, y, 0, y + bh / 2);
+      shimG.addColorStop(0, "rgba(255,255,255,0.22)");
+      shimG.addColorStop(1, "rgba(255,255,255,0.04)");
+      ctx.fillStyle = shimG; ctx.fillRect(margin, y, W - margin * 2, bh / 2);
+    });
+
+    // Subtle border
+    this.roundRect(margin, y, W - margin * 2, bh, r);
+    ctx.strokeStyle = "rgba(255,255,255,0.28)"; ctx.lineWidth = 1; ctx.stroke();
+
+    // Left badge (translucent accent)
+    const bw2 = this.newsLogoImg ? Math.round(bh * 1.8) : Math.round(bh * 2.0);
+    const bx  = margin + 6; const by = y + 5; const bH2 = bh - 10;
+    this.roundRect(bx, by, bw2, bH2, Math.round(bH2 * 0.38));
+    ctx.fillStyle = `${accent}55`; ctx.fill();
+    this.roundRect(bx, by, bw2, bH2, Math.round(bH2 * 0.38));
+    ctx.strokeStyle = `${accent}99`; ctx.lineWidth = 1; ctx.stroke();
+
+    if (this.newsLogoImg) {
+      const img = this.newsLogoImg;
+      const pad = Math.round(bH2 * 0.15);
+      const maxH = bH2 - pad * 2;
+      const sc = Math.min(maxH / img.height, (bw2 - pad * 2) / img.width);
+      const dw = Math.round(img.width * sc); const dh = Math.round(img.height * sc);
+      ctx.save(); this.roundRect(bx, by, bw2, bH2, Math.round(bH2 * 0.38)); ctx.clip();
+      ctx.drawImage(img, bx + Math.round((bw2 - dw) / 2), by + Math.round((bH2 - dh) / 2), dw, dh);
+      ctx.restore();
+    } else {
+      const label = (state.newsTitle || "◆ LIVE").toUpperCase();
+      ctx.fillStyle = "#fff"; ctx.font = `700 ${Math.round(bH2 * 0.40)}px sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(label, bx + bw2 / 2, by + bH2 / 2);
+    }
+
+    ctx.fillStyle = "rgba(255,255,255,0.20)";
+    ctx.fillRect(bx + bw2 + 8, y + bh * 0.18, 1, bh * 0.64);
+
+    const areaX = bx + bw2 + 14; const areaW = W - margin - areaX - 10;
+    const fs    = Math.round(bh * 0.32);
+    this.drawScrollText(areaX, y + 2, areaW, bh - 4, Math.max(0, r - 2),
+      y + bh / 2, state.newsText, `600 ${fs}px sans-serif`,
+      "rgba(255,255,255,0.96)", t, this.newsScrollStartT);
+  }
+
+  // ── 8. Sports — bold orange/red gradient, aggressive sports ticker ──────────
+  private drawTickerSports(t: number, yBase: number) {
+    const { ctx, W, H, state } = this;
+    const bh     = Math.max(44, Math.round(H * 0.070));
+    const accent = state.newsBgColor || "#ea580c";
+    const y      = yBase > 0 ? Math.min(H - bh - 4, yBase) : H - bh - 4;
+
+    // Full gradient bar — orange to dark red
+    const barG = ctx.createLinearGradient(0, y, W, y + bh);
+    barG.addColorStop(0, accent); barG.addColorStop(0.6, "#7f1d1d"); barG.addColorStop(1, "#1c1c1c");
+    ctx.fillStyle = barG; ctx.fillRect(0, y, W, bh);
+
+    // Dark band at bottom
+    ctx.fillStyle = "rgba(0,0,0,0.30)"; ctx.fillRect(0, y + bh - 6, W, 6);
+
+    // Diagonal slash badge
+    const bw2 = this.newsLogoImg ? Math.round(bh * 2.0) : Math.round(bh * 2.3);
+    ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fillRect(0, y, bw2, bh);
+
+    // Slash accent on right of badge
+    ctx.fillStyle = accent;
+    ctx.beginPath();
+    ctx.moveTo(bw2 - 8, y); ctx.lineTo(bw2 + 14, y); ctx.lineTo(bw2 + 6, y + bh);
+    ctx.lineTo(bw2 - 16, y + bh); ctx.fill();
+
+    if (this.newsLogoImg) {
+      const img = this.newsLogoImg;
+      const pad = Math.round(bh * 0.12);
+      const maxH = bh - pad * 2;
+      const sc = Math.min(maxH / img.height, (bw2 - pad * 2) / img.width);
+      const dw = Math.round(img.width * sc); const dh = Math.round(img.height * sc);
+      ctx.save(); ctx.beginPath(); ctx.rect(0, y, bw2, bh); ctx.clip();
+      ctx.drawImage(img, Math.round((bw2 - dw) / 2), y + Math.round((bh - dh) / 2), dw, dh);
+      ctx.restore();
+    } else {
+      const label = (state.newsTitle || "⚡ SPORTS").toUpperCase();
+      ctx.fillStyle = "#fff"; ctx.font = `900 ${Math.round(bh * 0.32)}px sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 4;
+      ctx.fillText(label, bw2 / 2, y + bh / 2);
+      ctx.shadowBlur = 0;
+    }
+
+    const areaX = bw2 + 22; const areaW = W - areaX - 8;
+    const fs    = Math.round(bh * 0.35);
+    this.drawScrollText(areaX, y + 2, areaW, bh - 4, 0,
+      y + bh / 2, state.newsText, `800 ${fs}px sans-serif`,
+      "rgba(255,255,255,0.97)", t, this.newsScrollStartT);
+  }
+
+  // ── 9. Cinematic — near-black, gold hairline, letter-spaced elegance ────────
+  private drawTickerCinematic(t: number, yBase: number) {
+    const { ctx, W, H, state } = this;
+    const bh     = Math.max(38, Math.round(H * 0.062));
+    const accent = state.newsBgColor || "#c9a84c";
+    const y      = yBase > 0 ? Math.min(H - bh - 4, yBase) : H - bh - 4;
+
+    // Matte near-black bar
+    ctx.fillStyle = "rgba(8,6,4,0.97)"; ctx.fillRect(0, y, W, bh);
+
+    // Gold hairline top and bottom
+    ctx.fillStyle = accent; ctx.fillRect(0, y, W, 1);
+    ctx.fillStyle = accent; ctx.fillRect(0, y + bh - 1, W, 1);
+
+    // Left logo/label area — minimal
+    const bw2 = this.newsLogoImg ? Math.round(bh * 1.9) : Math.round(bh * 2.0);
+    if (this.newsLogoImg) {
+      const img = this.newsLogoImg;
+      const pad = Math.round(bh * 0.16);
+      const maxH = bh - pad * 2;
+      const sc = Math.min(maxH / img.height, (bw2 - pad * 2) / img.width);
+      const dw = Math.round(img.width * sc); const dh = Math.round(img.height * sc);
+      ctx.save(); ctx.beginPath(); ctx.rect(0, y, bw2, bh); ctx.clip();
+      ctx.drawImage(img, Math.round((bw2 - dw) / 2), y + Math.round((bh - dh) / 2), dw, dh);
+      ctx.restore();
+    } else {
+      const label = (state.newsTitle || "LIVE").toUpperCase();
+      ctx.fillStyle = accent; ctx.font = `300 ${Math.round(bh * 0.28)}px sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      // Draw label with manual letter spacing for cinematic look
+      const chars2 = label.split("");
+      const totalLW = chars2.reduce((acc, c) => { ctx.font = `300 ${Math.round(bh * 0.28)}px sans-serif`; return acc + ctx.measureText(c).width + 3; }, 0);
+      let lx = bw2 / 2 - totalLW / 2;
+      chars2.forEach((c) => {
+        ctx.font = `300 ${Math.round(bh * 0.28)}px sans-serif`;
+        ctx.fillText(c, lx, y + bh / 2);
+        lx += ctx.measureText(c).width + 3;
+      });
+    }
+
+    // Gold hairline separator
+    ctx.fillStyle = accent; ctx.fillRect(bw2, y + bh * 0.20, 1, bh * 0.60);
+
+    const areaX = bw2 + 16; const areaW = W - areaX - 16;
+    const fs    = Math.round(bh * 0.30);
+    this.drawScrollText(areaX, y + 2, areaW, bh - 4, 0,
+      y + bh / 2, state.newsText, `300 ${fs}px sans-serif`,
+      "#d4bfa0", t, this.newsScrollStartT);
+  }
+
+  // ── 10. Gold Luxury — black bar, gradient gold badge, premium feel ──────────
+  private drawTickerGoldLuxury(t: number, yBase: number) {
+    const { ctx, W, H, state } = this;
+    const bh     = Math.max(40, Math.round(H * 0.065));
+    const r      = Math.round(bh * 0.26);
+    const accent = state.newsBgColor || "#d4a017";
+    const y      = yBase > 0 ? Math.min(H - bh - 6, yBase) : H - bh - 6;
+
+    // Rich black bar
+    this.roundRect(0, y, W, bh, r);
+    const barG = ctx.createLinearGradient(0, y, 0, y + bh);
+    barG.addColorStop(0, "rgba(16,12,4,0.98)"); barG.addColorStop(1, "rgba(8,6,2,0.98)");
+    ctx.fillStyle = barG; ctx.fill();
+
+    // Gold gradient border
+    this.roundRect(0, y, W, bh, r);
+    const borderG2 = ctx.createLinearGradient(0, y, W, y + bh);
+    borderG2.addColorStop(0, `${accent}88`); borderG2.addColorStop(0.5, "#fff5cc88");
+    borderG2.addColorStop(1, `${accent}44`);
+    ctx.strokeStyle = borderG2; ctx.lineWidth = 1.5; ctx.stroke();
+
+    // Gold badge with inner shine
+    const bw2 = this.newsLogoImg ? Math.round(bh * 2.0) : Math.round(bh * 2.2);
+    this.roundRect(0, y, bw2, bh, r);
+    const goldG = ctx.createLinearGradient(0, y, bw2, y + bh);
+    goldG.addColorStop(0, "#fde68a"); goldG.addColorStop(0.3, accent);
+    goldG.addColorStop(0.7, "#b8860b"); goldG.addColorStop(1, accent);
+    ctx.fillStyle = goldG; ctx.fill();
+
+    if (this.newsLogoImg) {
+      const img = this.newsLogoImg;
+      const pad = Math.round(bh * 0.14);
+      const maxH = bh - pad * 2;
+      const sc = Math.min(maxH / img.height, (bw2 - pad * 2) / img.width);
+      const dw = Math.round(img.width * sc); const dh = Math.round(img.height * sc);
+      ctx.save(); this.roundRect(0, y, bw2, bh, r); ctx.clip();
+      ctx.drawImage(img, Math.round((bw2 - dw) / 2), y + Math.round((bh - dh) / 2), dw, dh);
+      ctx.restore();
+    } else {
+      const label = (state.newsTitle || "★ LIVE").toUpperCase();
+      ctx.fillStyle = "#0a0600"; ctx.font = `900 ${Math.round(bh * 0.30)}px sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(label, bw2 / 2, y + bh / 2 + 1);
+    }
+
+    ctx.fillStyle = `${accent}55`; ctx.fillRect(bw2 + 1, y + bh * 0.15, 1, bh * 0.70);
+
+    const areaX = bw2 + 14; const areaW = W - areaX - 10;
+    const fs    = Math.round(bh * 0.32);
+    this.drawScrollText(areaX, y + 2, areaW, bh - 4, Math.max(0, r - 2),
+      y + bh / 2, state.newsText, `600 ${fs}px sans-serif`,
+      "#f5e08a", t, this.newsScrollStartT);
+  }
+
+  // ── 11. Minimal — ultra-thin, barely-there, clean ──────────────────────────
+  private drawTickerMinimal(t: number, yBase: number) {
+    const { ctx, W, H, state } = this;
+    const bh     = Math.max(28, Math.round(H * 0.044));
+    const accent = state.newsBgColor || "#94a3b8";
+    const y      = yBase > 0 ? Math.min(H - bh - 4, yBase) : H - bh - 4;
+
+    // Near-invisible bar
+    ctx.fillStyle = "rgba(0,0,0,0.62)"; ctx.fillRect(0, y, W, bh);
+
+    // 1px accent top line
+    ctx.fillStyle = accent; ctx.fillRect(0, y, W, 1);
+
+    // Tiny label on left
+    const bw2 = this.newsLogoImg ? Math.round(bh * 1.8) : Math.round(bh * 1.6);
+    if (this.newsLogoImg) {
+      const img = this.newsLogoImg;
+      const pad = Math.round(bh * 0.16);
+      const maxH = bh - pad * 2;
+      const sc = Math.min(maxH / img.height, (bw2 - pad * 2) / img.width);
+      const dw = Math.round(img.width * sc); const dh = Math.round(img.height * sc);
+      ctx.save(); ctx.beginPath(); ctx.rect(0, y, bw2, bh); ctx.clip();
+      ctx.drawImage(img, Math.round((bw2 - dw) / 2), y + Math.round((bh - dh) / 2), dw, dh);
+      ctx.restore();
+    } else {
+      const label = (state.newsTitle || "LIVE").toUpperCase();
+      ctx.fillStyle = accent; ctx.font = `600 ${Math.round(bh * 0.35)}px sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(label, bw2 / 2, y + bh / 2);
+    }
+
+    ctx.fillStyle = "rgba(255,255,255,0.15)"; ctx.fillRect(bw2 + 1, y + bh * 0.20, 1, bh * 0.60);
+
+    const areaX = bw2 + 10; const areaW = W - areaX - 6;
+    const fs    = Math.round(bh * 0.38);
+    this.drawScrollText(areaX, y, areaW, bh, 0,
+      y + bh / 2, state.newsText, `400 ${fs}px sans-serif`,
+      "rgba(220,220,220,0.82)", t, this.newsScrollStartT);
   }
 
   private drawBreaking(yBase: number) {
@@ -3272,13 +3986,12 @@ export class OverlayRenderer {
     this.drawAnimText(txt, bx + bw / 2, by + bh / 2 + 2, font, "#fff", state.newsAnimation, this._newsAnimProg);
   }
 
-  /** Gradient scroll banner — visually distinct from Ticker */
+  /** Gradient scroll banner — visually distinct, full-width gradient band */
   private drawScrollBanner(t: number, yBase: number) {
     const { ctx, W, H, state } = this;
     const bh     = Math.max(42, Math.round(H * 0.065));
     const r      = Math.round(bh * 0.26);
-    const margin = 0;
-    const y      = yBase > 0 ? Math.min(H - bh - margin, yBase) : H - bh - margin;
+    const y      = yBase > 0 ? Math.min(H - bh, yBase) : H - bh;
     const accent = state.newsBgColor || "#667eea";
 
     // Full-width gradient band
@@ -3306,24 +4019,13 @@ export class OverlayRenderer {
     ctx.textBaseline = "middle";
     ctx.fillText("✦ LIVE", badgeX + badgeW / 2, badgeY + badgeH / 2);
 
-    // Scrolling text
-    const textX  = badgeX + badgeW + 14;
-    const textW  = W - textX - 8;
-    ctx.font     = `bold ${Math.round(bh * 0.34)}px sans-serif`;
-    const sep    = "   ✦   ";
-    const full   = state.newsText + sep + state.newsText;
-    const tw     = ctx.measureText(full).width;
-    const speed  = W * 0.085;
-    const offset = ((t - this.newsScrollStartT) * speed) % (tw || 1);
-
-    this.clipRoundRect(textX, y + 2, textW, bh - 4, r - 2, () => {
-      ctx.fillStyle    = "rgba(255,255,255,0.95)";
-      ctx.textAlign    = "left";
-      ctx.textBaseline = "middle";
-      for (let i = 0; i < 3; i++) {
-        ctx.fillText(full, textX - offset + i * (tw + 24), y + bh / 2);
-      }
-    });
+    // Seamlessly scrolling text
+    const textX = badgeX + badgeW + 14;
+    const textW = W - textX - 8;
+    const fs    = Math.round(bh * 0.34);
+    this.drawScrollText(textX, y + 2, textW, bh - 4, Math.max(0, r - 2),
+      y + bh / 2, state.newsText, `bold ${fs}px sans-serif`,
+      "rgba(255,255,255,0.95)", t, this.newsScrollStartT);
   }
 
   // ── ADS ────────────────────────────────────────────────────────────────────

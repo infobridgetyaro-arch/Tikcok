@@ -174,6 +174,7 @@ interface BroadcastState {
   donationTicker: Array<{ name: string; amount: string; amountKes: number; color: string; ts: number; giftId?: string }>;
   giftDisplayMode: "auto" | "minimal" | "standard" | "hype";
   newsLogo: string;
+  newsScrollSpeed: number;
   thankYouStyle: string;
 }
 
@@ -260,6 +261,7 @@ let broadcastState: BroadcastState = {
   donationTicker: [],
   giftDisplayMode: "auto",
   newsLogo: "",
+  newsScrollSpeed: 30,
   thankYouStyle: "Classic",
 };
 
@@ -1261,6 +1263,7 @@ export async function registerBintunetRoutes(
       newsStyle:              broadcastState.newsStyle,
       newsAnimation:          broadcastState.newsAnimation,
       newsPosition:           broadcastState.newsPosition,
+      newsScrollSpeed:        broadcastState.newsScrollSpeed ?? 30,
       adActive:               broadcastState.adActive,
       adText:                 broadcastState.adText,
       adSub:                  broadcastState.adSub,
@@ -1798,11 +1801,16 @@ export async function registerBintunetRoutes(
       }
     }
 
-    // Relay admin→guest WebRTC signaling (works for both connected and pending guests)
+    // Relay admin→guest WebRTC signaling + respond to client heartbeat pings
     ws.on("message", (data, isBinary) => {
       if (isBinary) return;
       try {
         const msg = JSON.parse(data.toString());
+        // Respond to client heartbeat pings so the client knows the connection is alive
+        if (msg.type === "ping") {
+          if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "pong" }));
+          return;
+        }
         if (msg.type === "rtc_offer" && msg.guestId && msg.sdp) {
           const guest = connectedCamGuests.get(msg.guestId) ?? pendingCamGuests.get(msg.guestId);
           if (guest && guest.ws.readyState === 1) {

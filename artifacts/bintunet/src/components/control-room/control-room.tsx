@@ -58,6 +58,7 @@ interface BroadcastState {
   newsLogo: string;
   newsScrollSpeed: number;
   newsStyle: string;
+  newsAnimation: string;
   newsPosition: OverlayPosition;
   adActive: boolean;
   adText: string;
@@ -168,7 +169,13 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode; accent: string }[] 
 ];
 
 const NEWS_STYLES       = ["Al Jazeera", "CNN", "BBC", "Bloomberg", "Sky News", "Neon Wire", "Float Glass", "Sports", "Cinematic", "Gold Luxury", "Minimal"] as const;
-const NEWS_ANIMATIONS   = ["None", "Fade", "→", "←", "↓", "↙", "↗", "Typewriter", "Pop-in", "Letter Fade", "Bounce", "Reveal"] as const;
+const NEWS_ANIMATIONS   = [
+  "None", "Fade",
+  "Slide Left", "Slide Right", "Pop Up", "Drop Down",
+  "Fade Slide",
+  "Typewriter", "Scramble", "Word Reveal",
+  "Zoom", "Elastic", "Flip", "Glitch", "Wipe",
+] as const;
 const AD_STYLES         = ["Banner", "Card", "Corner Pop", "Fullscreen", "Strip"] as const;
 const BREAK_STYLES      = ["Video Play", "Countdown", "Wave", "Glass", "Neon", "Minimal", "Gradient"] as const;
 const CHAT_STYLES       = ["TV", "Bubble", "Neon", "Glass", "Compact", "Toast"] as const;
@@ -787,7 +794,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
   const [bs, setBs] = useState<BroadcastState>({
     newsActive: false, newsText: "Welcome to the live stream! Stay tuned for more updates.",
     newsTitle: "", newsBgColor: "#cc0001", newsLogo: "", newsScrollSpeed: 30,
-    newsStyle: "Al Jazeera",
+    newsStyle: "Al Jazeera", newsAnimation: "Fade",
     newsPosition: { x: 0, y: 95 },
     adActive: false, adText: "Big Sale — 50% Off Today Only!", adSub: "Use code LIVE at checkout.", adStyle: "Banner",
     adPosition: { x: 0, y: 0 },
@@ -2408,6 +2415,32 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                 </div>
               </div>
 
+              {/* ── Entry Animation picker ── */}
+              <div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.07em" }}>Entry Animation — 15 presets</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                  {(NEWS_ANIMATIONS as readonly string[]).map((a) => {
+                    const active = bs.newsAnimation === a;
+                    return (
+                      <button
+                        key={a}
+                        onClick={() => localUpdate({ newsAnimation: a })}
+                        style={{
+                          padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                          border: `1px solid ${active ? "#667eea" : "rgba(255,255,255,0.1)"}`,
+                          background: active ? "rgba(102,126,234,0.22)" : "transparent",
+                          color: active ? "#a5b4fc" : "rgba(255,255,255,0.45)",
+                          transition: "all 0.18s",
+                        }}
+                      >{a}</button>
+                    );
+                  })}
+                </div>
+                <div style={{ marginTop: 8, fontSize: 10, color: "rgba(255,255,255,0.22)", lineHeight: 1.55 }}>
+                  Plays once when the ticker activates. Choose "None" for instant appearance.
+                </div>
+              </div>
+
               <PositionSliders
                 pos={getPos("newsPosition")}
                 label={`Vertical Position — ${editMode}`}
@@ -2430,6 +2463,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
                     newsLogo: bs.newsLogo,
                     newsScrollSpeed: bs.newsScrollSpeed,
                     newsStyle: bs.newsStyle,
+                    newsAnimation: bs.newsAnimation,
                     newsPosition: bs.newsPosition,
                     mobileNewsPosition: bs.mobileNewsPosition,
                     newsScale: bs.newsScale,

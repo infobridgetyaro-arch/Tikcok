@@ -284,38 +284,69 @@ export default function Dashboard() {
     return () => { unsubLog(); unsubStatus(); unsubStats(); unsubChat(); unsubProcStats(); unsubDeleted(); unsubCameraLink(); };
   }, [subscribe, seenChatIds]);
 
-  // ── 10-second REST polling fallback for YouTube live chat ─────────────────
-  // Supplements WebSocket push: catches messages if WS missed a broadcast or
-  // if the server just resolved a liveChatId and the frontend hasn't received
-  // a WS push yet. Only polls streams that have a youtubeChannelId configured.
+  // ── REST polling fallback for YouTube live chat ────────────────────────────
+  // Supplements WebSocket push. Runs every 10 s and NEVER silently stops:
+  // each per-stream fetch is wrapped in its own try/catch so one failure
+  // cannot cancel the entire polling cycle. The interval is never re-created
+  // when `streams` changes — instead the latest `streams` is read via a ref,
+  // which keeps the effect stable and the interval alive indefinitely.
+  const streamsRef = useRef(streams);
+  const seenChatIdsRef = useRef(seenChatIds);
+  useEffect(() => { streamsRef.current = streams; }, [streams]);
+  useEffect(() => { seenChatIdsRef.current = seenChatIds; }, [seenChatIds]);
+
   useEffect(() => {
+    let active = true;
+    const authHeaders = (): Record<string, string> => {
+      const token = getAuthToken();
+      return token ? { Authorization: `Bearer ${token}` } : {};
+    };
+
     const poll = async () => {
-      const targets = streams.filter((s) => s.youtubeChannelId);
+      if (!active) return;
+      const targets = streamsRef.current.filter((s) => s.youtubeChannelId);
       for (const s of targets) {
+        if (!active) break;
         try {
           const res = await fetch(`/api/streams/${s.id}/chat`, {
             credentials: "include",
-            headers: authFetchHeaders(),
+            headers: authHeaders(),
+            signal: AbortSignal.timeout(8_000),
           });
           if (!res.ok) continue;
           const msgs: ChatMessage[] = await res.json();
           if (!msgs.length) continue;
-          if (!seenChatIds[s.id]) seenChatIds[s.id] = new Set();
-          const newMsgs = msgs.filter((m) => !seenChatIds[s.id].has(m.id));
+          const seen = seenChatIdsRef.current;
+          if (!seen[s.id]) seen[s.id] = new Set();
+          const newMsgs = msgs.filter((m) => !seen[s.id].has(m.id));
           if (newMsgs.length) {
-            newMsgs.forEach((m) => seenChatIds[s.id].add(m.id));
+            newMsgs.forEach((m) => seen[s.id].add(m.id));
+            // Prune Set to avoid unbounded memory growth (keep last 2000 IDs)
+            if (seen[s.id].size > 2000) {
+              const arr = Array.from(seen[s.id]);
+              seen[s.id] = new Set(arr.slice(arr.length - 1000));
+            }
             setStreamChat((prev) => ({
               ...prev,
               [s.id]: [...(prev[s.id] || []), ...newMsgs].slice(-30),
             }));
           }
-        } catch {}
+        } catch (err) {
+          // Log but never let one stream's error break the loop
+          if (active) console.debug("[chat-poll] fetch error for", s.id, err);
+        }
       }
+      if (active) pollTimer = window.setTimeout(poll, 10_000);
     };
-    poll();
-    const interval = setInterval(poll, 10_000);
-    return () => clearInterval(interval);
-  }, [streams, seenChatIds]);
+
+    let pollTimer = window.setTimeout(poll, 0); // immediate first run
+    return () => {
+      active = false;
+      clearTimeout(pollTimer);
+    };
+  // Intentionally no deps — streams/seenChatIds accessed via refs to keep interval stable
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-save all stream configs to localStorage whenever the list changes.
   // Skip the initial empty render to avoid wiping saved drafts on mount.
