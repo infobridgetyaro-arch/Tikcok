@@ -680,7 +680,7 @@ function TickerScroll({ text, speed = 30, color = "#fff", fontSize = 14, fontWei
         @keyframes nt-pulse  { 0%,100%{opacity:1} 50%{opacity:0.2} }
       `}</style>
       <div style={{ overflow: "hidden", flex: 1, display: "flex", alignItems: "center", minWidth: 0 }}>
-        <div style={{ display: "flex", flexShrink: 0, animation: `nt-ticker ${speed}s linear infinite`, willChange: "transform" }}>
+        <div key={chunk} style={{ display: "flex", flexShrink: 0, animation: `nt-ticker ${speed}s linear infinite`, willChange: "transform" }}>
           <span style={{ whiteSpace: "nowrap", paddingRight: 60, fontSize, fontWeight, color }}>{chunk}</span>
           <span style={{ whiteSpace: "nowrap", paddingRight: 60, fontSize, fontWeight, color }}>{chunk}</span>
         </div>
