@@ -398,7 +398,7 @@ export function startLiveCountPolling() {
   };
 
   poll();
-  pollingInterval = setInterval(poll, 60_000);
+  pollingInterval = setInterval(poll, 10_000);
 
   // ── Re-broadcast cached stats every 10 s so the chart animates live ──────
   // No new API calls — just push what we already have so the frontend chart
@@ -501,7 +501,7 @@ export function startLiveCountPolling() {
     }
   };
 
-  chatInterval = setInterval(pollChat, 3_000);
+  chatInterval = setInterval(pollChat, 10_000);
 }
 
 export function stopLiveCountPolling() {
