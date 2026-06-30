@@ -323,6 +323,10 @@ export class OverlayRenderer {
   private newsAnimStartT = -100; // default → animProg = 1 (no animation on boot)
   private _newsAnimProg = 1;
 
+  // Scroll offset anchors — reset when text changes so position doesn't jump
+  private newsScrollStartT = 0;
+  private chatScrollStartT = 0;
+
   // Sub alert tracking (elapsed time since alert became active)
   private subAlertStartT = -100;
 
@@ -347,13 +351,21 @@ export class OverlayRenderer {
   }
 
   updateState(patch: Partial<OverlayState>) {
-    // Restart news animation when text or active state changes
+    // Restart news animation AND scroll when text or active state changes
     if (
       (patch.newsText !== undefined && patch.newsText !== this.state.newsText) ||
       (patch.newsActive === true && !this.state.newsActive) ||
       (patch.newsAnimation !== undefined && patch.newsAnimation !== this.state.newsAnimation)
     ) {
       this.newsAnimStartT = this.elapsed();
+    }
+    // Reset news scroll anchor when text changes so the ticker restarts from the left
+    if (patch.newsText !== undefined && patch.newsText !== this.state.newsText) {
+      this.newsScrollStartT = this.elapsed();
+    }
+    // Reset chat scroll anchor when messages change so the ticker restarts cleanly
+    if (patch.chatBurnMessages !== undefined) {
+      this.chatScrollStartT = this.elapsed();
     }
     // Restart sub alert timer when newly activated
     if (patch.subAlertActive === true && !this.state.subAlertActive) {
@@ -2900,7 +2912,7 @@ export class OverlayRenderer {
     const tw   = ctx.measureText(full).width;
     const area = W - badgeW - 10;
     const speed  = W * 0.065;
-    const offset = (t * speed) % (tw || 1);
+    const offset = ((t - this.chatScrollStartT) * speed) % (tw || 1);
     ctx.save();
     this.clipRR(badgeW + 10, y, area, bh, 0);
     ctx.fillStyle    = "rgba(232,238,255,0.92)";
@@ -3022,7 +3034,7 @@ export class OverlayRenderer {
     const areaX = badgeW + 16;
     const areaW = W - areaX - 8;
     const speed = W * 0.07;
-    const off   = (t * speed) % (tw || 1);
+    const off   = ((t - this.newsScrollStartT) * speed) % (tw || 1);
 
     this.clipRoundRect(areaX, y + 2, areaW, bh - 4, r - 2, () => {
       ctx.fillStyle    = "rgba(240,240,240,0.96)";
@@ -3302,7 +3314,7 @@ export class OverlayRenderer {
     const full   = state.newsText + sep + state.newsText;
     const tw     = ctx.measureText(full).width;
     const speed  = W * 0.085;
-    const offset = (t * speed) % (tw || 1);
+    const offset = ((t - this.newsScrollStartT) * speed) % (tw || 1);
 
     this.clipRoundRect(textX, y + 2, textW, bh - 4, r - 2, () => {
       ctx.fillStyle    = "rgba(255,255,255,0.95)";
