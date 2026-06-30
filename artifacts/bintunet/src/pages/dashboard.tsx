@@ -284,6 +284,39 @@ export default function Dashboard() {
     return () => { unsubLog(); unsubStatus(); unsubStats(); unsubChat(); unsubProcStats(); unsubDeleted(); unsubCameraLink(); };
   }, [subscribe, seenChatIds]);
 
+  // ── 10-second REST polling fallback for YouTube live chat ─────────────────
+  // Supplements WebSocket push: catches messages if WS missed a broadcast or
+  // if the server just resolved a liveChatId and the frontend hasn't received
+  // a WS push yet. Only polls streams that have a youtubeChannelId configured.
+  useEffect(() => {
+    const poll = async () => {
+      const targets = streams.filter((s) => s.youtubeChannelId);
+      for (const s of targets) {
+        try {
+          const res = await fetch(`/api/streams/${s.id}/chat`, {
+            credentials: "include",
+            headers: authFetchHeaders(),
+          });
+          if (!res.ok) continue;
+          const msgs: ChatMessage[] = await res.json();
+          if (!msgs.length) continue;
+          if (!seenChatIds[s.id]) seenChatIds[s.id] = new Set();
+          const newMsgs = msgs.filter((m) => !seenChatIds[s.id].has(m.id));
+          if (newMsgs.length) {
+            newMsgs.forEach((m) => seenChatIds[s.id].add(m.id));
+            setStreamChat((prev) => ({
+              ...prev,
+              [s.id]: [...(prev[s.id] || []), ...newMsgs].slice(-30),
+            }));
+          }
+        } catch {}
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 10_000);
+    return () => clearInterval(interval);
+  }, [streams, seenChatIds]);
+
   // Auto-save all stream configs to localStorage whenever the list changes.
   // Skip the initial empty render to avoid wiping saved drafts on mount.
   useEffect(() => {

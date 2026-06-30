@@ -153,6 +153,10 @@ interface ChatCache { messages: ChatMessage[]; fetchedAt: number }
 const chatResultCache = new Map<string, ChatCache>();
 const CHAT_CACHE_TTL = 2_500;
 
+// Tracks which chatIds already have an active recursive poll chain.
+// Prevents seedChatPollers() from spawning duplicate chains every 30 s.
+const activeChatPollers = new Set<string>();
+
 let pollingInterval: NodeJS.Timeout | null = null;
 let chatInterval: NodeJS.Timeout | null = null;
 let chartBroadcastInterval: NodeJS.Timeout | null = null;
@@ -442,6 +446,16 @@ export function startLiveCountPolling() {
             }
           }
           updateStreamOverlays({ subs: stats.subs, viewers: stats.viewers, subChartData: [...subChartData] });
+          // If we just resolved a liveChatId, immediately seed a chat poller
+          // rather than waiting up to 30 s for the next seedChatPollers interval.
+          if (stats.liveChatId) {
+            for (const s of streamsForChannel) {
+              if (!activeChatPollers.has(stats.liveChatId)) {
+                logger.info({ streamId: s.id, chatId: stats.liveChatId }, "[chat] liveChatId resolved — starting chat poller immediately");
+                scheduleChatPoll(stats.liveChatId, s.id, 0);
+              }
+            }
+          }
         } catch (e) {
           logger.warn({ channelId: stream.youtubeChannelId, err: e }, "Stats poll error");
         }
@@ -482,17 +496,20 @@ export function startLiveCountPolling() {
     }
   }, 10_000);
 
-  // setTimeout-based recursive poller — respects YouTube's pollingIntervalMillis
-  // so each chatId is fetched as soon as the API says new messages are available.
+  // setTimeout-based recursive poller — respects YouTube's pollingIntervalMillis.
+  // activeChatPollers guards against duplicate chains: seedChatPollers runs every
+  // 30 s but must NOT spawn a second chain for a chatId that already has one.
   const scheduleChatPoll = (chatId: string, streamId: string, delayMs: number) => {
-    if (!chatInterval) return; // stopped
+    if (!chatInterval) { activeChatPollers.delete(chatId); return; } // stopped
+    activeChatPollers.add(chatId);
     setTimeout(() => {
-      if (!chatInterval) return;
+      if (!chatInterval) { activeChatPollers.delete(chatId); return; }
       (async () => {
         try {
           const messages = await fetchLiveChat(streamId, chatId);
           if (messages.length > 0) {
             broadcastStream(streamId, "chat", messages);
+            logger.info({ streamId, chatId, count: messages.length }, "[chat] Broadcast chat messages via WebSocket");
 
             if (!burnSentMessageIds.has(streamId)) burnSentMessageIds.set(streamId, new Set());
             const sentIds = burnSentMessageIds.get(streamId)!;
@@ -533,14 +550,17 @@ export function startLiveCountPolling() {
     }, delayMs);
   };
 
-  // Seed: kick off a poll per active stream immediately, then let each reschedule itself
+  // Seed: kick off a poll per active stream. Skips chatIds already being polled
+  // to prevent duplicate recursive chains from accumulating over time.
   const seedChatPollers = () => {
     const streams = storage.getStreams();
     for (const stream of streams) {
       if (!stream.youtubeChannelId) continue;
       const chatId = statsCache.get(stream.youtubeChannelId)?.liveChatId;
       if (!chatId) continue;
-      scheduleChatPoll(chatId, stream.id, DEFAULT_CHAT_POLL_MS);
+      if (activeChatPollers.has(chatId)) continue; // already running — skip
+      logger.info({ streamId: stream.id, chatId }, "[chat] Starting chat poller for stream");
+      scheduleChatPoll(chatId, stream.id, 0); // start immediately (delay=0)
     }
   };
   seedChatPollers();
@@ -554,6 +574,7 @@ export function stopLiveCountPolling() {
   if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
   if (chatInterval) { clearInterval(chatInterval); chatInterval = null; }
   if (chartBroadcastInterval) { clearInterval(chartBroadcastInterval); chartBroadcastInterval = null; }
+  activeChatPollers.clear();
 }
 
 /** Exposed for the /api/youtube/key-status debug endpoint */

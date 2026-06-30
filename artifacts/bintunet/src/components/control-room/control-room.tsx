@@ -2138,6 +2138,45 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
           {/* ── CHAT ── */}
           {activeTab === "chat" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+              {/* ── Live chat feed ──────────────────────────────────────────── */}
+              {allChatMessages.length === 0 ? (
+                <div style={{
+                  padding: "12px 16px", borderRadius: 10,
+                  background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)",
+                  color: "rgba(255,255,255,0.3)", fontSize: 12, textAlign: "center",
+                }}>
+                  Waiting for YouTube live chat… (auto-refreshes every 10 s)
+                </div>
+              ) : (
+                <div style={{
+                  maxHeight: 220, overflowY: "auto",
+                  display: "flex", flexDirection: "column", gap: 6,
+                  padding: "10px 12px", borderRadius: 10,
+                  background: "rgba(0,0,0,0.35)", border: "1px solid rgba(52,211,153,0.18)",
+                }}>
+                  {allChatMessages.slice(-15).map((m) => (
+                    <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+                      {m.authorPhoto && (
+                        <img src={m.authorPhoto} alt="" style={{ width: 20, height: 20, borderRadius: "50%", flexShrink: 0, marginTop: 1 }} />
+                      )}
+                      <div style={{ fontSize: 11, lineHeight: 1.45, wordBreak: "break-word" }}>
+                        <span style={{
+                          fontWeight: 700, marginRight: 5,
+                          color: m.isOwner ? "#ffd600" : m.isModerator ? "#34d399" : m.isMember ? "#a78bfa" : "rgba(255,255,255,0.6)",
+                        }}>
+                          {m.authorName}
+                          {m.isOwner && " 👑"}
+                          {m.isModerator && !m.isOwner && " 🛡"}
+                          {m.isMember && !m.isModerator && !m.isOwner && " ⭐"}
+                        </span>
+                        <span style={{ color: "rgba(255,255,255,0.85)" }}>{m.text}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, lineHeight: 1.5 }}>
                 Choose how live chat appears on the <strong style={{ color: "#fff" }}>Stage</strong> page (browser source for OBS).
               </div>
