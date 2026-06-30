@@ -3,17 +3,43 @@ import { broadcastStream, updateStreamOverlays, getCurrentOverlayState } from ".
 import { logger } from "./lib/logger";
 
 // ── Multi-key pool ──────────────────────────────────────────────────────────
-// Set YOUTUBE_API_KEYS=key1,key2,key3 (comma-separated) to enable rotation.
-// Falls back to YOUTUBE_API_KEY / GOOGLE_API_KEY for single-key deployments.
+// Add keys as Replit Secrets named YOUTUBE_API_KEY1, YOUTUBE_API_KEY2, …
+// up to YOUTUBE_API_KEY10.  When one key's daily quota is exhausted the server
+// automatically rotates to the next available key — no restart required.
+//
+// Legacy formats also accepted (merged in, duplicates removed):
+//   YOUTUBE_API_KEY      — single key (original format)
+//   YOUTUBE_API_KEYS     — comma-separated list
 const apiKeys: string[] = (() => {
-  const multi = process.env.YOUTUBE_API_KEYS;
-  if (multi) {
-    const keys = multi.split(",").map((k) => k.trim()).filter(Boolean);
-    if (keys.length) return keys;
+  const seen = new Set<string>();
+  const keys: string[] = [];
+  const add = (k: string | undefined) => {
+    if (k && k.trim() && !seen.has(k.trim())) {
+      seen.add(k.trim());
+      keys.push(k.trim());
+    }
+  };
+
+  // Numbered keys take priority (YOUTUBE_API_KEY1 … YOUTUBE_API_KEY10)
+  for (let i = 1; i <= 10; i++) {
+    add(process.env[`YOUTUBE_API_KEY${i}`]);
   }
-  const single = process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY || "";
-  return single ? [single] : [];
+
+  // Legacy: comma-separated list
+  const multi = process.env.YOUTUBE_API_KEYS;
+  if (multi) multi.split(",").forEach(add);
+
+  // Legacy: single key
+  add(process.env.YOUTUBE_API_KEY);
+  add(process.env.GOOGLE_API_KEY);
+
+  return keys;
 })();
+
+logger.info(
+  { keyCount: apiKeys.length },
+  `[youtube] Loaded ${apiKeys.length} API key(s) — will rotate automatically on quota exhaustion`
+);
 
 let currentKeyIndex = 0;
 // Reset exhaustion at midnight (keys refill daily at midnight Pacific)
@@ -46,21 +72,24 @@ function getYouTubeApiKey(): string {
 function rotateApiKey(): boolean {
   exhaustedUntil.set(currentKeyIndex, Date.now());
   logger.warn(
-    { exhaustedIndex: currentKeyIndex, totalKeys: apiKeys.length },
-    "[youtube] API key quota exhausted — rotating to next key"
+    { exhaustedKey: currentKeyIndex + 1, totalKeys: apiKeys.length },
+    `[youtube] API key #${currentKeyIndex + 1} quota exhausted — rotating to next key`
   );
   for (let i = 1; i <= apiKeys.length; i++) {
     const next = (currentKeyIndex + i) % apiKeys.length;
     if (!exhaustedUntil.has(next)) {
       currentKeyIndex = next;
       logger.info(
-        { newKeyIndex: currentKeyIndex, totalKeys: apiKeys.length },
-        "[youtube] Rotated to next YouTube API key"
+        { activeKey: next + 1, totalKeys: apiKeys.length },
+        `[youtube] Switched to API key #${next + 1} of ${apiKeys.length}`
       );
       return true;
     }
   }
-  logger.error("[youtube] All YouTube API keys exhausted — stats/chat unavailable until midnight reset");
+  logger.error(
+    { totalKeys: apiKeys.length },
+    `[youtube] All ${apiKeys.length} API key(s) exhausted — add more keys (YOUTUBE_API_KEY1, YOUTUBE_API_KEY2 …) or wait for midnight reset`
+  );
   return false;
 }
 
