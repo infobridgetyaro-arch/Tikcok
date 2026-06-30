@@ -88,8 +88,14 @@ jobs:
           echo "Waiting for server on port 8080..."
           SERVER_UP=false
           for i in $(seq 1 30); do
+<<<<<<< HEAD
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/auth/check 2>/dev/null || echo "000")
+            if [ "$STATUS" = "200" ] || [ "$STATUS" = "401" ]; then
+              echo "✓ Server is up after ${i}s (HTTP $STATUS)"
+=======
             if curl -sf http://localhost:8080/api/auth/check > /dev/null 2>&1; then
               echo "✓ Server is up after ${i}s"
+>>>>>>> 00d80dda7f40d987318bf8c0457ec181381cac1d
               SERVER_UP=true
               break
             fi
@@ -191,4 +197,7 @@ jobs:
             echo "ngrok died. Last 20 lines of ngrok log:"
             tail -20 /tmp/ngrok.log
           fi
+<<<<<<< HEAD
+=======
 
+>>>>>>> 00d80dda7f40d987318bf8c0457ec181381cac1d
