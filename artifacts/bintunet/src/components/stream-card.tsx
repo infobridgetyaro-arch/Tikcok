@@ -32,11 +32,26 @@ interface ChatMessage {
   isOwner: boolean;
 }
 
+interface ProcStats {
+  cpu: number;
+  mem: number;
+  frames?: number;
+  uptime?: number;
+  bitrate?: number;
+  fps?: number;
+  speed?: number;
+  droppedFrames?: number;
+  lagSec?: number;
+  healthScore?: number;
+  healthStatus?: string;
+  reconnectCount?: number;
+}
+
 interface StreamCardProps {
   stream: StreamConfig;
   logs: string[];
   stats: { subs: string | null; viewers: string | null; hasChat: boolean } | null;
-  procStats?: { cpu: number; mem: number; frames?: number; uptime?: number };
+  procStats?: ProcStats;
   chatMessages: ChatMessage[];
   onStart: (id: string) => void;
   onStop: (id: string) => void;
@@ -202,6 +217,104 @@ function CameraLinkButton({ streamId }: { streamId: string }) {
       >
         {loading ? <><Link2 className="w-3.5 h-3.5 animate-pulse" />Opening…</> : <><Radio className="w-3.5 h-3.5" />Open the Camera to Start Live Stream</>}
       </Button>
+    </div>
+  );
+}
+
+const CHART_HISTORY = 40;
+
+function Sparkline({ values, color, label, unit }: { values: number[]; color: string; label: string; unit: string }) {
+  const max = Math.max(...values, 1);
+  const min = 0;
+  const w = 200;
+  const h = 40;
+  const pts = values.map((v, i) => {
+    const x = (i / (CHART_HISTORY - 1)) * w;
+    const y = h - ((v - min) / (max - min)) * h;
+    return `${x},${y}`;
+  }).join(" ");
+  const areaBottom = `${w},${h} 0,${h}`;
+  const current = values[values.length - 1] ?? 0;
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">{label}</span>
+        <span className={`text-xs font-mono font-semibold ${color}`}>{current > 0 ? `${current.toFixed(current < 100 ? 1 : 0)} ${unit}` : "—"}</span>
+      </div>
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-9 overflow-visible" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id={`grad-${label}`} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={color === "text-emerald-400" ? "#34d399" : color === "text-sky-400" ? "#38bdf8" : "#a78bfa"} stopOpacity="0.35" />
+            <stop offset="100%" stopColor={color === "text-emerald-400" ? "#34d399" : color === "text-sky-400" ? "#38bdf8" : "#a78bfa"} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {values.length > 1 && (
+          <>
+            <polygon points={`${pts} ${areaBottom}`} fill={`url(#grad-${label})`} />
+            <polyline points={pts} fill="none" stroke={color === "text-emerald-400" ? "#34d399" : color === "text-sky-400" ? "#38bdf8" : "#a78bfa"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </>
+        )}
+      </svg>
+    </div>
+  );
+}
+
+function StreamOutputChart({ procStats, isActive }: { procStats?: ProcStats; isActive: boolean }) {
+  const bitrateHistory = useRef<number[]>([]);
+  const fpsHistory = useRef<number[]>([]);
+  const [, forceRender] = useState(0);
+
+  useEffect(() => {
+    if (!isActive || !procStats) return;
+    bitrateHistory.current = [...bitrateHistory.current, procStats.bitrate ?? 0].slice(-CHART_HISTORY);
+    fpsHistory.current = [...fpsHistory.current, procStats.fps ?? 0].slice(-CHART_HISTORY);
+    forceRender((n) => n + 1);
+  }, [procStats, isActive]);
+
+  useEffect(() => {
+    if (!isActive) {
+      bitrateHistory.current = [];
+      fpsHistory.current = [];
+      forceRender((n) => n + 1);
+    }
+  }, [isActive]);
+
+  if (!isActive || bitrateHistory.current.length === 0) return null;
+
+  const health = procStats?.healthScore ?? 100;
+  const healthStatus = procStats?.healthStatus ?? "excellent";
+  const healthColor = health >= 80 ? "text-emerald-400" : health >= 50 ? "text-amber-400" : "text-red-400";
+  const healthBg = health >= 80 ? "bg-emerald-500/10 border-emerald-500/30" : health >= 50 ? "bg-amber-500/10 border-amber-500/30" : "bg-red-500/10 border-red-500/30";
+
+  return (
+    <div className="space-y-3 rounded-xl border border-border/50 bg-muted/10 p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1.5">
+          <BarChart2 className="w-3 h-3" />
+          Live Output Metrics
+        </span>
+        <div className={`flex items-center gap-1 rounded-full border px-2 py-0.5 ${healthBg}`}>
+          <div className={`w-1.5 h-1.5 rounded-full ${health >= 80 ? "bg-emerald-400 animate-pulse" : health >= 50 ? "bg-amber-400" : "bg-red-400"}`} />
+          <span className={`text-[10px] font-semibold ${healthColor}`}>{health}% {healthStatus}</span>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Sparkline values={bitrateHistory.current} color="text-emerald-400" label="Bitrate" unit="kbps" />
+        <Sparkline values={fpsHistory.current} color="text-sky-400" label="FPS" unit="fps" />
+      </div>
+      <div className="grid grid-cols-4 gap-2 pt-0.5">
+        {[
+          { label: "CPU", value: `${(procStats?.cpu ?? 0).toFixed(1)}%` },
+          { label: "Mem", value: `${procStats?.mem ?? 0}MB` },
+          { label: "Drops", value: String(procStats?.droppedFrames ?? 0) },
+          { label: "Speed", value: procStats?.speed ? `${procStats.speed.toFixed(2)}x` : "—" },
+        ].map(({ label, value }) => (
+          <div key={label} className="rounded-lg bg-muted/40 px-2 py-1.5 text-center">
+            <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-medium">{label}</div>
+            <div className="text-[11px] font-mono font-semibold text-foreground mt-0.5">{value}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -832,6 +945,9 @@ export function StreamCard({
                   </div>
                 </div>
 
+                {/* ── Live Output Chart — inside settings, below stream keys ── */}
+                <StreamOutputChart procStats={procStats} isActive={isActive} />
+
                 {/* ── Channel ID / Handle ── */}
                 <ChannelIdInput
                   streamId={stream.id}
@@ -893,6 +1009,13 @@ export function StreamCard({
               </div>
             )}
           </div>
+
+          {/* ── Live Output Chart (always visible when streaming) ── */}
+          {isActive && (
+            <div className="px-3 pb-3">
+              <StreamOutputChart procStats={procStats} isActive={isActive} />
+            </div>
+          )}
 
           {/* ── Logs (collapsible) ── */}
           {logs.length > 0 && (

@@ -146,7 +146,11 @@ export default function Dashboard() {
   const [streamLogs, setStreamLogs] = useState<Record<string, string[]>>({});
   const [streamStats, setStreamStats] = useState<Record<string, StreamStats>>({});
   const [streamChat, setStreamChat] = useState<Record<string, ChatMessage[]>>({});
-  const [streamProcStats, setStreamProcStats] = useState<Record<string, { cpu: number; mem: number; frames?: number; uptime?: number }>>({});
+  const [streamProcStats, setStreamProcStats] = useState<Record<string, {
+    cpu: number; mem: number; frames?: number; uptime?: number;
+    bitrate?: number; fps?: number; speed?: number; droppedFrames?: number;
+    lagSec?: number; healthScore?: number; healthStatus?: string; reconnectCount?: number;
+  }>>({}); 
   const [showInvite, setShowInvite] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [startingStreams, setStartingStreams] = useState<Set<string>>(new Set());
@@ -237,6 +241,14 @@ export default function Dashboard() {
             mem: msg.data.mem,
             frames: msg.data.frames ?? prev[msg.streamId!]?.frames ?? 0,
             uptime: msg.data.uptime ?? prev[msg.streamId!]?.uptime ?? 0,
+            bitrate: msg.data.bitrate ?? prev[msg.streamId!]?.bitrate ?? 0,
+            fps: msg.data.fps ?? prev[msg.streamId!]?.fps ?? 0,
+            speed: msg.data.speed ?? prev[msg.streamId!]?.speed ?? 0,
+            droppedFrames: msg.data.droppedFrames ?? prev[msg.streamId!]?.droppedFrames ?? 0,
+            lagSec: msg.data.lagSec ?? prev[msg.streamId!]?.lagSec ?? 0,
+            healthScore: msg.data.healthScore ?? prev[msg.streamId!]?.healthScore ?? 100,
+            healthStatus: msg.data.healthStatus ?? prev[msg.streamId!]?.healthStatus ?? "excellent",
+            reconnectCount: msg.data.reconnectCount ?? prev[msg.streamId!]?.reconnectCount ?? 0,
           },
         }));
       }

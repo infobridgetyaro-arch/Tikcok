@@ -1663,7 +1663,7 @@ function startProcStatsPolling(streamId: string, pid: number): NodeJS.Timeout {
           );
         }
 
-        broadcastStream(streamId, "proc_stats", {
+        const chartPayload = {
           cpu,
           mem,
           frames,
@@ -1677,7 +1677,9 @@ function startProcStatsPolling(streamId: string, pid: number): NodeJS.Timeout {
           reconnectCount: proc?.reconnectCount ?? 0,
           healthScore: health?.score ?? 100,
           healthStatus: health?.status ?? "excellent",
-        });
+        };
+        console.log("Chart payload sent:", JSON.stringify(chartPayload));
+        broadcastStream(streamId, "proc_stats", chartPayload);
         // Mark source stable every polling cycle so failover can auto-reset
         markSourceStable(streamId);
       }
