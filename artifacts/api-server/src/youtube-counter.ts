@@ -108,7 +108,12 @@ const DEFAULT_CHAT_POLL_MS = 5_000;
 const MIN_CHAT_POLL_MS = 3_000;
 
 const lastSearchAt = new Map<string, number>();
-const SEARCH_INTERVAL_MS = 2 * 60 * 1000; // 2 min — keeps viewers count fresh
+// search.list costs 100 quota units per call — limit to once per 30 min per channel.
+// Viewer counts are kept fresh via videos.list (1–2 units) every stats-poll cycle.
+const SEARCH_INTERVAL_MS = 30 * 60 * 1000; // 30 min
+
+// Cache videoId per channelId so videos.list can fetch viewers without search.list
+const cachedVideoIds = new Map<string, string | null>(); // channelId → videoId
 
 const burnSentMessageIds = new Map<string, Set<string>>();
 
@@ -207,7 +212,9 @@ async function fetchChannelStats(channelId: string): Promise<ChannelStats> {
     }
   }
 
-  // --- Live video search (search.list = 100 quota units) — throttled ---
+  // --- Live video & viewer count (throttled) ---
+  // search.list = 100 quota units → run at most once per SEARCH_INTERVAL_MS
+  // videos.list = 1–2 quota units  → run every poll cycle using the cached videoId
   const now = Date.now();
   const lastSearch = lastSearchAt.get(channelId) ?? 0;
   const shouldSearch = now - lastSearch >= SEARCH_INTERVAL_MS;
@@ -226,33 +233,42 @@ async function fetchChannelStats(channelId: string): Promise<ChannelStats> {
       } else if (!searchResult.res.ok) {
         logger.warn({ channelId }, "[youtube] Live search API error");
       } else {
-        const videoId = searchResult.data.items?.[0]?.id?.videoId ?? null;
-        if (videoId) {
-          const vidResult = await fetchWithKeyRotation(
-            (key) => `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(videoId)}&key=${key}`,
-            "videos.list"
-          );
-          if (vidResult?.res.ok) {
-            const details = vidResult.data.items?.[0]?.liveStreamingDetails;
-            if (details?.concurrentViewers !== undefined) {
-              viewers = formatCount(parseInt(details.concurrentViewers, 10));
-            }
-            if (details?.activeLiveChatId) {
-              liveChatId = details.activeLiveChatId;
-            }
-          }
-        } else {
+        const videoId: string | null = searchResult.data.items?.[0]?.id?.videoId ?? null;
+        cachedVideoIds.set(channelId, videoId);
+        if (!videoId) {
           logger.info({ channelId }, "[youtube] No active live video found");
           liveChatId = null;
           viewers = null;
         }
       }
     } catch (e) {
-      logger.warn({ channelId, err: e }, "[youtube] Failed to fetch live viewer count");
+      logger.warn({ channelId, err: e }, "[youtube] search.list failed");
     }
-  } else if (!shouldSearch) {
+  } else {
     const nextIn = Math.round((SEARCH_INTERVAL_MS - (now - lastSearch)) / 1000);
-    logger.debug({ channelId, nextSearchIn: nextIn + "s" }, "[youtube] Skipping search.list — reusing cached live data");
+    logger.debug({ channelId, nextSearchIn: nextIn + "s" }, "[youtube] Skipping search.list — using cached videoId");
+  }
+
+  // --- Fresh viewer count via videos.list (1–2 quota units) every poll cycle ---
+  const videoId = cachedVideoIds.get(channelId) ?? null;
+  if (videoId && !isQuotaExhausted()) {
+    try {
+      const vidResult = await fetchWithKeyRotation(
+        (key) => `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(videoId)}&key=${key}`,
+        "videos.list"
+      );
+      if (vidResult?.res.ok) {
+        const details = vidResult.data.items?.[0]?.liveStreamingDetails;
+        if (details?.concurrentViewers !== undefined) {
+          viewers = formatCount(parseInt(details.concurrentViewers, 10));
+        }
+        if (details?.activeLiveChatId) {
+          liveChatId = details.activeLiveChatId;
+        }
+      }
+    } catch (e) {
+      logger.warn({ channelId, err: e }, "[youtube] videos.list viewer fetch failed");
+    }
   }
 
   const result: ChannelStats = { subs, viewers, liveChatId, lastFetch: Date.now(), error };
@@ -407,7 +423,7 @@ export function startLiveCountPolling() {
   };
 
   poll();
-  pollingInterval = setInterval(poll, 10_000);
+  pollingInterval = setInterval(poll, 60_000); // 60 s — channels.list (1 unit) + videos.list (1–2 units) per cycle
 
   // ── Re-broadcast cached stats every 10 s so the chart animates live ──────
   // No new API calls — just push what we already have so the frontend chart

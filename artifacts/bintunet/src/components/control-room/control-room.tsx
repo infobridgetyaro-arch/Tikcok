@@ -797,7 +797,7 @@ export function ControlRoom({ streams, streamStats, streamChat, streamProcStats 
     subsOverlayActive: false, subsStyle: "HUD", subsPosition: { x: 72, y: 2 }, subsGoal: 1000000,
     subChartActive: false, subChartData: [], subChartPosition: { x: 68, y: 8 }, mobileSubChartPosition: { x: 5, y: 8 },
     subAlertActive: false, subAlertMessage: "",
-    chatBurnActive: false, chatBurnStyle: "Bubble", chatBurnPosition: { x: 2, y: 62 },
+    chatBurnActive: true, chatBurnStyle: "Bubble", chatBurnPosition: { x: 2, y: 62 },
     superChatMessages: [],
     guestNameActive: false, guestName: "Guest Name", guestTitle: "Title / Channel", guestStyle: "Classic",
     guestPosition: { x: 2, y: 78 }, mobileGuestPosition: { x: 2, y: 78 },

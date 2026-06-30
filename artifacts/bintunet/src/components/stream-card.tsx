@@ -328,7 +328,7 @@ export function StreamCard({
   const [settingsOpen, setSettingsOpen] = useState(true);
   const [logsOpen, setLogsOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
-  const [showStats, setShowStats] = useState(!!stream.youtubeChannelId);
+  const [showStats, setShowStats] = useState(false);
   const [locked, setLocked] = useState(false);
   const [pendingAction, setPendingAction] = useState<"stop" | "restart" | null>(null);
   const [cameraMode, setCameraMode] = useState<CameraMode>("guestroom");

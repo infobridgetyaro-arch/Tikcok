@@ -187,7 +187,7 @@ export function defaultOverlayState(): OverlayState {
     mobileSubChartPosition: { x: 5, y: 8 },
     subAlertActive: false,
     subAlertMessage: "",
-    chatBurnActive: false,
+    chatBurnActive: true,
     chatBurnStyle: "Bubble",
     chatBurnPosition: { x: 2, y: 62 },
     chatBurnMessages: [],
