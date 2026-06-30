@@ -62,12 +62,20 @@ jobs:
           mkdir -p artifacts/api-server/tmp_overlay
 
       - name: Start API server
+        env:
+          NODE_ENV: production
+          PORT: "8080"
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          YOUTUBE_API_KEY1: ${{ secrets.YOUTUBE_API_KEY1 }}
+          YOUTUBE_API_KEY2: ${{ secrets.YOUTUBE_API_KEY2 }}
+          YOUTUBE_API_KEY3: ${{ secrets.YOUTUBE_API_KEY3 }}
+          YOUTUBE_API_KEY4: ${{ secrets.YOUTUBE_API_KEY4 }}
+          YOUTUBE_API_KEY5: ${{ secrets.YOUTUBE_API_KEY5 }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          PAYSTACK_SECRET_KEY: ${{ secrets.PAYSTACK_SECRET_KEY }}
+          NGROK_TOKEN: ${{ secrets.NGROK_TOKEN }}
         run: |
-          NODE_ENV=production \
-          PORT=8080 \
-          SESSION_SECRET="${{ secrets.SESSION_SECRET }}" \
-          GOOGLE_API_KEY="${{ secrets.GOOGLE_API_KEY }}" \
-          PAYSTACK_SECRET_KEY="${{ secrets.PAYSTACK_SECRET_KEY }}" \
           node --enable-source-maps artifacts/api-server/dist/index.mjs &
           echo $! > /tmp/server.pid
 
@@ -87,31 +95,33 @@ jobs:
           echo $! > /tmp/ngrok.pid
 
           echo "Waiting for ngrok URL..."
+          PUBLIC_URL=""
           for i in $(seq 1 30); do
-            URL=$(curl -sf http://localhost:4040/api/tunnels \
+            PUBLIC_URL=$(curl -sf http://localhost:4040/api/tunnels \
               | grep -oP '"public_url":"https://[^"]+' \
               | head -1 \
-              | cut -d'"' -f3)
-            if [ -n "$URL" ]; then
-              echo ""
-              echo "╔══════════════════════════════════════════════════════╗"
-              echo "║  🚀 BintuNet is LIVE                                 ║"
-              echo "║                                                      ║"
-              echo "║  URL : $URL"
-              echo "║  Login password : bintunet                           ║"
-              echo "╚══════════════════════════════════════════════════════╝"
-              echo ""
-              echo "PUBLIC_URL=$URL" >> $GITHUB_ENV
+              | sed 's/"public_url":"//g')
+            if [ -n "$PUBLIC_URL" ]; then
               break
             fi
             sleep 1
           done
 
-          if [ -z "$URL" ]; then
+          if [ -z "$PUBLIC_URL" ]; then
             echo "ERROR: ngrok URL not found. Dumping log:"
             cat /tmp/ngrok.log
             exit 1
           fi
+
+          echo ""
+          echo "╔══════════════════════════════════════════════════════╗"
+          echo "║  🚀 BintuNet is LIVE                                 ║"
+          echo "║                                                      ║"
+          printf "║  URL : %-46s ║\n" "$PUBLIC_URL"
+          echo "║                                                      ║"
+          echo "╚══════════════════════════════════════════════════════╝"
+          echo ""
+          echo "PUBLIC_URL=$PUBLIC_URL" >> "$GITHUB_ENV"
 
       - name: Keep alive
         run: |
@@ -120,50 +130,12 @@ jobs:
           echo "Cancel the workflow in GitHub Actions to shut it down."
           echo ""
 
-          while kill -0 $(cat /tmp/server.pid) 2>/dev/null && \
-                kill -0 $(cat /tmp/ngrok.pid) 2>/dev/null; do
+          SERVER_PID=$(cat /tmp/server.pid)
+          NGROK_PID=$(cat /tmp/ngrok.pid)
+
+          while kill -0 "$SERVER_PID" 2>/dev/null && kill -0 "$NGROK_PID" 2>/dev/null; do
             sleep 30
-
-            if [ $(( $(date +%s) % 300 )) -lt 30 ]; then
-              echo "$(date -u '+%H:%M:%S') ♥  $PUBLIC_URL — still alive"
-            fi
-          done
-
-          echo "A process exited — shutting down."
-          tail -20 /tmp/ngrok.log              | head -1 \
-              | cut -d'"' -f3)
-            if [ -n "$URL" ]; then
-              echo ""
-              echo "╔══════════════════════════════════════════════════════╗"
-              echo "║  🚀 BintuNet is LIVE                                 ║"
-              echo "║                                                      ║"
-              echo "║  URL : $URL"
-              echo "║  Login password : bintunet                           ║"
-              echo "╚══════════════════════════════════════════════════════╝"
-              echo ""
-              echo "PUBLIC_URL=$URL" >> $GITHUB_ENV
-              break
-            fi
-            sleep 1
-          done
-
-          if [ -z "$URL" ]; then
-            echo "ERROR: ngrok URL not found. Dumping log:"
-            cat /tmp/ngrok.log
-            exit 1
-          fi
-
-      - name: Keep alive
-        run: |
-          echo "Server running at $PUBLIC_URL"
-          echo "This job will keep running for up to 4 hours."
-          echo "Cancel the workflow in GitHub Actions to shut it down."
-          echo ""
-
-          while kill -0 $(cat /tmp/server.pid) 2>/dev/null && \
-                kill -0 $(cat /tmp/ngrok.pid) 2>/dev/null; do
-            sleep 30
-
+            # Print a heartbeat every ~5 minutes
             if [ $(( $(date +%s) % 300 )) -lt 30 ]; then
               echo "$(date -u '+%H:%M:%S') ♥  $PUBLIC_URL — still alive"
             fi
