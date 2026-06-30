@@ -101,6 +101,11 @@ interface ChatMessage {
 
 const statsCache = new Map<string, ChannelStats>();
 const chatPageTokens = new Map<string, string | null>();
+// YouTube tells us exactly when to poll next via pollingIntervalMillis.
+// We store it per chatId and drive polling with setTimeout (not setInterval).
+const chatPollingIntervals = new Map<string, number>();
+const DEFAULT_CHAT_POLL_MS = 5_000;
+const MIN_CHAT_POLL_MS = 3_000;
 
 const lastSearchAt = new Map<string, number>();
 const SEARCH_INTERVAL_MS = 20 * 60 * 1000;
@@ -118,7 +123,6 @@ let pollingInterval: NodeJS.Timeout | null = null;
 let chatInterval: NodeJS.Timeout | null = null;
 let chartBroadcastInterval: NodeJS.Timeout | null = null;
 let statsPolling = false;
-let chatPolling = false;
 
 const FETCH_TIMEOUT_MS = 8000;
 
@@ -291,6 +295,11 @@ export async function fetchLiveChat(streamId: string, chatId: string): Promise<C
   if (data.nextPageToken) {
     chatPageTokens.set(chatId, data.nextPageToken);
   }
+  // Honour YouTube's own polling hint — it tells us exactly when new messages
+  // will be available, so we use it to drive the next poll via setTimeout.
+  if (typeof data.pollingIntervalMillis === "number" && data.pollingIntervalMillis > 0) {
+    chatPollingIntervals.set(chatId, Math.max(data.pollingIntervalMillis, MIN_CHAT_POLL_MS));
+  }
 
   const messages: ChatMessage[] = (data.items ?? []).map((item: any) => ({
     id: item.id,
@@ -428,38 +437,27 @@ export function startLiveCountPolling() {
     }
   }, 10_000);
 
-  const pollChat = async () => {
-    if (chatPolling) return;
-    chatPolling = true;
-    try {
-      const streams = storage.getStreams();
-      for (const stream of streams) {
-        if (!stream.youtubeChannelId) continue;
-        const chatId = statsCache.get(stream.youtubeChannelId)?.liveChatId;
-        if (!chatId) continue;
-
+  // setTimeout-based recursive poller — respects YouTube's pollingIntervalMillis
+  // so each chatId is fetched as soon as the API says new messages are available.
+  const scheduleChatPoll = (chatId: string, streamId: string, delayMs: number) => {
+    if (!chatInterval) return; // stopped
+    setTimeout(() => {
+      if (!chatInterval) return;
+      (async () => {
         try {
-          const messages = await fetchLiveChat(stream.id, chatId);
+          const messages = await fetchLiveChat(streamId, chatId);
           if (messages.length > 0) {
-            broadcastStream(stream.id, "chat", messages);
+            broadcastStream(streamId, "chat", messages);
 
-            if (!burnSentMessageIds.has(stream.id)) {
-              burnSentMessageIds.set(stream.id, new Set());
-            }
-            const sentIds = burnSentMessageIds.get(stream.id)!;
+            if (!burnSentMessageIds.has(streamId)) burnSentMessageIds.set(streamId, new Set());
+            const sentIds = burnSentMessageIds.get(streamId)!;
             const newBurnMsgs = messages.filter((m) => !sentIds.has(m.id));
-
             if (newBurnMsgs.length > 0) {
               newBurnMsgs.forEach((m) => sentIds.add(m.id));
               if (sentIds.size > 2000) {
                 const oldest = Array.from(sentIds).slice(0, 500);
                 oldest.forEach((id) => sentIds.delete(id));
               }
-
-              // Use receive time (Date.now()) rather than publishedAt so Float-style
-              // messages aren't immediately expired — YouTube chat messages are typically
-              // 5–30 s old by the time the poll fetches them, but Float only shows
-              // messages younger than 5.5 s (lifetimeSec).
               const receiveTs = Date.now();
               const incoming = newBurnMsgs.slice(-10).map((m) => ({
                 name: m.authorName,
@@ -468,40 +466,43 @@ export function startLiveCountPolling() {
                 color: m.isModerator ? "#34d399" : m.isMember ? "#a78bfa" : undefined,
                 ts: receiveTs,
               }));
-
-              // Accumulate into a rolling window (max 20) instead of replacing the
-              // entire array each poll, so Bubble/Sidebar/Ticker styles keep showing
-              // the previous batch while newer messages arrive.
               const CHAT_BURN_MAX = 20;
               const currentMessages = getCurrentOverlayState().chatBurnMessages ?? [];
               const accumulated = [...currentMessages, ...incoming].slice(-CHAT_BURN_MAX);
-
               const currentState = getCurrentOverlayState();
               if (!currentState.chatBurnActive) {
-                logger.info(
-                  { streamId: stream.id, newMessages: incoming.length },
-                  "[chat-burn] New chat messages received but chatBurnActive=false — enable via Chat tab to show overlay",
-                );
+                logger.info({ streamId, newMessages: incoming.length }, "[chat-burn] New chat messages received but chatBurnActive=false — enable via Chat tab to show overlay");
               } else {
-                logger.info(
-                  { streamId: stream.id, newMessages: incoming.length, totalInWindow: accumulated.length },
-                  "[chat-burn] Dispatching chat burn messages to overlay",
-                );
+                logger.info({ streamId, newMessages: incoming.length, totalInWindow: accumulated.length }, "[chat-burn] Dispatching chat burn messages to overlay");
               }
-
               updateStreamOverlays({ chatBurnMessages: accumulated });
             }
           }
         } catch (e) {
-          logger.warn({ streamId: stream.id, err: e }, "Chat poll error");
+          logger.warn({ streamId, err: e }, "Chat poll error");
         }
-      }
-    } finally {
-      chatPolling = false;
-    }
+        // Re-schedule using the interval YouTube told us (or default)
+        const next = chatPollingIntervals.get(chatId) ?? DEFAULT_CHAT_POLL_MS;
+        scheduleChatPoll(chatId, streamId, next);
+      })();
+    }, delayMs);
   };
 
-  chatInterval = setInterval(pollChat, 10_000);
+  // Seed: kick off a poll per active stream immediately, then let each reschedule itself
+  const seedChatPollers = () => {
+    const streams = storage.getStreams();
+    for (const stream of streams) {
+      if (!stream.youtubeChannelId) continue;
+      const chatId = statsCache.get(stream.youtubeChannelId)?.liveChatId;
+      if (!chatId) continue;
+      scheduleChatPoll(chatId, stream.id, DEFAULT_CHAT_POLL_MS);
+    }
+  };
+  seedChatPollers();
+
+  // Re-seed every 30 s to pick up newly added streams / newly resolved chatIds
+  // (each individual chatId is already being polled by its own setTimeout chain above)
+  chatInterval = setInterval(seedChatPollers, 30_000);
 }
 
 export function stopLiveCountPolling() {
