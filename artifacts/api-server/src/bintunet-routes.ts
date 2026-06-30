@@ -366,7 +366,11 @@ export async function registerBintunetRoutes(
 
   app.use(
     session({
-      secret: process.env.SESSION_SECRET || "bintunet-secret-key",
+      secret: (() => {
+        const s = process.env.SESSION_SECRET;
+        if (!s) throw new Error("SESSION_SECRET environment variable is required but was not set.");
+        return s;
+      })(),
       resave: false,
       saveUninitialized: false,
       store: new MemoryStore({ checkPeriod: 86400000 }),
