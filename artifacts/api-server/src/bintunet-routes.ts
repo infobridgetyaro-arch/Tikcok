@@ -2458,7 +2458,9 @@ export async function registerBintunetRoutes(
   });
 
   // ── News Overlay module ────────────────────────────────────────────────────
-  initNewsOverlay(broadcastGlobal);
+  // Pass updateStreamOverlays so the news overlay API can push directly into the
+  // canvas renderer (pipe:4 → FFmpeg) when activated — not just to browser WS clients.
+  initNewsOverlay(broadcastGlobal, (patch) => updateStreamOverlays(patch as Parameters<typeof updateStreamOverlays>[0]));
   app.use("/api/news-overlay", requireAuth, newsOverlayRouter);
 
   // ── Stream manager: health scorer + failover init ─────────────────────────

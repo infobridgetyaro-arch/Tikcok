@@ -1,0 +1,77 @@
+{
+  "active": true,
+  "previewMode": false,
+  "theme": "BBC",
+  "customColors": {
+    "primary": "#cc0001",
+    "secondary": "#990000",
+    "background": "rgba(4,4,12,0.96)",
+    "text": "#ffffff",
+    "badge": "#cc0001",
+    "badgeText": "#ffffff"
+  },
+  "customFont": {
+    "family": "Arial, sans-serif",
+    "size": 14,
+    "weight": 600,
+    "letterSpacing": 0.02
+  },
+  "customBorder": {
+    "width": 0,
+    "color": "transparent",
+    "radius": 0
+  },
+  "customShadow": {
+    "enabled": false,
+    "color": "rgba(0,0,0,0.5)",
+    "blur": 0,
+    "x": 0,
+    "y": 0
+  },
+  "opacity": 1,
+  "layout": {
+    "position": {
+      "x": 0,
+      "y": 95
+    },
+    "width": 0,
+    "height": 0,
+    "zIndex": 30
+  },
+  "logo": "",
+  "logoUrl": "",
+  "liveBadge": {
+    "visible": true,
+    "label": "LIVE COVERAGE",
+    "pulse": false,
+    "color": "#0057ff"
+  },
+  "headline": {
+    "text": "Welcome to the live stream! Stay tuned for more updates.",
+    "animation": "Typewriter",
+    "durationMs": 6000,
+    "autoRotate": false,
+    "headlines": [
+      "Welcome to the live stream! Stay tuned for more updates.",
+      "Thanks for watching — subscribe for more content!"
+    ],
+    "currentIndex": 0
+  },
+  "breakingNews": {
+    "active": false,
+    "text": "",
+    "flashInterval": 800,
+    "overridesTicker": false
+  },
+  "ticker": {
+    "style": "CNN",
+    "direction": "right",
+    "speed": 16,
+    "paused": true,
+    "separator": "  ·  "
+  },
+  "widgets": [],
+  "enterAnimation": "Fade",
+  "exitAnimation": "Slide Down",
+  "animationDurationMs": 500
+}

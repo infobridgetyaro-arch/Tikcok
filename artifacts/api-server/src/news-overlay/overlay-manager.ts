@@ -18,15 +18,86 @@ import type {
 } from "./types.js";
 
 type BroadcastFn = (type: string, payload: unknown) => void;
+type StreamUpdaterFn = (patch: Record<string, unknown>) => void;
 
 let _broadcast: BroadcastFn | null = null;
+let _streamUpdater: StreamUpdaterFn | null = null;
 let _headlineTimer: ReturnType<typeof setTimeout> | null = null;
 let _pruneTimer: ReturnType<typeof setInterval> | null = null;
 
+// ── Map NewsOverlayState → OverlayState patch for the canvas renderer ──────────
+
+const TICKER_STYLE_MAP: Record<string, string> = {
+  "CNN":        "CNN",
+  "BBC":        "BBC",
+  "Bloomberg":  "Bloomberg",
+  "Sky News":   "Sky News",
+  "CNBC":       "Bloomberg",
+  "Al Jazeera": "Al Jazeera",
+  "Modern":     "Neon Wire",
+  "Minimal":    "Minimal",
+  "Glass":      "Float Glass",
+  "Election":   "CNN",
+  "Fox":        "CNN",
+};
+
+const ANIM_MAP: Record<string, string> = {
+  "None":       "None",
+  "Fade":       "Fade",
+  "Slide Left": "Slide Left",
+  "Slide Right":"Slide Right",
+  "Slide Up":   "Pop Up",
+  "Slide Down": "Drop Down",
+  "Zoom":       "Zoom",
+  "Elastic":    "Elastic",
+  "Bounce":     "Elastic",
+  "Flip":       "Flip",
+  "Typewriter": "Typewriter",
+  "Blur":       "Fade",
+  "Glitch":     "Glitch",
+  "Pulse":      "Fade",
+  "Flash":      "Glitch",
+};
+
+function mapToOverlayPatch(s: NewsOverlayState): Record<string, unknown> {
+  const messages = getTickerMessages();
+  const sep = s.ticker?.separator ?? "   ◆   ";
+  const tickerText = messages.length
+    ? messages.map(m => m.text).join(sep)
+    : (s.headline?.text ?? "");
+
+  const displayText = (s.breakingNews?.active && s.breakingNews?.overridesTicker)
+    ? s.breakingNews.text
+    : tickerText;
+
+  return {
+    newsActive:      s.active,
+    newsText:        displayText,
+    newsTitle:       s.liveBadge?.label ?? "LIVE",
+    newsBgColor:     s.customColors?.primary ?? "#cc0001",
+    newsStyle:       TICKER_STYLE_MAP[s.ticker?.style ?? ""] ?? "Al Jazeera",
+    newsAnimation:   ANIM_MAP[s.enterAnimation ?? ""] ?? "Fade",
+    newsPosition:    s.layout?.position ?? { x: 0, y: 95 },
+    newsLogo:        s.logo ?? "",
+    newsScrollSpeed: s.ticker?.speed ?? 30,
+    newsScale:       Math.round((s.opacity ?? 1) * 100),
+  };
+}
+
+function pushToStreamRenderers(): void {
+  if (!_streamUpdater) return;
+  try {
+    _streamUpdater(mapToOverlayPatch(getState()));
+  } catch (e) {
+    logger.warn({ err: e }, "[news-overlay] stream renderer update failed");
+  }
+}
+
 // ── Initialise ─────────────────────────────────────────────────────────────────
 
-export function initNewsOverlay(broadcast: BroadcastFn): void {
+export function initNewsOverlay(broadcast: BroadcastFn, streamUpdater?: StreamUpdaterFn): void {
   _broadcast = broadcast;
+  if (streamUpdater) _streamUpdater = streamUpdater;
   loadPersistedState();
   installBuiltinPresets();
 
@@ -61,6 +132,7 @@ export function emitState(): void {
 export function activate(): NewsOverlayState {
   const s = setState({ active: true });
   emitState();
+  pushToStreamRenderers();
   startHeadlineRotation();
   return s;
 }
@@ -69,6 +141,7 @@ export function deactivate(): NewsOverlayState {
   const s = setState({ active: false });
   stopHeadlineRotation();
   emitState();
+  pushToStreamRenderers();
   return s;
 }
 
@@ -80,6 +153,7 @@ export function toggle(): NewsOverlayState {
 export function updateOverlay(patch: Partial<NewsOverlayState>): NewsOverlayState {
   const s = setState(patch);
   emitState();
+  pushToStreamRenderers();
   // Restart clock widgets if widgets changed
   if (patch.widgets) startClockWidgets(s.widgets);
   // Restart headline rotation if headline config changed
@@ -104,6 +178,7 @@ export function applyThemeFull(themeName: ThemeName): NewsOverlayState {
     liveBadge: { ...current.liveBadge, color: theme.colors.badge, label: theme.badgeLabel },
   });
   emitState();
+  pushToStreamRenderers();
   return s;
 }
 
@@ -112,35 +187,43 @@ export function applyThemeFull(themeName: ThemeName): NewsOverlayState {
 export function addMessage(text: string, priority = 0, expiresInMs?: number) {
   const msg = addTickerMessage(text, priority, expiresInMs);
   emitTickerEvent();
+  if (getState().active) pushToStreamRenderers();
   return msg;
 }
 
 export function removeMessage(id: string): boolean {
   const ok = removeTickerMessage(id);
-  if (ok) emitTickerEvent();
+  if (ok) {
+    emitTickerEvent();
+    if (getState().active) pushToStreamRenderers();
+  }
   return ok;
 }
 
 export function clearMessages(): void {
   clearTickerMessages();
   emitTickerEvent();
+  if (getState().active) pushToStreamRenderers();
 }
 
 export function addBreaking(text: string) {
   setState({ breakingNews: { ...getState().breakingNews, active: true, text } });
   const msg = addBreakingNewsMessage(text);
   emitState();
+  pushToStreamRenderers();
   return msg;
 }
 
 export function clearBreaking(): void {
   setState({ breakingNews: { ...getState().breakingNews, active: false, text: "" } });
   emitState();
+  pushToStreamRenderers();
 }
 
 export function updateTickerConfig(cfg: Partial<TickerConfig>): NewsOverlayState {
   const s = setState({ ticker: { ...getState().ticker, ...cfg } });
   emitState();
+  if (s.active) pushToStreamRenderers();
   return s;
 }
 
@@ -168,6 +251,7 @@ function scheduleNextHeadline(): void {
       },
     });
     emitState();
+    pushToStreamRenderers();
     scheduleNextHeadline();
   }, headline.durationMs);
 }
