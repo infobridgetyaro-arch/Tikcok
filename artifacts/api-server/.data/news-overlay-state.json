@@ -47,15 +47,15 @@
     "color": "#cc0001"
   },
   "headline": {
-    "text": "Thanks for watching — subscribe for more content!",
-    "animation": "Slide Up",
-    "durationMs": 6000,
-    "autoRotate": true,
+    "text": "Welcome to the live stream! Stay tuned for more updates.",
+    "animation": "Typewriter",
+    "durationMs": 22000,
+    "autoRotate": false,
     "headlines": [
       "Welcome to the live stream! Stay tuned for more updates.",
       "Thanks for watching — subscribe for more content!"
     ],
-    "currentIndex": 1
+    "currentIndex": 0
   },
   "breakingNews": {
     "active": true,
@@ -64,10 +64,10 @@
     "overridesTicker": false
   },
   "ticker": {
-    "style": "Fox",
+    "style": "Glass",
     "direction": "left",
-    "speed": 79,
-    "paused": false,
+    "speed": 69,
+    "paused": true,
     "separator": "   ⚡   "
   },
   "widgets": [],
