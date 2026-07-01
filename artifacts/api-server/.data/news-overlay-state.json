@@ -1,34 +1,34 @@
 {
   "active": true,
   "previewMode": false,
-  "theme": "CNN",
+  "theme": "Dark",
   "customColors": {
-    "primary": "#f59e0b",
-    "secondary": "#8b0000",
-    "background": "#0d0d0d",
-    "text": "#f0f0f0",
-    "badge": "#f59e0b",
+    "primary": "#6366f1",
+    "secondary": "#4f46e5",
+    "background": "rgba(10,10,20,0.97)",
+    "text": "rgba(255,255,255,0.9)",
+    "badge": "#6366f1",
     "badgeText": "#ffffff"
   },
   "customFont": {
     "family": "Arial, sans-serif",
     "size": 14,
-    "weight": 700,
+    "weight": 600,
     "letterSpacing": 0.02
   },
   "customBorder": {
-    "width": 0,
-    "color": "transparent",
-    "radius": 0
+    "width": 1,
+    "color": "rgba(99,102,241,0.4)",
+    "radius": 4
   },
   "customShadow": {
-    "enabled": false,
-    "color": "rgba(0,0,0,0.5)",
-    "blur": 0,
+    "enabled": true,
+    "color": "rgba(99,102,241,0.2)",
+    "blur": 20,
     "x": 0,
-    "y": 0
+    "y": -4
   },
-  "opacity": 1,
+  "opacity": 0.97,
   "layout": {
     "position": {
       "x": 0,
@@ -44,12 +44,12 @@
     "visible": true,
     "label": "LIVE",
     "pulse": true,
-    "color": "#00ff00"
+    "color": "#6366f1"
   },
   "headline": {
     "text": "Welcome to the live stream! Stay tuned for more updates.",
-    "animation": "Typewriter",
-    "durationMs": 22000,
+    "animation": "Fade",
+    "durationMs": 5000,
     "autoRotate": false,
     "headlines": [
       "Welcome to the live stream! Stay tuned for more updates.",
@@ -58,20 +58,20 @@
     "currentIndex": 0
   },
   "breakingNews": {
-    "active": false,
-    "text": "",
-    "flashInterval": 1377,
-    "overridesTicker": true
+    "active": true,
+    "text": "BREAKING NEWS",
+    "flashInterval": 800,
+    "overridesTicker": false
   },
   "ticker": {
-    "style": "CNN",
+    "style": "Modern",
     "direction": "left",
-    "speed": 69,
-    "paused": true,
+    "speed": 25,
+    "paused": false,
     "separator": "   ⚡   "
   },
   "widgets": [],
-  "enterAnimation": "Slide Up",
-  "exitAnimation": "Slide Down",
+  "enterAnimation": "Slide Left",
+  "exitAnimation": "Slide Left",
   "animationDurationMs": 500
 }
