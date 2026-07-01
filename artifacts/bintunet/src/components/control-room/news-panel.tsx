@@ -107,15 +107,27 @@ async function apiDelete(path: string) {
 function TickerScroll({ text, speed = 30, color = "#fff", fontSize = 13, fontWeight = 600, separator = "   ◆   " }: {
   text: string; speed?: number; color?: string; fontSize?: number; fontWeight?: number; separator?: string;
 }) {
-  const chunk = `${text}${separator}${text}${separator}`;
-  const dur = Math.max(8, speed * 0.8);
+  const unit = `${text}${separator}`;
+  const spanRef = useRef<HTMLSpanElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dur, setDur] = useState(20);
+
+  useEffect(() => {
+    if (!spanRef.current || !containerRef.current) return;
+    const spanW = spanRef.current.offsetWidth || 1;
+    const containerW = containerRef.current.offsetWidth || 600;
+    // Match backend formula: W / (speed * 0.4 + 4) px/s
+    const pxPerSec = containerW / (speed * 0.4 + 4);
+    setDur(Math.max(3, spanW / pxPerSec));
+  }, [text, speed, fontSize, fontWeight]);
+
   return (
     <>
       <style>{`@keyframes no-tick{from{transform:translateX(0)}to{transform:translateX(-50%)}}`}</style>
-      <div style={{ overflow: "hidden", flex: 1, display: "flex", alignItems: "center", minWidth: 0 }}>
-        <div style={{ display: "flex", flexShrink: 0, animation: `no-tick ${dur}s linear infinite`, willChange: "transform" }}>
-          <span style={{ whiteSpace: "nowrap", paddingRight: 60, fontSize, fontWeight, color }}>{chunk}</span>
-          <span style={{ whiteSpace: "nowrap", paddingRight: 60, fontSize, fontWeight, color }}>{chunk}</span>
+      <div ref={containerRef} style={{ overflow: "hidden", flex: 1, display: "flex", alignItems: "center", minWidth: 0 }}>
+        <div key={`${text}|${speed}`} style={{ display: "flex", flexShrink: 0, animation: `no-tick ${dur}s linear infinite`, willChange: "transform" }}>
+          <span ref={spanRef} style={{ whiteSpace: "nowrap", fontSize, fontWeight, color }}>{unit}</span>
+          <span style={{ whiteSpace: "nowrap", fontSize, fontWeight, color }}>{unit}</span>
         </div>
       </div>
     </>

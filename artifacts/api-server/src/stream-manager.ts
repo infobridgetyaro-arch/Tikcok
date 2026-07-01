@@ -880,12 +880,16 @@ function buildFFmpegArgs(
   );
 
   // ── Input 4: UI overlay raw-RGBA pipe (fd 4) ──────────────────────────────
+  // 25fps matches uiRenderer.startWritingTo(uiPipe, 25) below.
+  // The UI overlay contains animated content (scrolling news ticker, chat,
+  // etc.) that requires ≥25fps to appear smooth; cfr-duplicating 2fps frames
+  // causes visible 500ms jumps in the ticker text.
   args.push(
     "-f", "rawvideo",
     "-pix_fmt", "rgba",
     "-video_size", `${scaleW}x${scaleH}`,
-    "-framerate", "2",
-    "-thread_queue_size", "4",
+    "-framerate", "25",
+    "-thread_queue_size", "8",
     "-i", "pipe:4",
   );
 
@@ -1865,14 +1869,13 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
     uiPipe.on("error", () => {});
     micPipe5.on("error", () => {});
 
-    // 2fps matches the declared -framerate on pipe:3 and pipe:4.
-    // Reduced from 5fps: canvas rendering (chat, gradients, text shadows) is
-    // CPU-intensive. At 2fps this drops from 10 renders/sec to 4 renders/sec
-    // — a ~60% cut in canvas CPU and pipe I/O (~32MB/s vs ~79MB/s).
-    // FFmpeg's fps_mode=cfr duplicates overlay frames between ticks;
-    // the overlay content is largely static so 2fps is visually seamless.
+    // Background pipe (pipe:3): static gradient — 2fps is fine and saves CPU.
+    // UI pipe (pipe:4): animated content (scrolling news ticker, chat burn-in,
+    // donation ticker, etc.) — must match the -framerate "25" declared above.
+    // At 2fps the ticker jumps ~40px per frame (500ms gap), causing visible
+    // stutter; 25fps gives smooth sub-2px steps between frames.
     bgRenderer.startWritingTo(bgPipe, 2);
-    uiRenderer.startWritingTo(uiPipe, 2);
+    uiRenderer.startWritingTo(uiPipe, 25);
 
     // Mic audio pipe: continuously writes PCM16 silence (or real mic audio) to pipe:5
     const micPipe = new MicAudioPipe();
