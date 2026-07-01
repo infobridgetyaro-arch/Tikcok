@@ -971,7 +971,7 @@ function NewsOverlayRenderer({ overlay, isMobile }: { overlay: NewsOverlayLive; 
           {logoEl ?? <span style={{ fontSize: isMobile ? 8 : 10, fontWeight: 900, color: "#fff", letterSpacing: "0.05em" }}>{overlay.liveBadge?.label || "LIVE"}</span>}
         </div>
         {badge && <div style={{ background: c, display: "flex", alignItems: "center", padding: `0 ${isMobile ? 6 : 10}px`, gap: 5, flexShrink: 0, borderTop: `3px solid ${c}` }}>
-          <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#fff", animation: overlay.liveBadge?.pulse ? "nov-pulse 1.2s infinite" : "none" }} />
+          <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#fff", animation: overlay.liveBadge?.pulse ? "nov-badge-pulse 1.2s infinite" : "none" }} />
           <span style={{ color: "#fff", fontWeight: 900, fontSize: isMobile ? 7 : 9, letterSpacing: "0.08em" }}>{label}</span>
         </div>}
         <TickerScroll text={displayText} speed={speed} color={textColor} fontSize={fontSize} fontWeight={font?.weight || 600} />
@@ -1080,15 +1080,54 @@ function NewsOverlayRenderer({ overlay, isMobile }: { overlay: NewsOverlayLive; 
 
   const overlayEl = themeStyles[theme] ?? themeStyles["Al Jazeera"];
 
+  const animPreset = overlay.headline?.animation || "Fade";
+  const ANIM_CSS: Record<string, string> = {
+    "None":        "",
+    "Fade":        "nov-fade 0.5s ease both",
+    "Slide Up":    "nov-slideup 0.45s cubic-bezier(0.22,1,0.36,1) both",
+    "Slide Down":  "nov-slidedown 0.45s cubic-bezier(0.22,1,0.36,1) both",
+    "Slide Left":  "nov-slideleft 0.45s cubic-bezier(0.22,1,0.36,1) both",
+    "Slide Right": "nov-slideright 0.45s cubic-bezier(0.22,1,0.36,1) both",
+    "Zoom":        "nov-zoom 0.45s cubic-bezier(0.22,1,0.36,1) both",
+    "Elastic":     "nov-elastic 0.7s cubic-bezier(0.22,1,0.36,1) both",
+    "Bounce":      "nov-bounce 0.7s ease both",
+    "Flip":        "nov-flip 0.45s cubic-bezier(0.22,1,0.36,1) both",
+    "Typewriter":  "nov-typewriter 0.8s steps(25,end) both",
+    "Blur":        "nov-blur 0.5s ease both",
+    "Glitch":      "nov-glitch 0.6s ease both",
+    "Pulse":       "nov-pulse-in 0.5s ease both",
+    "Flash":       "nov-flash 0.55s ease both",
+  };
+
   return (
     <>
-      <style>{`@keyframes nov-pulse { 0%,100%{opacity:1} 50%{opacity:0.25} }`}</style>
-      <div style={{
-        position: "fixed", bottom, left: 0, right: 0, zIndex: 30,
-        opacity: overlay.opacity ?? 1,
-        background: bg,
-        transform: `scale(1)`,
-      }}>
+      <style>{`
+        @keyframes nov-badge-pulse { 0%,100%{opacity:1} 50%{opacity:0.25} }
+        @keyframes nov-fade        { from{opacity:0} to{opacity:1} }
+        @keyframes nov-slideup     { from{transform:translateY(100%);opacity:0} to{transform:translateY(0);opacity:1} }
+        @keyframes nov-slidedown   { from{transform:translateY(-100%);opacity:0} to{transform:translateY(0);opacity:1} }
+        @keyframes nov-slideleft   { from{transform:translateX(60px);opacity:0} to{transform:translateX(0);opacity:1} }
+        @keyframes nov-slideright  { from{transform:translateX(-60px);opacity:0} to{transform:translateX(0);opacity:1} }
+        @keyframes nov-zoom        { from{transform:scale(0.85);opacity:0} to{transform:scale(1);opacity:1} }
+        @keyframes nov-elastic     { 0%{transform:translateY(60px);opacity:0} 55%{transform:translateY(-8px);opacity:1} 75%{transform:translateY(4px)} 90%{transform:translateY(-2px)} 100%{transform:translateY(0)} }
+        @keyframes nov-bounce      { 0%{transform:translateY(50px);opacity:0} 45%{transform:translateY(-10px);opacity:1} 65%{transform:translateY(5px)} 82%{transform:translateY(-3px)} 100%{transform:translateY(0)} }
+        @keyframes nov-flip        { from{transform:scaleY(0);opacity:0;transform-origin:bottom} to{transform:scaleY(1);opacity:1;transform-origin:bottom} }
+        @keyframes nov-typewriter  { from{clip-path:inset(0 100% 0 0)} to{clip-path:inset(0 0% 0 0)} }
+        @keyframes nov-blur        { from{filter:blur(14px);opacity:0} to{filter:blur(0);opacity:1} }
+        @keyframes nov-glitch      { 0%{transform:translateX(0);opacity:0} 8%{transform:translateX(-10px);opacity:1} 16%{transform:translateX(10px)} 24%{transform:translateX(-5px)} 32%{transform:translateX(5px)} 40%{transform:translateX(-2px)} 50%{transform:translateX(0)} 100%{transform:translateX(0);opacity:1} }
+        @keyframes nov-pulse-in    { 0%{transform:scale(0.94);opacity:0} 50%{transform:scale(1.03);opacity:1} 100%{transform:scale(1);opacity:1} }
+        @keyframes nov-flash       { 0%{filter:brightness(4);opacity:0.2} 25%{filter:brightness(1.6);opacity:1} 45%{filter:brightness(2.2)} 65%{filter:brightness(1.1)} 100%{filter:brightness(1);opacity:1} }
+      `}</style>
+      <div
+        key={overlay.headline?.currentIndex ?? 0}
+        style={{
+          position: "fixed", bottom, left: 0, right: 0, zIndex: 30,
+          opacity: overlay.opacity ?? 1,
+          background: bg,
+          animation: ANIM_CSS[animPreset] ?? "",
+          willChange: animPreset !== "None" ? "transform, opacity" : undefined,
+        }}
+      >
         {overlayEl}
       </div>
     </>

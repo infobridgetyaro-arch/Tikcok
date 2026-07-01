@@ -44,7 +44,7 @@
     "visible": true,
     "label": "LIVE",
     "pulse": true,
-    "color": "#cc0001"
+    "color": "#00ff00"
   },
   "headline": {
     "text": "Welcome to the live stream! Stay tuned for more updates.",
@@ -58,13 +58,13 @@
     "currentIndex": 0
   },
   "breakingNews": {
-    "active": true,
-    "text": "BREAKING NEWS",
-    "flashInterval": 800,
-    "overridesTicker": false
+    "active": false,
+    "text": "",
+    "flashInterval": 1377,
+    "overridesTicker": true
   },
   "ticker": {
-    "style": "Glass",
+    "style": "CNN",
     "direction": "left",
     "speed": 69,
     "paused": true,

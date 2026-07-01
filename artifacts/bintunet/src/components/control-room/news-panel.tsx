@@ -251,12 +251,52 @@ function LivePreview({ state }: { state: NewsOverlayState }) {
     ),
   };
 
+  const animPreset = state.headline.animation || "Fade";
+  const ANIM_CSS: Record<string, string> = {
+    "None":        "",
+    "Fade":        "np-fade 0.5s ease both",
+    "Slide Up":    "np-slideup 0.45s cubic-bezier(0.22,1,0.36,1) both",
+    "Slide Down":  "np-slidedown 0.45s cubic-bezier(0.22,1,0.36,1) both",
+    "Slide Left":  "np-slideleft 0.45s cubic-bezier(0.22,1,0.36,1) both",
+    "Slide Right": "np-slideright 0.45s cubic-bezier(0.22,1,0.36,1) both",
+    "Zoom":        "np-zoom 0.45s cubic-bezier(0.22,1,0.36,1) both",
+    "Elastic":     "np-elastic 0.7s cubic-bezier(0.22,1,0.36,1) both",
+    "Bounce":      "np-bounce 0.7s ease both",
+    "Flip":        "np-flip 0.45s cubic-bezier(0.22,1,0.36,1) both",
+    "Typewriter":  "np-typewriter 0.8s steps(25,end) both",
+    "Blur":        "np-blur 0.5s ease both",
+    "Glitch":      "np-glitch 0.6s ease both",
+    "Pulse":       "np-pulse-in 0.5s ease both",
+    "Flash":       "np-flash 0.55s ease both",
+  };
+
   return (
     <div style={{ borderRadius: 10, overflow: "hidden", border: "1px solid rgba(255,255,255,0.1)", background: "#111" }}>
+      <style>{`
+        @keyframes np-fade        { from{opacity:0} to{opacity:1} }
+        @keyframes np-slideup     { from{transform:translateY(100%);opacity:0} to{transform:translateY(0);opacity:1} }
+        @keyframes np-slidedown   { from{transform:translateY(-100%);opacity:0} to{transform:translateY(0);opacity:1} }
+        @keyframes np-slideleft   { from{transform:translateX(40px);opacity:0} to{transform:translateX(0);opacity:1} }
+        @keyframes np-slideright  { from{transform:translateX(-40px);opacity:0} to{transform:translateX(0);opacity:1} }
+        @keyframes np-zoom        { from{transform:scale(0.85);opacity:0} to{transform:scale(1);opacity:1} }
+        @keyframes np-elastic     { 0%{transform:translateY(40px);opacity:0} 55%{transform:translateY(-6px);opacity:1} 75%{transform:translateY(3px)} 90%{transform:translateY(-1px)} 100%{transform:translateY(0)} }
+        @keyframes np-bounce      { 0%{transform:translateY(40px);opacity:0} 45%{transform:translateY(-8px);opacity:1} 65%{transform:translateY(4px)} 82%{transform:translateY(-2px)} 100%{transform:translateY(0)} }
+        @keyframes np-flip        { from{transform:scaleY(0);opacity:0;transform-origin:bottom} to{transform:scaleY(1);opacity:1;transform-origin:bottom} }
+        @keyframes np-typewriter  { from{clip-path:inset(0 100% 0 0)} to{clip-path:inset(0 0% 0 0)} }
+        @keyframes np-blur        { from{filter:blur(12px);opacity:0} to{filter:blur(0);opacity:1} }
+        @keyframes np-glitch      { 0%{transform:translateX(0);opacity:0} 8%{transform:translateX(-8px);opacity:1} 16%{transform:translateX(8px)} 24%{transform:translateX(-4px)} 32%{transform:translateX(4px)} 40%{transform:translateX(-2px)} 50%{transform:translateX(0)} 100%{transform:translateX(0);opacity:1} }
+        @keyframes np-pulse-in    { 0%{transform:scale(0.94);opacity:0} 50%{transform:scale(1.03);opacity:1} 100%{transform:scale(1);opacity:1} }
+        @keyframes np-flash       { 0%{filter:brightness(4);opacity:0.2} 25%{filter:brightness(1.6);opacity:1} 45%{filter:brightness(2.2)} 65%{filter:brightness(1.1)} 100%{filter:brightness(1);opacity:1} }
+        @keyframes no-pulse       { 0%,100%{opacity:1} 50%{opacity:0.2} }
+      `}</style>
       <div style={{ padding: "6px 10px", fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.1em", background: "rgba(255,255,255,0.03)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
         Live Preview — {state.theme} {state.active && <span style={{ color: "#4ade80" }}>● ACTIVE</span>}
+        {animPreset !== "None" && <span style={{ color: "rgba(255,255,255,0.2)", marginLeft: 6 }}>· {animPreset}</span>}
       </div>
-      <div style={{ background: "#000" }}>
+      <div
+        key={`${state.theme}|${animPreset}|${state.headline.currentIndex}`}
+        style={{ background: "#000", animation: ANIM_CSS[animPreset] ?? "", overflow: "hidden" }}
+      >
         {previewMap[state.theme] ?? previewMap["Al Jazeera"]}
       </div>
     </div>
