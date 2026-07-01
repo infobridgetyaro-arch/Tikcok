@@ -68,6 +68,8 @@ interface ChatMessage {
   isMember: boolean;
   isModerator: boolean;
   isOwner: boolean;
+  /** Client-side timestamp (Date.now()) when the message was received — used for 10 s TTL */
+  receivedAt: number;
 }
 
 interface StreamStats {
@@ -134,7 +136,10 @@ function useBroadcastWS() {
           setNewsOverlay(msg.data as NewsOverlayLive);
         }
         if (msg.type === "chat" && Array.isArray(msg.data)) {
-          const msgs = (msg.data as ChatMessage[]).filter((m) => !seenIds.current.has(m.id));
+          const receivedAt = Date.now();
+          const msgs = (msg.data as ChatMessage[])
+            .filter((m) => !seenIds.current.has(m.id))
+            .map((m) => ({ ...m, receivedAt }));
           msgs.forEach((m) => seenIds.current.add(m.id));
           if (msgs.length) {
             setChat((prev) => [...prev, ...msgs].slice(-10));
@@ -191,6 +196,19 @@ function useBroadcastWS() {
       if (giftTimerRef.current) clearTimeout(giftTimerRef.current);
     };
   }, [connect]);
+
+  // Prune chat messages older than 10 seconds so the browser overlay never
+  // shows stale messages between streams or after a stream ends.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setChat((prev) => {
+        const cutoff = Date.now() - 10_000;
+        const next = prev.filter((m) => m.receivedAt > cutoff);
+        return next.length === prev.length ? prev : next;
+      });
+    }, 1_000);
+    return () => clearInterval(timer);
+  }, []);
 
   return { state, newsOverlay, chat, stats, scanFlash, giftPopup };
 }

@@ -500,12 +500,26 @@ export function startLiveCountPolling() {
   // activeChatPollers guards against duplicate chains: seedChatPollers runs every
   // 30 s but must NOT spawn a second chain for a chatId that already has one.
   const scheduleChatPoll = (chatId: string, streamId: string, delayMs: number) => {
-    if (!chatInterval) { activeChatPollers.delete(chatId); return; } // stopped
+    // Exit if global polling was stopped
+    if (!chatInterval) { activeChatPollers.delete(chatId); return; }
+    // Exit if this chatId was removed from active pollers (e.g. stream stopped)
+    if (!activeChatPollers.has(chatId) && delayMs > 0) return;
     activeChatPollers.add(chatId);
     setTimeout(() => {
       if (!chatInterval) { activeChatPollers.delete(chatId); return; }
+      // Guard: if the chatId was cleared by clearStreamChatState, exit the chain.
+      if (!activeChatPollers.has(chatId)) return;
       (async () => {
         try {
+          // Guard: skip broadcast/overlay update if the stream is no longer active.
+          // Prevents stale pollers from re-injecting chat after stopStream().
+          const streamStatus = storage.getStream(streamId)?.status;
+          if (!streamStatus || streamStatus === "idle" || streamStatus === "error") {
+            activeChatPollers.delete(chatId);
+            logger.info({ streamId, chatId }, "[chat] Stream idle — stopping chat poller chain");
+            return;
+          }
+
           const messages = await fetchLiveChat(streamId, chatId);
           if (messages.length > 0) {
             broadcastStream(streamId, "chat", messages);
@@ -575,6 +589,34 @@ export function stopLiveCountPolling() {
   if (chatInterval) { clearInterval(chatInterval); chatInterval = null; }
   if (chartBroadcastInterval) { clearInterval(chartBroadcastInterval); chartBroadcastInterval = null; }
   activeChatPollers.clear();
+}
+
+/**
+ * Clear ephemeral chat state for a single stream when it stops.
+ * Scoped to the stream's own chatId so multi-stream sessions are unaffected.
+ * Called by stream-manager on both manual stop and auto-restart paths.
+ */
+export function clearStreamChatState(streamId: string): void {
+  // Per-stream dedup set — always clear by streamId
+  burnSentMessageIds.delete(streamId);
+
+  // chatPageTokens / chatResultCache / activeChatPollers are keyed by chatId.
+  // Resolve the chatId from statsCache (in-memory, no API call) and delete
+  // only that stream's entries so other concurrent streams keep their state.
+  const stream = storage.getStream(streamId);
+  if (stream?.youtubeChannelId) {
+    const chatId = statsCache.get(stream.youtubeChannelId)?.liveChatId;
+    if (chatId) {
+      chatPageTokens.delete(chatId);
+      chatResultCache.delete(chatId);
+      // Remove from active pollers so the recursive chain self-terminates
+      // on its next scheduled tick (the chatId guard in scheduleChatPoll fires).
+      activeChatPollers.delete(chatId);
+      logger.info({ streamId, chatId }, "[youtube] Chat state cleared — ready for next stream");
+      return;
+    }
+  }
+  logger.info({ streamId }, "[youtube] Chat state cleared (no chatId resolved)");
 }
 
 /** Exposed for the /api/youtube/key-status debug endpoint */

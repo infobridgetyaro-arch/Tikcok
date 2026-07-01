@@ -1,7 +1,7 @@
 import { ChildProcess, spawn, exec } from "child_process";
 import { storage } from "./storage";
 import { logger } from "./lib/logger";
-import { getLiveStats } from "./youtube-counter";
+import { getLiveStats, clearStreamChatState } from "./youtube-counter";
 import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader } from "./youtube-source";
 import { YTDLP_BIN } from "./lib/ytdlp";
 import type { WebSocket } from "ws";
@@ -2703,6 +2703,11 @@ function hardKillAndRestart(streamId: string, delayMs: number, forceNewUrl = fal
 
   cleanupStreamProc(streamId, proc);
   try { proc.ffmpegProcess?.kill("SIGKILL"); } catch {}
+  // Clear stale chat from the overlay and stop the poller chain so the
+  // next live session always starts with a blank chat slate — whether the
+  // restart is manual, a crash recovery, or an auto-reconnect.
+  updateStreamOverlays({ chatBurnMessages: [] });
+  clearStreamChatState(streamId);
   if (!keepStatus) sendStatus(streamId, "reconnecting");
 
   if (delay > 5_000) sendLog(streamId, `Backing off — retrying in ${delay / 1000}s...`);
@@ -2804,6 +2809,11 @@ export function stopStream(streamId: string) {
 
   sendStatus(streamId, "idle");
   broadcastStream(streamId, "chat_clear", {});
+  // Immediately wipe chat burn messages from the server-side overlay state so
+  // that a subsequent startStream() never inherits stale chat from the previous
+  // session. This is the primary fix for "old chat visible on next go-live".
+  updateStreamOverlays({ chatBurnMessages: [] });
+  clearStreamChatState(streamId);
   sendLog(streamId, "Stream stopped");
   streamLogBuffers.delete(streamId);
   logger.info({ streamId }, `Stream stopped`);

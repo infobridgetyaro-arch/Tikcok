@@ -261,6 +261,8 @@ const ANIM_DUR = 0.75;
 const SUPERCHAT_TTL = 9;
 /** How long the sub alert displays (seconds after activation) */
 const SUBALERT_TTL = 5;
+/** How long each chat burn message stays visible (seconds) — cleared immediately on stream stop */
+const CHAT_BURN_TTL_MS = 10_000;
 
 export class OverlayRenderer {
   private canvas: ReturnType<typeof createCanvas>;
@@ -861,6 +863,17 @@ export class OverlayRenderer {
     const t = this.elapsed();
     const wantBreak = this.state.breakActive ? 1 : 0;
     const nonBreak = 1 - this.alphas.break;
+
+    // ── Per-message 10-second TTL: evict expired chat burn messages every frame ──
+    // This guarantees the overlay always clears within 10 s even if the server
+    // hasn't explicitly cleared the array (e.g. mid-stream reconnect).
+    {
+      const nowMs = Date.now();
+      const unexpired = this.state.chatBurnMessages.filter((m) => nowMs - m.ts < CHAT_BURN_TTL_MS);
+      if (unexpired.length !== this.state.chatBurnMessages.length) {
+        this.state.chatBurnMessages = unexpired;
+      }
+    }
 
     // Determine if sub alert should fade out after TTL
     const subAlertAge = t - this.subAlertStartT;
