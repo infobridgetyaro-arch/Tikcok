@@ -408,6 +408,155 @@ export function triggerStatsPollNow(): void {
   Promise.all(tasks).finally(() => { statsPolling = false; });
 }
 
+// setTimeout-based recursive poller — respects YouTube's pollingIntervalMillis.
+// activeChatPollers guards against duplicate chains: seedChatPollers runs every
+// 30 s but must NOT spawn a second chain for a chatId that already has one.
+// Hoisted to module scope (not nested in startLiveCountPolling) so it can also
+// be triggered immediately from primeLiveDetection() right after GO LIVE.
+const scheduleChatPoll = (chatId: string, streamId: string, delayMs: number) => {
+  // Exit if global polling was stopped
+  if (!chatInterval) { activeChatPollers.delete(chatId); return; }
+  // Exit if this chatId was removed from active pollers (e.g. stream stopped)
+  if (!activeChatPollers.has(chatId) && delayMs > 0) return;
+  activeChatPollers.add(chatId);
+  setTimeout(() => {
+    if (!chatInterval) { activeChatPollers.delete(chatId); return; }
+    // Guard: if the chatId was cleared by clearStreamChatState, exit the chain.
+    if (!activeChatPollers.has(chatId)) return;
+    (async () => {
+      try {
+        // Guard: skip broadcast/overlay update if the stream is no longer active.
+        // Prevents stale pollers from re-injecting chat after stopStream().
+        const streamStatus = storage.getStream(streamId)?.status;
+        if (!streamStatus || streamStatus === "idle" || streamStatus === "error") {
+          activeChatPollers.delete(chatId);
+          logger.info({ streamId, chatId }, "[chat] Stream idle — stopping chat poller chain");
+          return;
+        }
+
+        const messages = await fetchLiveChat(streamId, chatId);
+        if (messages.length > 0) {
+          broadcastStream(streamId, "chat", messages);
+          logger.info({ streamId, chatId, count: messages.length }, "[chat] Broadcast chat messages via WebSocket");
+
+          if (!burnSentMessageIds.has(streamId)) burnSentMessageIds.set(streamId, new Set());
+          const sentIds = burnSentMessageIds.get(streamId)!;
+          const newBurnMsgs = messages.filter((m) => !sentIds.has(m.id));
+          if (newBurnMsgs.length > 0) {
+            newBurnMsgs.forEach((m) => sentIds.add(m.id));
+            if (sentIds.size > 2000) {
+              const oldest = Array.from(sentIds).slice(0, 500);
+              oldest.forEach((id) => sentIds.delete(id));
+            }
+            const receiveTs = Date.now();
+            const incoming = newBurnMsgs.slice(-10).map((m) => ({
+              name: m.authorName,
+              text: m.text,
+              photo: m.authorPhoto || undefined,
+              color: m.isModerator ? "#34d399" : m.isMember ? "#a78bfa" : undefined,
+              ts: receiveTs,
+            }));
+            const CHAT_BURN_MAX = 20;
+            const currentMessages = getCurrentOverlayState().chatBurnMessages ?? [];
+            const accumulated = [...currentMessages, ...incoming].slice(-CHAT_BURN_MAX);
+            const currentState = getCurrentOverlayState();
+            if (!currentState.chatBurnActive) {
+              logger.info({ streamId, newMessages: incoming.length }, "[chat-burn] New chat messages received but chatBurnActive=false — enable via Chat tab to show overlay");
+            } else {
+              logger.info({ streamId, newMessages: incoming.length, totalInWindow: accumulated.length }, "[chat-burn] Dispatching chat burn messages to overlay");
+            }
+            updateStreamOverlays({ chatBurnMessages: accumulated });
+          }
+        }
+      } catch (e) {
+        logger.warn({ streamId, err: e }, "Chat poll error");
+      }
+      // Re-schedule using the interval YouTube told us (or default)
+      const next = chatPollingIntervals.get(chatId) ?? DEFAULT_CHAT_POLL_MS;
+      scheduleChatPoll(chatId, streamId, next);
+    })();
+  }, delayMs);
+};
+
+// Seed: kick off a poll per active stream. Skips chatIds already being polled
+// to prevent duplicate recursive chains from accumulating over time.
+// Exported so primeLiveDetection() can trigger it immediately once a liveChatId
+// is resolved, instead of waiting for the ambient 30 s re-seed interval.
+export const seedChatPollers = () => {
+  const streams = storage.getStreams();
+  for (const stream of streams) {
+    if (!stream.youtubeChannelId) continue;
+    const chatId = statsCache.get(stream.youtubeChannelId)?.liveChatId;
+    if (!chatId) continue;
+    if (activeChatPollers.has(chatId)) continue; // already running — skip
+    logger.info({ streamId: stream.id, chatId }, "[chat] Starting chat poller for stream");
+    scheduleChatPoll(chatId, stream.id, 0); // start immediately (delay=0)
+  }
+};
+
+/**
+ * Called right when a stream goes live (GO LIVE). Subscriber count works via
+ * channels.list regardless of live status, so it's already cached from the
+ * ambient poller and shows up instantly. Viewers + chat, however, depend on
+ * YouTube's search.list resolving the *active live video* — which is throttled
+ * to once every 30 min per channel (SEARCH_INTERVAL_MS) to conserve quota.
+ * If that last search happened before the broadcast went live, viewers/chat
+ * would otherwise stay blank for up to 30 minutes.
+ *
+ * This forces a fresh search.list lookup right away and retries a few times
+ * with backoff (YouTube can take a few seconds to mark a broadcast "live"),
+ * broadcasting stats + kicking off the chat poller as soon as it resolves.
+ */
+export function primeLiveDetection(streamId: string, channelId: string | null | undefined): void {
+  if (!channelId) return;
+
+  // Bypass the 30-min search throttle so search.list runs again immediately.
+  lastSearchAt.delete(channelId);
+  cachedVideoIds.delete(channelId);
+
+  const retryDelaysMs = [0, 4_000, 9_000, 15_000, 25_000, 40_000];
+  let attempt = 0;
+
+  const attemptFetch = async () => {
+    try {
+      const stats = await fetchChannelStats(channelId);
+      const streamsForChannel = storage.getStreams().filter((s) => s.youtubeChannelId === channelId);
+      for (const s of streamsForChannel) {
+        broadcastStream(s.id, "stats", {
+          subs: stats.subs,
+          viewers: stats.viewers,
+          hasChat: !!stats.liveChatId,
+          error: stats.error ?? null,
+        });
+      }
+      updateStreamOverlays({ subs: stats.subs, viewers: stats.viewers });
+
+      if (stats.liveChatId) {
+        logger.info(
+          { streamId, chatId: stats.liveChatId, attempt },
+          "[youtube] Live video detected after GO LIVE — starting chat/viewer updates immediately"
+        );
+        seedChatPollers();
+        return; // found it — stop retrying
+      }
+    } catch (e) {
+      logger.warn({ streamId, channelId, err: e }, "[youtube] primeLiveDetection fetch error");
+    }
+
+    attempt++;
+    if (attempt < retryDelaysMs.length) {
+      setTimeout(attemptFetch, retryDelaysMs[attempt]);
+    } else {
+      logger.info(
+        { streamId, channelId },
+        "[youtube] Live video not detected yet after GO LIVE retries — will pick up on next 60s ambient poll"
+      );
+    }
+  };
+
+  attemptFetch();
+}
+
 export function startLiveCountPolling() {
   if (pollingInterval) return;
 
@@ -496,87 +645,8 @@ export function startLiveCountPolling() {
     }
   }, 10_000);
 
-  // setTimeout-based recursive poller — respects YouTube's pollingIntervalMillis.
-  // activeChatPollers guards against duplicate chains: seedChatPollers runs every
-  // 30 s but must NOT spawn a second chain for a chatId that already has one.
-  const scheduleChatPoll = (chatId: string, streamId: string, delayMs: number) => {
-    // Exit if global polling was stopped
-    if (!chatInterval) { activeChatPollers.delete(chatId); return; }
-    // Exit if this chatId was removed from active pollers (e.g. stream stopped)
-    if (!activeChatPollers.has(chatId) && delayMs > 0) return;
-    activeChatPollers.add(chatId);
-    setTimeout(() => {
-      if (!chatInterval) { activeChatPollers.delete(chatId); return; }
-      // Guard: if the chatId was cleared by clearStreamChatState, exit the chain.
-      if (!activeChatPollers.has(chatId)) return;
-      (async () => {
-        try {
-          // Guard: skip broadcast/overlay update if the stream is no longer active.
-          // Prevents stale pollers from re-injecting chat after stopStream().
-          const streamStatus = storage.getStream(streamId)?.status;
-          if (!streamStatus || streamStatus === "idle" || streamStatus === "error") {
-            activeChatPollers.delete(chatId);
-            logger.info({ streamId, chatId }, "[chat] Stream idle — stopping chat poller chain");
-            return;
-          }
-
-          const messages = await fetchLiveChat(streamId, chatId);
-          if (messages.length > 0) {
-            broadcastStream(streamId, "chat", messages);
-            logger.info({ streamId, chatId, count: messages.length }, "[chat] Broadcast chat messages via WebSocket");
-
-            if (!burnSentMessageIds.has(streamId)) burnSentMessageIds.set(streamId, new Set());
-            const sentIds = burnSentMessageIds.get(streamId)!;
-            const newBurnMsgs = messages.filter((m) => !sentIds.has(m.id));
-            if (newBurnMsgs.length > 0) {
-              newBurnMsgs.forEach((m) => sentIds.add(m.id));
-              if (sentIds.size > 2000) {
-                const oldest = Array.from(sentIds).slice(0, 500);
-                oldest.forEach((id) => sentIds.delete(id));
-              }
-              const receiveTs = Date.now();
-              const incoming = newBurnMsgs.slice(-10).map((m) => ({
-                name: m.authorName,
-                text: m.text,
-                photo: m.authorPhoto || undefined,
-                color: m.isModerator ? "#34d399" : m.isMember ? "#a78bfa" : undefined,
-                ts: receiveTs,
-              }));
-              const CHAT_BURN_MAX = 20;
-              const currentMessages = getCurrentOverlayState().chatBurnMessages ?? [];
-              const accumulated = [...currentMessages, ...incoming].slice(-CHAT_BURN_MAX);
-              const currentState = getCurrentOverlayState();
-              if (!currentState.chatBurnActive) {
-                logger.info({ streamId, newMessages: incoming.length }, "[chat-burn] New chat messages received but chatBurnActive=false — enable via Chat tab to show overlay");
-              } else {
-                logger.info({ streamId, newMessages: incoming.length, totalInWindow: accumulated.length }, "[chat-burn] Dispatching chat burn messages to overlay");
-              }
-              updateStreamOverlays({ chatBurnMessages: accumulated });
-            }
-          }
-        } catch (e) {
-          logger.warn({ streamId, err: e }, "Chat poll error");
-        }
-        // Re-schedule using the interval YouTube told us (or default)
-        const next = chatPollingIntervals.get(chatId) ?? DEFAULT_CHAT_POLL_MS;
-        scheduleChatPoll(chatId, streamId, next);
-      })();
-    }, delayMs);
-  };
-
-  // Seed: kick off a poll per active stream. Skips chatIds already being polled
-  // to prevent duplicate recursive chains from accumulating over time.
-  const seedChatPollers = () => {
-    const streams = storage.getStreams();
-    for (const stream of streams) {
-      if (!stream.youtubeChannelId) continue;
-      const chatId = statsCache.get(stream.youtubeChannelId)?.liveChatId;
-      if (!chatId) continue;
-      if (activeChatPollers.has(chatId)) continue; // already running — skip
-      logger.info({ streamId: stream.id, chatId }, "[chat] Starting chat poller for stream");
-      scheduleChatPoll(chatId, stream.id, 0); // start immediately (delay=0)
-    }
-  };
+  // scheduleChatPoll / seedChatPollers are module-scope functions (defined above
+  // startLiveCountPolling) so primeLiveDetection() can also trigger them immediately.
   seedChatPollers();
 
   // Re-seed every 30 s to pick up newly added streams / newly resolved chatIds

@@ -1,7 +1,7 @@
 import { ChildProcess, spawn, exec } from "child_process";
 import { storage } from "./storage";
 import { logger } from "./lib/logger";
-import { getLiveStats, clearStreamChatState } from "./youtube-counter";
+import { getLiveStats, clearStreamChatState, primeLiveDetection } from "./youtube-counter";
 import { getYouTubeStreamUrl, getYouTubeVideoDirectUrl, downloadYouTubeVideoToTemp, clearYtDownloadCache, normaliseYouTubeUrl, getYouTubeFFmpegCookieHeader } from "./youtube-source";
 import { YTDLP_BIN } from "./lib/ytdlp";
 import type { WebSocket } from "ws";
@@ -1847,6 +1847,16 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       stdio: ["pipe", "pipe", "pipe", "pipe", "pipe", "pipe", "pipe"],
       env: { ...process.env },
     });
+
+    // Subscriber count is fetched via channels.list which works regardless of
+    // live status, so it's already cached and shows up instantly. Viewers +
+    // chat require YouTube to resolve the *active live video* (search.list),
+    // which is throttled to once every 30 min to save quota. Force a fresh
+    // lookup right now (with retries) so viewers/chat appear within seconds
+    // of GO LIVE instead of waiting on the next ambient poll cycle.
+    if (stream.youtubeChannelId) {
+      primeLiveDetection(streamId, stream.youtubeChannelId);
+    }
 
     const isVertical = stream.ratio === "mobile";
     const _ovBest = stream.quality === "best";
