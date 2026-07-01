@@ -79,6 +79,7 @@ import {
   checkYouTubeStreamHealth,
   getCookiesConfigured as getYTCookiesConfigured,
 } from "./youtube-source";
+import { initNewsOverlay, newsOverlayRouter } from "./news-overlay/index.js";
 
 interface BroadcastState {
   newsActive: boolean;
@@ -2455,6 +2456,10 @@ export async function registerBintunetRoutes(
     if (streamId) paymentSessions.delete(streamId);
     res.json({ ok: true });
   });
+
+  // ── News Overlay module ────────────────────────────────────────────────────
+  initNewsOverlay(broadcastGlobal);
+  app.use("/api/news-overlay", requireAuth, newsOverlayRouter);
 
   // ── Stream manager: health scorer + failover init ─────────────────────────
   initStreamManager();

@@ -1,364 +1,758 @@
-import { useState, useEffect, useRef } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Newspaper, Play, Square, RotateCcw, ChevronLeft, ChevronRight } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { getAuthToken } from "@/lib/queryClient";
 
-const STYLE_NAMES = ["Ticker", "Breaking", "Lower Third", "Spotlight", "Crawl"] as const;
-type NewsStyle = typeof STYLE_NAMES[number];
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-const DEFAULT_HEADLINES = [
-  "Welcome to the live stream!",
-  "Stay tuned for more updates",
-  "Thanks for watching!",
-];
+type ThemeName =
+  | "CNN" | "BBC" | "Bloomberg" | "Fox" | "Sky News" | "Al Jazeera" | "CNBC"
+  | "Dark" | "Glass" | "Modern" | "Minimal" | "Election";
 
-function TickerOverlay({ text, active }: { text: string; active: boolean }) {
-  return (
-    <div
-      style={{
-        position: "relative",
-        overflow: "hidden",
-        borderRadius: 10,
-        background: "linear-gradient(90deg, #1a1a2e 0%, #16213e 100%)",
-        border: "1px solid rgba(255,255,255,0.08)",
-        height: 52,
-        display: "flex",
-        alignItems: "center",
-      }}
-    >
-      <div
-        style={{
-          background: "#e53e3e",
-          color: "#fff",
-          fontWeight: 800,
-          fontSize: 11,
-          letterSpacing: "0.08em",
-          padding: "0 14px",
-          height: "100%",
-          display: "flex",
-          alignItems: "center",
-          flexShrink: 0,
-          textTransform: "uppercase",
-          gap: 6,
-        }}
-      >
-        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#fff", display: active ? "block" : "none", animation: active ? "pulse 1.2s infinite" : "none" }} />
-        LIVE
-      </div>
-      <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-        {active ? (
-          <div
-            style={{
-              display: "inline-block",
-              whiteSpace: "nowrap",
-              color: "#fff",
-              fontSize: 13,
-              fontWeight: 600,
-              animation: "ticker-scroll 18s linear infinite",
-              paddingLeft: "100%",
-            }}
-          >
-            {text}
-            &nbsp;&nbsp;&nbsp;•&nbsp;&nbsp;&nbsp;
-            {text}
-          </div>
-        ) : (
-          <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 12, padding: "0 16px" }}>Preview — press Play to activate</div>
-        )}
-      </div>
-      <style>{`
-        @keyframes ticker-scroll {
-          0% { transform: translateX(0); }
-          100% { transform: translateX(-50%); }
-        }
-        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
-      `}</style>
-    </div>
-  );
+type AnimationPreset =
+  | "None" | "Slide Left" | "Slide Right" | "Slide Up" | "Slide Down"
+  | "Fade" | "Zoom" | "Elastic" | "Bounce" | "Flip"
+  | "Typewriter" | "Blur" | "Glitch" | "Pulse" | "Flash";
+
+type TickerStyle =
+  | "CNN" | "BBC" | "Bloomberg" | "Fox" | "Sky News" | "CNBC"
+  | "Al Jazeera" | "Modern" | "Minimal" | "Glass" | "Election";
+
+interface TickerMessage {
+  id: string;
+  text: string;
+  priority: number;
+  addedAt: number;
+  expiresAt?: number;
 }
 
-function BreakingOverlay({ text, active }: { text: string; active: boolean }) {
-  const [flash, setFlash] = useState(false);
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => setFlash((v) => !v), 800);
-    return () => clearInterval(t);
-  }, [active]);
-
-  return (
-    <div
-      style={{
-        borderRadius: 10,
-        background: active
-          ? `linear-gradient(135deg, ${flash ? "#7c1010" : "#c53030"} 0%, #1a1a2e 100%)`
-          : "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)",
-        border: `1px solid ${active ? (flash ? "#fc8181" : "#e53e3e") : "rgba(255,255,255,0.08)"}`,
-        padding: "14px 20px",
-        transition: "all 0.4s ease",
-        overflow: "hidden",
-        position: "relative",
-      }}
-    >
-      {active && (
-        <div style={{
-          position: "absolute", inset: 0, background: "radial-gradient(ellipse at center, rgba(229,62,62,0.15) 0%, transparent 70%)",
-          animation: "pulse-bg 1.6s ease-in-out infinite",
-        }} />
-      )}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
-        <div style={{
-          background: "#e53e3e", color: "#fff", fontSize: 9, fontWeight: 900,
-          padding: "3px 8px", borderRadius: 4, letterSpacing: "0.12em", textTransform: "uppercase",
-          animation: active ? "breaking-flash 1.6s ease-in-out infinite" : "none",
-        }}>
-          ⚡ BREAKING
-        </div>
-        <span style={{ color: active ? "#fff" : "rgba(255,255,255,0.4)", fontSize: 14, fontWeight: 700, flex: 1 }}>
-          {active ? text : "Preview — press Play"}
-        </span>
-      </div>
-      <style>{`
-        @keyframes breaking-flash { 0%,100%{opacity:1;} 50%{opacity:0.5;} }
-        @keyframes pulse-bg { 0%,100%{opacity:0.5;} 50%{opacity:1;} }
-      `}</style>
-    </div>
-  );
+interface NewsOverlayState {
+  active: boolean;
+  theme: ThemeName;
+  customColors: {
+    primary: string;
+    secondary: string;
+    background: string;
+    text: string;
+    badge: string;
+    badgeText: string;
+  };
+  customFont: { family: string; size: number; weight: number; letterSpacing: number };
+  customBorder: { width: number; color: string; radius: number };
+  customShadow: { enabled: boolean; color: string; blur: number; x: number; y: number };
+  opacity: number;
+  layout: { position: { x: number; y: number }; width: number; height: number; zIndex: number };
+  logo: string;
+  logoUrl: string;
+  liveBadge: { visible: boolean; label: string; pulse: boolean; color: string };
+  headline: {
+    text: string;
+    animation: AnimationPreset;
+    durationMs: number;
+    autoRotate: boolean;
+    headlines: string[];
+    currentIndex: number;
+  };
+  breakingNews: { active: boolean; text: string; flashInterval: number; overridesTicker: boolean };
+  ticker: { style: TickerStyle; direction: "left" | "right"; speed: number; paused: boolean; separator: string };
+  tickerMessages: TickerMessage[];
+  widgets: Array<{ id: string; type: string; enabled: boolean; position: { x: number; y: number }; settings: Record<string, unknown> }>;
+  enterAnimation: AnimationPreset;
+  exitAnimation: AnimationPreset;
+  animationDurationMs: number;
 }
 
-function LowerThirdOverlay({ text, active }: { text: string; active: boolean }) {
+interface NewsOverlayPreset {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: number;
+  updatedAt: number;
+  state: Partial<NewsOverlayState>;
+}
+
+// ── API helpers ────────────────────────────────────────────────────────────────
+
+function authHeaders(): Record<string, string> {
+  const token = getAuthToken();
+  return token ? { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+}
+
+async function apiFetch(path: string, opts?: RequestInit) {
+  const res = await fetch(`/api/news-overlay${path}`, {
+    credentials: "include",
+    headers: authHeaders(),
+    ...opts,
+  });
+  if (!res.ok) throw new Error(`API ${path}: ${res.status}`);
+  return res.json();
+}
+
+async function apiPatch(path: string, body: unknown) {
+  return apiFetch(path, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+async function apiPost(path: string, body?: unknown) {
+  return apiFetch(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
+}
+
+async function apiDelete(path: string) {
+  const res = await fetch(`/api/news-overlay${path}`, {
+    method: "DELETE", credentials: "include", headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`DELETE ${path}: ${res.status}`);
+  return res.json();
+}
+
+// ── Live preview ───────────────────────────────────────────────────────────────
+
+function TickerScroll({ text, speed = 30, color = "#fff", fontSize = 13, fontWeight = 600, separator = "   ◆   " }: {
+  text: string; speed?: number; color?: string; fontSize?: number; fontWeight?: number; separator?: string;
+}) {
+  const chunk = `${text}${separator}${text}${separator}`;
+  const dur = Math.max(8, speed * 0.8);
   return (
-    <div
-      style={{
-        borderRadius: 10,
-        background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)",
-        border: "1px solid rgba(255,255,255,0.08)",
-        padding: 16,
-        position: "relative",
-        overflow: "hidden",
-      }}
-    >
-      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>Lower Third Preview</div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "stretch",
-          gap: 0,
-          overflow: "hidden",
-          borderRadius: 6,
-          transform: active ? "translateY(0)" : "translateY(16px)",
-          opacity: active ? 1 : 0.3,
-          transition: "all 0.5s cubic-bezier(0.34,1.56,0.64,1)",
-        }}
-      >
-        <div style={{ width: 5, background: "linear-gradient(180deg, #667eea 0%, #764ba2 100%)", flexShrink: 0 }} />
-        <div style={{ background: "rgba(0,0,0,0.85)", padding: "10px 14px", flex: 1 }}>
-          <div style={{ color: "#fff", fontSize: 14, fontWeight: 800 }}>{active ? text : "Your headline here"}</div>
-          <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, marginTop: 2 }}>BintuNet Live</div>
+    <>
+      <style>{`@keyframes no-tick{from{transform:translateX(0)}to{transform:translateX(-50%)}}`}</style>
+      <div style={{ overflow: "hidden", flex: 1, display: "flex", alignItems: "center", minWidth: 0 }}>
+        <div style={{ display: "flex", flexShrink: 0, animation: `no-tick ${dur}s linear infinite`, willChange: "transform" }}>
+          <span style={{ whiteSpace: "nowrap", paddingRight: 60, fontSize, fontWeight, color }}>{chunk}</span>
+          <span style={{ whiteSpace: "nowrap", paddingRight: 60, fontSize, fontWeight, color }}>{chunk}</span>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
-function SpotlightOverlay({ text, active }: { text: string; active: boolean }) {
-  return (
-    <div
-      style={{
-        borderRadius: 10,
-        background: "linear-gradient(135deg, #0d0d1a 0%, #1a1a2e 100%)",
-        border: "1px solid rgba(255,255,255,0.08)",
-        padding: 20,
-        textAlign: "center",
-        position: "relative",
-        overflow: "hidden",
-        minHeight: 80,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      {active && (
-        <div style={{
-          position: "absolute",
-          width: 300, height: 300,
-          background: "radial-gradient(circle, rgba(102,126,234,0.25) 0%, transparent 70%)",
-          top: "50%", left: "50%",
-          transform: "translate(-50%,-50%)",
-          animation: "spotlight-pulse 3s ease-in-out infinite",
-        }} />
-      )}
-      <div
-        style={{
-          position: "relative",
-          color: active ? "#fff" : "rgba(255,255,255,0.3)",
-          fontSize: 16,
-          fontWeight: 800,
-          letterSpacing: "0.02em",
-          opacity: active ? 1 : 0.4,
-          transition: "all 0.6s ease",
-          textShadow: active ? "0 0 30px rgba(102,126,234,0.8)" : "none",
-          animation: active ? "spotlight-text 3s ease-in-out infinite" : "none",
-        }}
-      >
-        {active ? text : "Preview — press Play"}
+function LivePreview({ state }: { state: NewsOverlayState }) {
+  const c = state.customColors.primary;
+  const bg = state.customColors.background;
+  const text = state.headline.text || "Preview headline…";
+  const tickerText = state.tickerMessages.map(m => m.text).join("   ◆   ") || text;
+  const speed = state.ticker.speed;
+
+  const previewMap: Record<ThemeName, React.ReactNode> = {
+    "Al Jazeera": (
+      <div style={{ display: "flex", alignItems: "stretch", height: 44, background: "#000", borderTop: `3px solid ${c}` }}>
+        <div style={{ display: "flex", alignItems: "center", padding: "0 12px", gap: 8, flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.1)", minWidth: 70, justifyContent: "center" }}>
+          {state.logo ? <img src={state.logo} alt="" style={{ height: 26, maxWidth: 54, objectFit: "contain" }} /> : <span style={{ fontSize: 10, fontWeight: 900, color: "#fff" }}>{state.liveBadge.label || "LIVE"}</span>}
+        </div>
+        <div style={{ background: c, display: "flex", alignItems: "center", padding: "0 10px", gap: 5, flexShrink: 0 }}>
+          <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#fff" }} />
+          <span style={{ color: "#fff", fontWeight: 900, fontSize: 9, letterSpacing: "0.08em" }}>LIVE</span>
+        </div>
+        <TickerScroll text={tickerText} speed={speed} color="#fff" />
       </div>
-      <style>{`
-        @keyframes spotlight-pulse { 0%,100%{transform:translate(-50%,-50%) scale(1);opacity:0.5;} 50%{transform:translate(-50%,-50%) scale(1.3);opacity:1;} }
-        @keyframes spotlight-text { 0%,100%{text-shadow:0 0 20px rgba(102,126,234,0.6);} 50%{text-shadow:0 0 40px rgba(102,126,234,1), 0 0 80px rgba(102,126,234,0.4);} }
-      `}</style>
-    </div>
-  );
-}
-
-function CrawlOverlay({ headlines, active }: { headlines: string[]; active: boolean }) {
-  const [idx, setIdx] = useState(0);
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => setIdx((v) => (v + 1) % headlines.length), 3500);
-    return () => clearInterval(t);
-  }, [active, headlines.length]);
-  return (
-    <div
-      style={{
-        borderRadius: 10,
-        background: "linear-gradient(135deg, #0a0a1a 0%, #1a1a2e 100%)",
-        border: "1px solid rgba(255,255,255,0.08)",
-        padding: 16,
-        position: "relative",
-        overflow: "hidden",
-      }}
-    >
-      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 10 }}>News Crawl Preview</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {headlines.map((h, i) => (
-          <div
-            key={i}
-            style={{
-              display: "flex", alignItems: "center", gap: 10,
-              padding: "7px 12px",
-              borderRadius: 6,
-              background: active && i === idx ? "rgba(102,126,234,0.15)" : "rgba(255,255,255,0.03)",
-              border: `1px solid ${active && i === idx ? "rgba(102,126,234,0.4)" : "rgba(255,255,255,0.06)"}`,
-              transition: "all 0.4s ease",
-              transform: active && i === idx ? "translateX(4px)" : "translateX(0)",
-            }}
-          >
-            <div style={{
-              width: 6, height: 6, borderRadius: "50%",
-              background: active && i === idx ? "#667eea" : "rgba(255,255,255,0.2)",
-              flexShrink: 0,
-              transition: "background 0.3s ease",
-            }} />
-            <span style={{ color: active && i === idx ? "#fff" : "rgba(255,255,255,0.4)", fontSize: 12, fontWeight: active && i === idx ? 600 : 400, transition: "all 0.3s ease" }}>
-              {h}
-            </span>
-          </div>
-        ))}
+    ),
+    "CNN": (
+      <div style={{ display: "flex", alignItems: "stretch", height: 44, background: "#0d0d0d" }}>
+        <div style={{ background: "#000", borderLeft: `4px solid ${c}`, display: "flex", alignItems: "center", padding: "0 12px", flexShrink: 0, gap: 6, minWidth: 60 }}>
+          {state.logo ? <img src={state.logo} alt="" style={{ height: 22, objectFit: "contain" }} /> : <span style={{ color: "#fff", fontWeight: 900, fontSize: 14 }}>CNN</span>}
+        </div>
+        <div style={{ background: c, display: "flex", alignItems: "center", padding: "0 10px", flexShrink: 0 }}>
+          <span style={{ color: "#fff", fontWeight: 900, fontSize: 9, letterSpacing: "0.1em" }}>⚡ BREAKING</span>
+        </div>
+        <TickerScroll text={tickerText} speed={speed} color="#f0f0f0" />
       </div>
-    </div>
-  );
-}
-
-export function NewsPanel({ activeStreamCount }: { activeStreamCount: number }) {
-  const [styleIdx, setStyleIdx] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [headline, setHeadline] = useState("Welcome to the live stream! Stay tuned for amazing content.");
-  const [headlines, setHeadlines] = useState<string[]>(DEFAULT_HEADLINES);
-
-  const currentStyle = STYLE_NAMES[styleIdx];
-
-  const renderPreview = () => {
-    switch (currentStyle) {
-      case "Ticker": return <TickerOverlay text={headline} active={playing} />;
-      case "Breaking": return <BreakingOverlay text={headline} active={playing} />;
-      case "Lower Third": return <LowerThirdOverlay text={headline} active={playing} />;
-      case "Spotlight": return <SpotlightOverlay text={headline} active={playing} />;
-      case "Crawl": return <CrawlOverlay headlines={headlines} active={playing} />;
-    }
+    ),
+    "BBC": (
+      <div style={{ display: "flex", alignItems: "stretch", height: 48, background: "#1a1a2e" }}>
+        <div style={{ background: c, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 14px", flexShrink: 0 }}>
+          {state.logo ? <img src={state.logo} alt="" style={{ height: 24, objectFit: "contain" }} /> : <span style={{ color: "#fff", fontWeight: 900, fontSize: 14, fontFamily: "Georgia, serif" }}>BBC</span>}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: "0 12px", flex: 1, overflow: "hidden", gap: 2 }}>
+          <div style={{ fontSize: 9, color: c, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>Live Coverage</div>
+          <TickerScroll text={tickerText} speed={speed} color="#fff" fontWeight={700} separator="  ·  " />
+        </div>
+      </div>
+    ),
+    "Bloomberg": (
+      <div style={{ display: "flex", alignItems: "stretch", height: 40, background: "#0c0c0c", borderTop: `2px solid ${c}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px", flexShrink: 0, borderRight: `1px solid ${c}30` }}>
+          <span style={{ color: c, fontWeight: 700, fontSize: 11, fontFamily: "monospace" }}>{state.liveBadge.label || "MARKETS"}</span>
+        </div>
+        <TickerScroll text={tickerText} speed={speed} color="rgba(255,255,255,0.88)" fontWeight={500} separator="  |  " />
+      </div>
+    ),
+    "Fox": (
+      <div style={{ display: "flex", alignItems: "stretch", height: 44, background: "#000033", borderTop: `3px solid ${c}` }}>
+        <div style={{ background: c, display: "flex", alignItems: "center", padding: "0 12px", flexShrink: 0 }}>
+          <span style={{ color: "#fff", fontWeight: 900, fontSize: 10, letterSpacing: "0.1em" }}>FOX NEWS ALERT</span>
+        </div>
+        <TickerScroll text={tickerText} speed={speed} color="#fff" fontWeight={800} />
+      </div>
+    ),
+    "Sky News": (
+      <div style={{ display: "flex", alignItems: "stretch", height: 44 }}>
+        <div style={{ background: `linear-gradient(135deg, ${c} 0%, #0369a1 100%)`, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 14px", flexShrink: 0, minWidth: 80 }}>
+          {state.logo ? <img src={state.logo} alt="" style={{ height: 24, objectFit: "contain" }} /> : <span style={{ color: "#fff", fontWeight: 900, fontSize: 11 }}>SKY NEWS</span>}
+        </div>
+        <div style={{ flex: 1, background: "rgba(0,0,0,0.92)", display: "flex", alignItems: "center", borderTop: `2px solid ${c}` }}>
+          <TickerScroll text={tickerText} speed={speed} color="#fff" />
+        </div>
+      </div>
+    ),
+    "CNBC": (
+      <div style={{ display: "flex", alignItems: "stretch", height: 44, background: "#000022", borderTop: `2px solid ${c}` }}>
+        <div style={{ background: c, display: "flex", alignItems: "center", padding: "0 14px", flexShrink: 0 }}>
+          <span style={{ color: "#fff", fontWeight: 900, fontSize: 12 }}>CNBC</span>
+        </div>
+        <TickerScroll text={tickerText} speed={speed} color="#fff" fontWeight={700} />
+      </div>
+    ),
+    "Dark": (
+      <div style={{ display: "flex", alignItems: "stretch", height: 44, background: "rgba(10,10,20,0.97)", border: `1px solid rgba(99,102,241,0.4)` }}>
+        <div style={{ background: "rgba(99,102,241,0.2)", display: "flex", alignItems: "center", padding: "0 12px", flexShrink: 0 }}>
+          <span style={{ color: "#a5b4fc", fontWeight: 700, fontSize: 10, letterSpacing: "0.08em" }}>{state.liveBadge.label}</span>
+        </div>
+        <TickerScroll text={tickerText} speed={speed} color="rgba(255,255,255,0.9)" />
+      </div>
+    ),
+    "Glass": (
+      <div style={{ display: "flex", alignItems: "stretch", height: 44, background: "rgba(255,255,255,0.08)", backdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 8, overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", padding: "0 12px", flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.1)" }}>
+          <span style={{ color: "#fff", fontWeight: 800, fontSize: 11 }}>{state.liveBadge.label}</span>
+        </div>
+        <div style={{ width: 3, background: `linear-gradient(180deg, ${c}, ${c}80)`, flexShrink: 0 }} />
+        <TickerScroll text={tickerText} speed={speed} color="rgba(255,255,255,0.92)" />
+      </div>
+    ),
+    "Modern": (
+      <div style={{ display: "flex", alignItems: "stretch", height: 44, background: "rgba(0,4,16,0.97)", borderTop: `2px solid ${c}`, boxShadow: `0 -4px 16px ${c}30` }}>
+        <div style={{ display: "flex", alignItems: "center", padding: "0 12px", flexShrink: 0, borderRight: `1px solid ${c}30` }}>
+          <span style={{ color: c, fontWeight: 900, fontSize: 10, letterSpacing: "0.1em", fontFamily: "monospace" }}>WIRE</span>
+        </div>
+        <TickerScroll text={tickerText} speed={speed} color={c} />
+      </div>
+    ),
+    "Minimal": (
+      <div style={{ display: "flex", alignItems: "center", height: 38, background: "rgba(0,0,0,0.88)", borderTop: "1px solid rgba(255,255,255,0.1)", gap: 12, padding: "0 14px" }}>
+        {state.liveBadge.visible && <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.1)", paddingRight: 10 }}>{state.liveBadge.label}</span>}
+        <TickerScroll text={tickerText} speed={speed} color="#fff" fontWeight={400} separator="   ·   " />
+      </div>
+    ),
+    "Election": (
+      <div style={{ display: "flex", alignItems: "stretch", height: 48, background: "#0f172a", borderTop: `3px solid ${c}`, boxShadow: `0 -4px 20px rgba(239,68,68,0.3)` }}>
+        <div style={{ background: c, display: "flex", alignItems: "center", padding: "0 14px", flexShrink: 0 }}>
+          <span style={{ color: "#fff", fontWeight: 900, fontSize: 9, letterSpacing: "0.12em" }}>ELECTION NIGHT</span>
+        </div>
+        <TickerScroll text={tickerText} speed={speed} color="#f8fafc" fontWeight={800} separator="  ★  " />
+      </div>
+    ),
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-        <div style={{ display: "flex", gap: 6 }}>
-          {STYLE_NAMES.map((name, i) => (
-            <button
-              key={name}
-              onClick={() => { setStyleIdx(i); setPlaying(false); }}
-              style={{
-                padding: "4px 12px",
-                borderRadius: 20,
-                border: `1px solid ${styleIdx === i ? "#667eea" : "rgba(255,255,255,0.12)"}`,
-                background: styleIdx === i ? "rgba(102,126,234,0.2)" : "transparent",
-                color: styleIdx === i ? "#a5b4fc" : "rgba(255,255,255,0.5)",
-                fontSize: 11,
-                fontWeight: 600,
-                cursor: "pointer",
-                transition: "all 0.2s ease",
-              }}
-            >
-              {name}
-            </button>
-          ))}
-        </div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <button
-            onClick={() => setPlaying((v) => !v)}
-            style={{
-              display: "flex", alignItems: "center", gap: 6,
-              padding: "5px 14px", borderRadius: 8,
-              border: `1px solid ${playing ? "#e53e3e" : "#48bb78"}`,
-              background: playing ? "rgba(229,62,62,0.15)" : "rgba(72,187,120,0.15)",
-              color: playing ? "#fc8181" : "#68d391",
-              fontSize: 11, fontWeight: 700, cursor: "pointer",
-              transition: "all 0.2s ease",
-            }}
-          >
-            {playing ? <><Square size={11} /> Stop</> : <><Play size={11} /> Activate</>}
-          </button>
-        </div>
+    <div style={{ borderRadius: 10, overflow: "hidden", border: "1px solid rgba(255,255,255,0.1)", background: "#111" }}>
+      <div style={{ padding: "6px 10px", fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.1em", background: "rgba(255,255,255,0.03)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+        Live Preview — {state.theme} {state.active && <span style={{ color: "#4ade80" }}>● ACTIVE</span>}
       </div>
-
-      <div style={{ display: "flex", gap: 10 }}>
-        {currentStyle !== "Crawl" && (
-          <input
-            value={headline}
-            onChange={(e) => setHeadline(e.target.value)}
-            placeholder="Enter news headline..."
-            style={{
-              flex: 1, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 8, padding: "7px 12px", color: "#fff", fontSize: 12, outline: "none",
-            }}
-          />
-        )}
-        {currentStyle === "Crawl" && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-            {headlines.map((h, i) => (
-              <input
-                key={i}
-                value={h}
-                onChange={(e) => setHeadlines((prev) => prev.map((x, j) => j === i ? e.target.value : x))}
-                style={{
-                  background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)",
-                  borderRadius: 8, padding: "6px 12px", color: "#fff", fontSize: 12, outline: "none",
-                }}
-              />
-            ))}
-          </div>
-        )}
+      <div style={{ background: "#000" }}>
+        {previewMap[state.theme] ?? previewMap["Al Jazeera"]}
       </div>
+    </div>
+  );
+}
 
-      <div>{renderPreview()}</div>
+// ── Breaking news flash animation ─────────────────────────────────────────────
 
-      {playing && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 8, background: "rgba(72,187,120,0.1)", border: "1px solid rgba(72,187,120,0.25)" }}>
-          <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#68d391", animation: "pulse 1.2s infinite" }} />
-          <span style={{ color: "#68d391", fontSize: 11, fontWeight: 600 }}>
-            {currentStyle} news overlay is ACTIVE on {activeStreamCount} stream{activeStreamCount !== 1 ? "s" : ""}
-          </span>
+function BreakingBadge({ active, text }: { active: boolean; text: string }) {
+  const [flash, setFlash] = useState(false);
+  useEffect(() => {
+    if (!active) { setFlash(false); return; }
+    const t = setInterval(() => setFlash(v => !v), 800);
+    return () => clearInterval(t);
+  }, [active]);
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8,
+      padding: "6px 12px", borderRadius: 8,
+      background: active ? (flash ? "rgba(220,38,38,0.2)" : "rgba(220,38,38,0.1)") : "rgba(255,255,255,0.04)",
+      border: `1px solid ${active ? (flash ? "rgba(220,38,38,0.6)" : "rgba(220,38,38,0.3)") : "rgba(255,255,255,0.08)"}`,
+      transition: "all 0.4s ease",
+    }}>
+      <div style={{ width: 8, height: 8, borderRadius: "50%", background: active ? "#ef4444" : "rgba(255,255,255,0.2)", flexShrink: 0, boxShadow: active ? "0 0 6px #ef4444" : "none" }} />
+      <span style={{ color: active ? "#fca5a5" : "rgba(255,255,255,0.3)", fontSize: 11, fontWeight: 700, flex: 1 }}>
+        {active ? text || "BREAKING NEWS" : "Breaking news inactive"}
+      </span>
+    </div>
+  );
+}
+
+// ── Section wrapper ───────────────────────────────────────────────────────────
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ padding: "10px 12px", borderRadius: 10, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ fontSize: 9, color: "rgba(255,255,255,0.32)", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>{label}</div>
+      {children}
+    </div>
+  );
+}
+
+// ── Pill selector ─────────────────────────────────────────────────────────────
+
+function PillSelect<T extends string>({ value, options, onChange, accent = "#667eea" }: {
+  value: T; options: T[] | readonly T[]; onChange: (v: T) => void; accent?: string;
+}) {
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+      {options.map(opt => (
+        <button key={opt} onClick={() => onChange(opt)} style={{
+          padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
+          border: `1px solid ${value === opt ? accent : "rgba(255,255,255,0.1)"}`,
+          background: value === opt ? `${accent}22` : "transparent",
+          color: value === opt ? accent : "rgba(255,255,255,0.45)",
+        }}>{opt}</button>
+      ))}
+    </div>
+  );
+}
+
+// ── Toggle ────────────────────────────────────────────────────────────────────
+
+function Toggle({ checked, onChange, label, accent = "#4ade80" }: {
+  checked: boolean; onChange: (v: boolean) => void; label?: string; accent?: string;
+}) {
+  return (
+    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+      <div onClick={() => onChange(!checked)} style={{
+        width: 34, height: 18, borderRadius: 9, background: checked ? accent : "rgba(255,255,255,0.12)",
+        position: "relative", transition: "background 0.2s", flexShrink: 0,
+      }}>
+        <div style={{
+          position: "absolute", top: 2, left: checked ? 16 : 2, width: 14, height: 14,
+          borderRadius: "50%", background: "#fff", transition: "left 0.2s",
+        }} />
+      </div>
+      {label && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{label}</span>}
+    </label>
+  );
+}
+
+// ── Slider ────────────────────────────────────────────────────────────────────
+
+function Slider({ value, min, max, onChange, label, accent = "#667eea" }: {
+  value: number; min: number; max: number; onChange: (v: number) => void; label?: string; accent?: string;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {label && (
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{label}</span>
+          <span style={{ fontSize: 10, color: accent, fontWeight: 600 }}>{value}</span>
         </div>
       )}
+      <input type="range" min={min} max={max} value={value}
+        onChange={e => onChange(Number(e.target.value))}
+        style={{ width: "100%", accentColor: accent, cursor: "pointer" }}
+      />
+    </div>
+  );
+}
+
+// ── Main NewPanel ─────────────────────────────────────────────────────────────
+
+export function NewsPanel({ activeStreamCount }: { activeStreamCount: number }) {
+  const [state, setState] = useState<NewsOverlayState | null>(null);
+  const [presets, setPresets] = useState<NewsOverlayPreset[]>([]);
+  const [capabilities, setCapabilities] = useState<{
+    themes: ThemeName[]; animations: AnimationPreset[];
+    widgetTypes: string[]; tickerStyles: TickerStyle[];
+  } | null>(null);
+  const [newMsg, setNewMsg] = useState("");
+  const [newMsgPriority, setNewMsgPriority] = useState(0);
+  const [newPresetName, setNewPresetName] = useState("");
+  const [tab, setTab] = useState<"ticker" | "headline" | "breaking" | "style" | "widgets" | "presets">("ticker");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const patchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Fetch initial state ────────────────────────────────────────────────────
+  useEffect(() => {
+    apiFetch("").then(setState).catch(e => setError(e.message));
+    apiFetch("/capabilities").then(setCapabilities).catch(() => {});
+    apiFetch("/presets").then(setPresets).catch(() => {});
+  }, []);
+
+  // ── WebSocket live updates ─────────────────────────────────────────────────
+  useEffect(() => {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "news-overlay" && msg.data) setState(msg.data);
+        if (msg.type === "news-overlay-ticker" && msg.data && state) {
+          setState(prev => prev ? { ...prev, tickerMessages: msg.data.messages, ticker: msg.data.config } : prev);
+        }
+      } catch {}
+    };
+    return () => ws.close();
+  }, []);
+
+  // ── Debounced patch helper ─────────────────────────────────────────────────
+  const patch = useCallback((body: Record<string, unknown>, debounceMs = 0) => {
+    if (!state) return;
+    const optimistic = { ...state, ...body } as NewsOverlayState;
+    setState(optimistic);
+    if (patchTimeout.current) clearTimeout(patchTimeout.current);
+    patchTimeout.current = setTimeout(() => {
+      setSaving(true);
+      apiPatch("", body).then(s => { setState(s); setSaving(false); }).catch(e => { setError(e.message); setSaving(false); });
+    }, debounceMs);
+  }, [state]);
+
+  const immediatePost = useCallback(async (path: string, body?: unknown) => {
+    setSaving(true);
+    try {
+      const s = await apiPost(path, body);
+      // Some endpoints return the full state, others return partial data
+      if (s && "active" in s) setState(s);
+      else apiFetch("").then(setState);
+    } catch (e: unknown) {
+      setError((e as Error).message);
+    } finally { setSaving(false); }
+  }, []);
+
+  if (!state) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 120, color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
+      {error ? `⚠ ${error}` : "Loading news overlay…"}
+    </div>
+  );
+
+  const THEMES: ThemeName[] = capabilities?.themes ?? [
+    "Al Jazeera", "CNN", "BBC", "Bloomberg", "Fox", "Sky News", "CNBC",
+    "Dark", "Glass", "Modern", "Minimal", "Election",
+  ];
+  const ANIMATIONS: AnimationPreset[] = capabilities?.animations ?? [
+    "None", "Fade", "Slide Up", "Slide Down", "Slide Left", "Slide Right",
+    "Zoom", "Elastic", "Bounce", "Flip", "Typewriter", "Blur", "Glitch", "Pulse", "Flash",
+  ];
+  const TICKER_STYLES: TickerStyle[] = capabilities?.tickerStyles ?? [
+    "Al Jazeera", "CNN", "BBC", "Bloomberg", "Fox", "Sky News", "CNBC",
+    "Modern", "Minimal", "Glass", "Election",
+  ];
+
+  const TABS = [
+    { id: "ticker" as const, label: "Ticker" },
+    { id: "headline" as const, label: "Headline" },
+    { id: "breaking" as const, label: "Breaking" },
+    { id: "style" as const, label: "Style" },
+    { id: "presets" as const, label: "Presets" },
+  ];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* ── Status bar ── */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button
+            onClick={() => immediatePost(state.active ? "/deactivate" : "/activate")}
+            style={{
+              display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer", transition: "all 0.2s",
+              border: `1px solid ${state.active ? "#ef4444" : "#4ade80"}`,
+              background: state.active ? "rgba(239,68,68,0.15)" : "rgba(74,222,128,0.12)",
+              color: state.active ? "#f87171" : "#4ade80",
+            }}
+          >
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: state.active ? "#ef4444" : "#4ade80", display: "block", animation: state.active ? "no-pulse 1.2s infinite" : "none" }} />
+            {state.active ? "Stop Overlay" : "Go Live"}
+          </button>
+          {saving && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", alignSelf: "center" }}>Saving…</span>}
+        </div>
+        {state.active && (
+          <span style={{ fontSize: 10, color: "#4ade80", fontWeight: 600 }}>
+            ● LIVE on {activeStreamCount} stream{activeStreamCount !== 1 ? "s" : ""}
+          </span>
+        )}
+      </div>
+
+      {/* ── Live preview ── */}
+      <LivePreview state={state} />
+
+      {/* ── Tab nav ── */}
+      <div style={{ display: "flex", gap: 4, borderBottom: "1px solid rgba(255,255,255,0.07)", paddingBottom: 4 }}>
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{
+            padding: "4px 10px", borderRadius: "6px 6px 0 0", fontSize: 10, fontWeight: 700, cursor: "pointer",
+            border: `1px solid ${tab === t.id ? "rgba(102,126,234,0.4)" : "transparent"}`,
+            borderBottom: tab === t.id ? "1px solid rgba(10,10,20,1)" : "1px solid transparent",
+            background: tab === t.id ? "rgba(102,126,234,0.12)" : "transparent",
+            color: tab === t.id ? "#a5b4fc" : "rgba(255,255,255,0.35)",
+          }}>{t.label}</button>
+        ))}
+      </div>
+
+      {/* ── TICKER TAB ── */}
+      {tab === "ticker" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <Section label="Ticker Style">
+            <PillSelect value={state.ticker.style} options={TICKER_STYLES} onChange={v => patch({ ticker: { ...state.ticker, style: v } })} />
+          </Section>
+
+          <Section label="Speed & Direction">
+            <Slider value={state.ticker.speed} min={5} max={80} onChange={v => patch({ ticker: { ...state.ticker, speed: v } }, 200)} label="Speed (lower = faster)" />
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <PillSelect value={state.ticker.direction} options={["left", "right"] as const} onChange={v => patch({ ticker: { ...state.ticker, direction: v } })} />
+              <Toggle checked={state.ticker.paused} onChange={v => patch({ ticker: { ...state.ticker, paused: v } })} label="Pause ticker" />
+            </div>
+          </Section>
+
+          <Section label="Ticker Messages">
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 160, overflowY: "auto" }}>
+              {state.tickerMessages.length === 0 && (
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", padding: "4px 0" }}>
+                  No messages — add one below. Leave empty to use the headline.
+                </div>
+              )}
+              {state.tickerMessages.map(msg => (
+                <div key={msg.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 7, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                  {msg.priority >= 100 && <span style={{ fontSize: 9, background: "#ef4444", color: "#fff", padding: "1px 5px", borderRadius: 4, flexShrink: 0, fontWeight: 700 }}>BREAKING</span>}
+                  {msg.priority > 0 && msg.priority < 100 && <span style={{ fontSize: 9, background: "#f59e0b", color: "#000", padding: "1px 5px", borderRadius: 4, flexShrink: 0, fontWeight: 700 }}>P{msg.priority}</span>}
+                  <span style={{ flex: 1, fontSize: 11, color: "rgba(255,255,255,0.75)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{msg.text}</span>
+                  <button onClick={async () => { await apiDelete(`/ticker/messages/${msg.id}`); apiFetch("").then(setState); }}
+                    style={{ fontSize: 10, color: "#f87171", background: "none", border: "none", cursor: "pointer", padding: "2px 4px", flexShrink: 0 }}>✕</button>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input value={newMsg} onChange={e => setNewMsg(e.target.value)}
+                placeholder="Add ticker message…"
+                onKeyDown={e => { if (e.key === "Enter" && newMsg.trim()) { apiPost("/ticker/messages", { text: newMsg, priority: newMsgPriority }).then(() => { setNewMsg(""); apiFetch("").then(setState); }); } }}
+                style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 7, padding: "6px 10px", color: "#fff", fontSize: 11, outline: "none" }}
+              />
+              <select value={newMsgPriority} onChange={e => setNewMsgPriority(Number(e.target.value))}
+                style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 7, color: "#fff", fontSize: 10, padding: "0 6px", cursor: "pointer" }}>
+                <option value={0}>Normal</option>
+                <option value={50}>High</option>
+                <option value={100}>Breaking</option>
+              </select>
+              <button onClick={() => { if (!newMsg.trim()) return; apiPost("/ticker/messages", { text: newMsg, priority: newMsgPriority }).then(() => { setNewMsg(""); apiFetch("").then(setState); }); }}
+                style={{ padding: "6px 12px", borderRadius: 7, background: "rgba(102,126,234,0.2)", border: "1px solid rgba(102,126,234,0.4)", color: "#a5b4fc", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+                Add
+              </button>
+            </div>
+            {state.tickerMessages.length > 0 && (
+              <button onClick={() => { apiDelete("/ticker/messages").then(() => apiFetch("").then(setState)); }}
+                style={{ fontSize: 10, color: "#f87171", background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 6, padding: "4px 10px", cursor: "pointer", alignSelf: "flex-start" }}>
+                Clear all messages
+              </button>
+            )}
+          </Section>
+        </div>
+      )}
+
+      {/* ── HEADLINE TAB ── */}
+      {tab === "headline" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <Section label="Headline Text">
+            <textarea
+              value={state.headline.text}
+              onChange={e => patch({ headline: { ...state.headline, text: e.target.value } }, 300)}
+              placeholder="Main headline shown in the overlay…"
+              rows={3}
+              style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: "8px 12px", color: "#fff", fontSize: 12, outline: "none", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }}
+            />
+          </Section>
+
+          <Section label="Headline Animation">
+            <PillSelect value={state.headline.animation} options={ANIMATIONS} onChange={v => patch({ headline: { ...state.headline, animation: v } })} />
+          </Section>
+
+          <Section label="Auto-Rotate Headlines">
+            <Toggle checked={state.headline.autoRotate} onChange={v => patch({ headline: { ...state.headline, autoRotate: v } })} label="Auto-rotate through headline queue" />
+            {state.headline.autoRotate && (
+              <Slider value={Math.round(state.headline.durationMs / 1000)} min={2} max={30}
+                onChange={v => patch({ headline: { ...state.headline, durationMs: v * 1000 } }, 200)}
+                label="Duration per headline (seconds)" accent="#667eea" />
+            )}
+          </Section>
+
+          <Section label="Headline Queue">
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {state.headline.headlines.map((h, i) => (
+                <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <div style={{ width: 16, height: 16, borderRadius: "50%", background: i === state.headline.currentIndex ? "#4ade80" : "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 8, color: i === state.headline.currentIndex ? "#000" : "rgba(255,255,255,0.4)", fontWeight: 800 }}>{i + 1}</div>
+                  <input value={h}
+                    onChange={e => {
+                      const updated = [...state.headline.headlines];
+                      updated[i] = e.target.value;
+                      patch({ headline: { ...state.headline, headlines: updated } }, 300);
+                    }}
+                    style={{ flex: 1, background: "rgba(255,255,255,0.04)", border: `1px solid ${i === state.headline.currentIndex ? "rgba(74,222,128,0.3)" : "rgba(255,255,255,0.08)"}`, borderRadius: 7, padding: "5px 9px", color: "#fff", fontSize: 11, outline: "none" }}
+                  />
+                  {state.headline.headlines.length > 1 && (
+                    <button onClick={() => {
+                      const updated = state.headline.headlines.filter((_, j) => j !== i);
+                      patch({ headline: { ...state.headline, headlines: updated, currentIndex: Math.min(state.headline.currentIndex, updated.length - 1) } });
+                    }} style={{ fontSize: 10, color: "#f87171", background: "none", border: "none", cursor: "pointer" }}>✕</button>
+                  )}
+                </div>
+              ))}
+              <button onClick={() => patch({ headline: { ...state.headline, headlines: [...state.headline.headlines, "New headline…"] } })}
+                style={{ fontSize: 10, color: "#a5b4fc", background: "rgba(102,126,234,0.06)", border: "1px dashed rgba(102,126,234,0.3)", borderRadius: 7, padding: "5px", cursor: "pointer" }}>
+                + Add headline
+              </button>
+            </div>
+          </Section>
+        </div>
+      )}
+
+      {/* ── BREAKING TAB ── */}
+      {tab === "breaking" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <BreakingBadge active={state.breakingNews.active} text={state.breakingNews.text} />
+
+          <Section label="Breaking News Text">
+            <input
+              value={state.breakingNews.text}
+              onChange={e => patch({ breakingNews: { ...state.breakingNews, text: e.target.value } }, 300)}
+              placeholder="Breaking news headline…"
+              style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: "8px 12px", color: "#fff", fontSize: 12, outline: "none", boxSizing: "border-box" }}
+            />
+          </Section>
+
+          <Section label="Controls">
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => immediatePost("/breaking", { text: state.breakingNews.text })}
+                style={{ flex: 1, padding: "8px", borderRadius: 8, border: "1px solid rgba(239,68,68,0.5)", background: "rgba(239,68,68,0.15)", color: "#f87171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                ⚡ Activate Breaking
+              </button>
+              {state.breakingNews.active && (
+                <button onClick={async () => { await apiDelete("/breaking"); apiFetch("").then(setState); }}
+                  style={{ flex: 1, padding: "8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                  Clear Breaking
+                </button>
+              )}
+            </div>
+            <Slider value={state.breakingNews.flashInterval} min={300} max={2000}
+              onChange={v => patch({ breakingNews: { ...state.breakingNews, flashInterval: v } }, 200)}
+              label="Flash interval (ms)" accent="#ef4444" />
+            <Toggle checked={state.breakingNews.overridesTicker} onChange={v => patch({ breakingNews: { ...state.breakingNews, overridesTicker: v } })} label="Override ticker when breaking" accent="#ef4444" />
+          </Section>
+
+          <Section label="Live Badge">
+            <Toggle checked={state.liveBadge.visible} onChange={v => patch({ liveBadge: { ...state.liveBadge, visible: v } })} label="Show LIVE badge" />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <input value={state.liveBadge.label} onChange={e => patch({ liveBadge: { ...state.liveBadge, label: e.target.value } }, 300)}
+                placeholder="Badge label (e.g. LIVE)" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 7, padding: "5px 10px", color: "#fff", fontSize: 11, outline: "none", flex: 1, minWidth: 80 }} />
+              <input type="color" value={state.liveBadge.color} onChange={e => patch({ liveBadge: { ...state.liveBadge, color: e.target.value } })}
+                style={{ width: 30, height: 26, borderRadius: 6, border: "1px solid rgba(255,255,255,0.12)", cursor: "pointer", background: "none" }} />
+              <Toggle checked={state.liveBadge.pulse} onChange={v => patch({ liveBadge: { ...state.liveBadge, pulse: v } })} label="Pulse" />
+            </div>
+          </Section>
+        </div>
+      )}
+
+      {/* ── STYLE TAB ── */}
+      {tab === "style" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <Section label="Theme">
+            <PillSelect value={state.theme} options={THEMES}
+              onChange={async v => {
+                setSaving(true);
+                const s = await apiPost(`/themes/${encodeURIComponent(v)}/apply`);
+                if (s && "active" in s) setState(s);
+                setSaving(false);
+              }} accent="#667eea" />
+          </Section>
+
+          <Section label="Accent Color">
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <input type="color" value={state.customColors.primary}
+                onChange={e => patch({ customColors: { ...state.customColors, primary: e.target.value } }, 100)}
+                style={{ width: 38, height: 30, borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", cursor: "pointer", background: "none" }} />
+              <span style={{ fontSize: 11, fontFamily: "monospace", color: "rgba(255,255,255,0.4)" }}>{state.customColors.primary}</span>
+              {["#cc0001", "#0057ff", "#f59e0b", "#0ea5e9", "#00ff88", "#667eea", "#ef4444"].map(c => (
+                <button key={c} onClick={() => patch({ customColors: { ...state.customColors, primary: c, badge: c } })}
+                  style={{ width: 20, height: 20, borderRadius: "50%", background: c, border: state.customColors.primary === c ? "2px solid #fff" : "2px solid transparent", cursor: "pointer" }} />
+              ))}
+            </div>
+          </Section>
+
+          <Section label="Enter / Exit Animation">
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginBottom: 2 }}>Enter</div>
+            <PillSelect value={state.enterAnimation} options={ANIMATIONS} onChange={v => patch({ enterAnimation: v })} />
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 4, marginBottom: 2 }}>Exit</div>
+            <PillSelect value={state.exitAnimation} options={ANIMATIONS} onChange={v => patch({ exitAnimation: v })} />
+          </Section>
+
+          <Section label="Logo">
+            <input id="no-logo-upload" type="file" accept="image/*" style={{ display: "none" }}
+              onChange={e => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = ev => { apiPost("/logo", { logo: ev.target?.result as string }).then(() => apiFetch("").then(setState)); };
+                reader.readAsDataURL(file);
+                e.target.value = "";
+              }} />
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {state.logo && <div style={{ background: "#000", borderRadius: 8, padding: "4px 8px", border: "1px solid rgba(255,255,255,0.1)" }}><img src={state.logo} alt="logo" style={{ height: 28, maxWidth: 64, objectFit: "contain" }} /></div>}
+              <button onClick={() => document.getElementById("no-logo-upload")?.click()}
+                style={{ padding: "6px 12px", borderRadius: 8, border: "1px dashed rgba(102,126,234,0.4)", background: "rgba(102,126,234,0.06)", color: "#a5b4fc", fontSize: 10, fontWeight: 600, cursor: "pointer" }}>
+                {state.logo ? "Change logo" : "Upload logo"}
+              </button>
+              {state.logo && (
+                <button onClick={() => apiPost("/logo", { logo: "" }).then(() => apiFetch("").then(setState))}
+                  style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid rgba(239,68,68,0.3)", background: "transparent", color: "#f87171", fontSize: 10, cursor: "pointer" }}>
+                  Remove
+                </button>
+              )}
+            </div>
+          </Section>
+
+          <Section label="Opacity">
+            <Slider value={Math.round(state.opacity * 100)} min={20} max={100}
+              onChange={v => patch({ opacity: v / 100 }, 100)} label="Overlay opacity" />
+          </Section>
+        </div>
+      )}
+
+      {/* ── PRESETS TAB ── */}
+      {tab === "presets" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <Section label="Saved Presets">
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 200, overflowY: "auto" }}>
+              {presets.length === 0 && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>No presets saved yet.</div>}
+              {presets.map(p => (
+                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                    {p.description && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.description}</div>}
+                  </div>
+                  <button onClick={() => apiPost(`/presets/${p.id}/apply`).then(r => { if (r.state) setState(r.state); })}
+                    style={{ fontSize: 10, padding: "4px 10px", borderRadius: 6, border: "1px solid rgba(102,126,234,0.4)", background: "rgba(102,126,234,0.12)", color: "#a5b4fc", cursor: "pointer", fontWeight: 600, flexShrink: 0 }}>
+                    Apply
+                  </button>
+                  <button onClick={() => apiDelete(`/presets/${p.id}`).then(() => apiFetch("/presets").then(setPresets))}
+                    style={{ fontSize: 10, color: "#f87171", background: "none", border: "none", cursor: "pointer", padding: "4px" }}>✕</button>
+                </div>
+              ))}
+            </div>
+          </Section>
+
+          <Section label="Save Current as Preset">
+            <div style={{ display: "flex", gap: 6 }}>
+              <input value={newPresetName} onChange={e => setNewPresetName(e.target.value)}
+                placeholder="Preset name…"
+                style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 7, padding: "6px 10px", color: "#fff", fontSize: 11, outline: "none" }}
+              />
+              <button onClick={() => {
+                if (!newPresetName.trim()) return;
+                apiPost("/presets", { name: newPresetName }).then(() => {
+                  setNewPresetName("");
+                  apiFetch("/presets").then(setPresets);
+                });
+              }} style={{ padding: "6px 12px", borderRadius: 7, background: "rgba(102,126,234,0.2)", border: "1px solid rgba(102,126,234,0.4)", color: "#a5b4fc", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+                Save
+              </button>
+            </div>
+          </Section>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes no-pulse { 0%,100%{opacity:1} 50%{opacity:0.25} }
+      `}</style>
     </div>
   );
 }

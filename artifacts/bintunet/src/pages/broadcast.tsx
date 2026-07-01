@@ -86,10 +86,30 @@ function useIsMobile() {
   return isMobile;
 }
 
+/* ─── News overlay state (API-driven) ─── */
+interface NewsOverlayLive {
+  active: boolean;
+  theme: string;
+  customColors: { primary: string; secondary: string; background: string; text: string; badge: string; badgeText: string };
+  customFont: { family: string; size: number; weight: number; letterSpacing: number };
+  opacity: number;
+  layout: { position: { x: number; y: number }; width: number; height: number; zIndex: number };
+  logo: string;
+  liveBadge: { visible: boolean; label: string; pulse: boolean; color: string };
+  headline: { text: string; animation: string; durationMs: number; autoRotate: boolean; headlines: string[]; currentIndex: number };
+  breakingNews: { active: boolean; text: string; flashInterval: number; overridesTicker: boolean };
+  ticker: { style: string; direction: string; speed: number; paused: boolean; separator: string };
+  tickerMessages: Array<{ id: string; text: string; priority: number }>;
+  enterAnimation: string;
+  exitAnimation: string;
+  animationDurationMs: number;
+}
+
 /* ─── WebSocket hook for the stage (no auth required) ─── */
 function useBroadcastWS() {
   const wsRef = useRef<WebSocket | null>(null);
   const [state, setState] = useState<BroadcastState | null>(null);
+  const [newsOverlay, setNewsOverlay] = useState<NewsOverlayLive | null>(null);
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [stats, setStats] = useState<StreamStats>({ subs: null, viewers: null });
   const [scanFlash, setScanFlash] = useState<number | null>(null);
@@ -109,6 +129,9 @@ function useBroadcastWS() {
         const msg = JSON.parse(ev.data);
         if (msg.type === "broadcast" && msg.data) {
           setState(msg.data as BroadcastState);
+        }
+        if (msg.type === "news-overlay" && msg.data) {
+          setNewsOverlay(msg.data as NewsOverlayLive);
         }
         if (msg.type === "chat" && Array.isArray(msg.data)) {
           const msgs = (msg.data as ChatMessage[]).filter((m) => !seenIds.current.has(m.id));
@@ -155,6 +178,12 @@ function useBroadcastWS() {
   useEffect(() => {
     // Fetch initial broadcast state
     fetch("/api/broadcast").then((r) => r.json()).then((d) => setState(d)).catch(() => {});
+    // Fetch initial news overlay state
+    const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
+    fetch("/api/news-overlay", {
+      credentials: "include",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }).then(r => r.ok ? r.json() : null).then(d => { if (d) setNewsOverlay(d); }).catch(() => {});
     connect();
     return () => {
       wsRef.current?.close();
@@ -163,7 +192,7 @@ function useBroadcastWS() {
     };
   }, [connect]);
 
-  return { state, chat, stats, scanFlash, giftPopup };
+  return { state, newsOverlay, chat, stats, scanFlash, giftPopup };
 }
 
 /* ─── Helper components ─── */
@@ -891,6 +920,167 @@ function NewsMinimal({ text, title, logo, color, isMobile, yPct, speed }: NewsPr
   );
 }
 
+
+/* ─── API-driven news overlay renderer ─── */
+
+function NewsOverlayRenderer({ overlay, isMobile }: { overlay: NewsOverlayLive; isMobile: boolean }) {
+  const yPct = overlay.layout?.position?.y ?? 95;
+  const bottom = `${100 - yPct}%`;
+  const c = overlay.customColors?.primary || "#cc0001";
+  const bg = overlay.customColors?.background || "rgba(4,4,12,0.96)";
+  const textColor = overlay.customColors?.text || "#ffffff";
+  const font = overlay.customFont;
+  const h = isMobile ? 38 : 46;
+  const tickerText = overlay.tickerMessages?.length
+    ? overlay.tickerMessages.map((m) => m.text).join(`  ${overlay.ticker?.separator || "◆"}  `)
+    : overlay.headline?.text || "";
+  const speed = overlay.ticker?.speed ?? 30;
+  const logo = overlay.logo;
+  const label = overlay.liveBadge?.label || "LIVE";
+  const badge = overlay.liveBadge?.visible !== false;
+  const fontSize = (font?.size || 14) * (isMobile ? 0.82 : 1);
+
+  const theme = overlay.theme || "Al Jazeera";
+
+  const breakingActive = overlay.breakingNews?.active;
+  const displayText = breakingActive && overlay.breakingNews?.overridesTicker
+    ? overlay.breakingNews.text
+    : tickerText;
+
+  const logoEl = logo
+    ? <img src={logo} alt="" style={{ height: isMobile ? 22 : 28, maxWidth: isMobile ? 54 : 72, objectFit: "contain" }} />
+    : null;
+
+  const themeStyles: Record<string, React.ReactNode> = {
+    "Al Jazeera": (
+      <div style={{ display: "flex", alignItems: "stretch", width: "100%", height: h }}>
+        <div style={{ background: "#000", display: "flex", alignItems: "center", padding: `0 ${isMobile ? 8 : 14}px`, gap: 8, flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.1)", borderTop: `3px solid ${c}`, minWidth: isMobile ? 60 : 76, justifyContent: "center" }}>
+          {logoEl ?? <span style={{ fontSize: isMobile ? 8 : 10, fontWeight: 900, color: "#fff", letterSpacing: "0.05em" }}>{overlay.liveBadge?.label || "LIVE"}</span>}
+        </div>
+        {badge && <div style={{ background: c, display: "flex", alignItems: "center", padding: `0 ${isMobile ? 6 : 10}px`, gap: 5, flexShrink: 0, borderTop: `3px solid ${c}` }}>
+          <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#fff", animation: overlay.liveBadge?.pulse ? "nov-pulse 1.2s infinite" : "none" }} />
+          <span style={{ color: "#fff", fontWeight: 900, fontSize: isMobile ? 7 : 9, letterSpacing: "0.08em" }}>{label}</span>
+        </div>}
+        <TickerScroll text={displayText} speed={speed} color={textColor} fontSize={fontSize} fontWeight={font?.weight || 600} />
+      </div>
+    ),
+    "CNN": (
+      <div style={{ display: "flex", alignItems: "stretch", width: "100%", height: h, background: "#0d0d0d" }}>
+        <div style={{ background: "#000", borderLeft: `4px solid ${c}`, display: "flex", alignItems: "center", padding: `0 ${isMobile ? 8 : 12}px`, flexShrink: 0, gap: 6, minWidth: isMobile ? 50 : 60 }}>
+          {logoEl ?? <span style={{ color: "#fff", fontWeight: 900, fontSize: isMobile ? 10 : 14 }}>CNN</span>}
+        </div>
+        {breakingActive && <div style={{ background: c, display: "flex", alignItems: "center", padding: `0 ${isMobile ? 6 : 10}px`, flexShrink: 0 }}>
+          <span style={{ color: "#fff", fontWeight: 900, fontSize: isMobile ? 7 : 9, letterSpacing: "0.1em" }}>⚡ BREAKING</span>
+        </div>}
+        <TickerScroll text={displayText} speed={speed} color="#f0f0f0" fontSize={fontSize} fontWeight={font?.weight || 700} />
+      </div>
+    ),
+    "BBC": (
+      <div style={{ display: "flex", alignItems: "stretch", width: "100%", height: h, background: "#1a1a2e" }}>
+        <div style={{ background: c, display: "flex", alignItems: "center", justifyContent: "center", padding: `0 ${isMobile ? 10 : 14}px`, flexShrink: 0 }}>
+          {logoEl ?? <span style={{ color: "#fff", fontWeight: 900, fontSize: isMobile ? 10 : 14, fontFamily: "Georgia, serif" }}>BBC</span>}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: `0 ${isMobile ? 8 : 12}px`, flex: 1, overflow: "hidden", gap: 2 }}>
+          {badge && <div style={{ fontSize: isMobile ? 7 : 9, color: c, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>Live Coverage</div>}
+          <TickerScroll text={displayText} speed={speed} color={textColor} fontSize={fontSize} fontWeight={font?.weight || 700} separator="  ·  " />
+        </div>
+      </div>
+    ),
+    "Bloomberg": (
+      <div style={{ display: "flex", alignItems: "stretch", width: "100%", height: h, background: "#0c0c0c", borderTop: `2px solid ${c}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: `0 ${isMobile ? 8 : 12}px`, flexShrink: 0, borderRight: `1px solid ${c}30` }}>
+          {logoEl ?? <span style={{ color: c, fontWeight: 700, fontSize: isMobile ? 9 : 11, fontFamily: "monospace" }}>{label}</span>}
+        </div>
+        <TickerScroll text={displayText} speed={speed} color="rgba(255,255,255,0.88)" fontSize={fontSize} fontWeight={font?.weight || 500} separator="  |  " />
+      </div>
+    ),
+    "Fox": (
+      <div style={{ display: "flex", alignItems: "stretch", width: "100%", height: h, background: "#000033", borderTop: `3px solid ${c}` }}>
+        <div style={{ background: c, display: "flex", alignItems: "center", padding: `0 ${isMobile ? 8 : 12}px`, flexShrink: 0 }}>
+          {logoEl ?? <span style={{ color: "#fff", fontWeight: 900, fontSize: isMobile ? 7 : 9, letterSpacing: "0.1em" }}>FOX NEWS ALERT</span>}
+        </div>
+        <TickerScroll text={displayText} speed={speed} color="#fff" fontSize={fontSize} fontWeight={font?.weight || 800} />
+      </div>
+    ),
+    "Sky News": (
+      <div style={{ display: "flex", alignItems: "stretch", width: "100%", height: h }}>
+        <div style={{ background: `linear-gradient(135deg, ${c} 0%, #0369a1 100%)`, display: "flex", alignItems: "center", justifyContent: "center", padding: `0 ${isMobile ? 10 : 14}px`, flexShrink: 0, minWidth: isMobile ? 64 : 80 }}>
+          {logoEl ?? <span style={{ color: "#fff", fontWeight: 900, fontSize: isMobile ? 8 : 11 }}>SKY NEWS</span>}
+        </div>
+        <div style={{ flex: 1, background: "rgba(0,0,0,0.92)", display: "flex", alignItems: "center", borderTop: `2px solid ${c}` }}>
+          <TickerScroll text={displayText} speed={speed} color={textColor} fontSize={fontSize} fontWeight={font?.weight || 600} />
+        </div>
+      </div>
+    ),
+    "CNBC": (
+      <div style={{ display: "flex", alignItems: "stretch", width: "100%", height: h, background: "#000022", borderTop: `2px solid ${c}` }}>
+        <div style={{ background: c, display: "flex", alignItems: "center", padding: `0 ${isMobile ? 10 : 14}px`, flexShrink: 0 }}>
+          {logoEl ?? <span style={{ color: "#fff", fontWeight: 900, fontSize: isMobile ? 10 : 12 }}>CNBC</span>}
+        </div>
+        <TickerScroll text={displayText} speed={speed} color={textColor} fontSize={fontSize} fontWeight={font?.weight || 700} />
+      </div>
+    ),
+    "Dark": (
+      <div style={{ display: "flex", alignItems: "stretch", width: "100%", height: h, background: "rgba(10,10,20,0.97)", border: "1px solid rgba(99,102,241,0.4)" }}>
+        <div style={{ background: "rgba(99,102,241,0.2)", display: "flex", alignItems: "center", padding: `0 ${isMobile ? 8 : 12}px`, flexShrink: 0 }}>
+          {logoEl ?? <span style={{ color: "#a5b4fc", fontWeight: 700, fontSize: isMobile ? 8 : 10, letterSpacing: "0.08em" }}>{label}</span>}
+        </div>
+        <TickerScroll text={displayText} speed={speed} color="rgba(255,255,255,0.9)" fontSize={fontSize} fontWeight={font?.weight || 600} />
+      </div>
+    ),
+    "Glass": (
+      <div style={{ display: "flex", alignItems: "stretch", width: "100%", height: h, background: "rgba(255,255,255,0.08)", backdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: isMobile ? 6 : 8, overflow: "hidden" }}>
+        {badge && <div style={{ display: "flex", alignItems: "center", padding: `0 ${isMobile ? 8 : 12}px`, flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.1)" }}>
+          {logoEl ?? <span style={{ color: "#fff", fontWeight: 800, fontSize: isMobile ? 9 : 11 }}>{label}</span>}
+        </div>}
+        <div style={{ width: 3, background: `linear-gradient(180deg, ${c}, ${c}80)`, flexShrink: 0 }} />
+        <TickerScroll text={displayText} speed={speed} color="rgba(255,255,255,0.92)" fontSize={fontSize} fontWeight={font?.weight || 600} />
+      </div>
+    ),
+    "Modern": (
+      <div style={{ display: "flex", alignItems: "stretch", width: "100%", height: h, background: "rgba(0,4,16,0.97)", borderTop: `2px solid ${c}`, boxShadow: `0 -4px 16px ${c}30` }}>
+        <div style={{ display: "flex", alignItems: "center", padding: `0 ${isMobile ? 8 : 12}px`, flexShrink: 0, borderRight: `1px solid ${c}30` }}>
+          {logoEl ?? <span style={{ color: c, fontWeight: 900, fontSize: isMobile ? 8 : 10, letterSpacing: "0.1em", fontFamily: "monospace" }}>WIRE</span>}
+        </div>
+        <TickerScroll text={displayText} speed={speed} color={c} fontSize={fontSize} fontWeight={font?.weight || 700} />
+      </div>
+    ),
+    "Minimal": (
+      <div style={{ display: "flex", alignItems: "center", width: "100%", height: h, background: "rgba(0,0,0,0.88)", borderTop: "1px solid rgba(255,255,255,0.1)", gap: 12, padding: `0 ${isMobile ? 10 : 14}px` }}>
+        {badge && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, borderRight: "1px solid rgba(255,255,255,0.1)", paddingRight: isMobile ? 8 : 10 }}>
+            {logoEl ?? <span style={{ color: "rgba(255,255,255,0.4)", fontSize: isMobile ? 7 : 9, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>{label}</span>}
+          </div>
+        )}
+        <TickerScroll text={displayText} speed={speed} color={textColor} fontSize={fontSize} fontWeight={font?.weight || 400} separator="   ·   " />
+      </div>
+    ),
+    "Election": (
+      <div style={{ display: "flex", alignItems: "stretch", width: "100%", height: h, background: "#0f172a", borderTop: `3px solid ${c}`, boxShadow: "0 -4px 20px rgba(239,68,68,0.3)" }}>
+        <div style={{ background: c, display: "flex", alignItems: "center", padding: `0 ${isMobile ? 8 : 14}px`, flexShrink: 0 }}>
+          {logoEl ?? <span style={{ color: "#fff", fontWeight: 900, fontSize: isMobile ? 7 : 9, letterSpacing: "0.12em" }}>ELECTION NIGHT</span>}
+        </div>
+        <TickerScroll text={displayText} speed={speed} color="#f8fafc" fontSize={fontSize} fontWeight={font?.weight || 800} separator="  ★  " />
+      </div>
+    ),
+  };
+
+  const overlayEl = themeStyles[theme] ?? themeStyles["Al Jazeera"];
+
+  return (
+    <>
+      <style>{`@keyframes nov-pulse { 0%,100%{opacity:1} 50%{opacity:0.25} }`}</style>
+      <div style={{
+        position: "fixed", bottom, left: 0, right: 0, zIndex: 30,
+        opacity: overlay.opacity ?? 1,
+        background: bg,
+        transform: `scale(1)`,
+      }}>
+        {overlayEl}
+      </div>
+    </>
+  );
+}
 
 /* ─── Ad overlays ─── */
 
@@ -1796,7 +1986,7 @@ function StageIdle({ connected }: { connected: boolean }) {
 /* ─── Main broadcast page ─── */
 
 export default function BroadcastPage() {
-  const { state, chat, stats, scanFlash, giftPopup } = useBroadcastWS();
+  const { state, newsOverlay, chat, stats, scanFlash, giftPopup } = useBroadcastWS();
   const isMobile = useIsMobile();
   const [connected, setConnected] = useState(false);
 
@@ -1896,8 +2086,13 @@ export default function BroadcastPage() {
         }
       })()}
 
-      {/* News overlay */}
-      {state?.newsActive && !state.breakActive && !state.adActive && (() => {
+      {/* News overlay — API-driven (new system) */}
+      {newsOverlay?.active && !state?.breakActive && (
+        <NewsOverlayRenderer overlay={newsOverlay} isMobile={isMobile} />
+      )}
+
+      {/* News overlay — legacy broadcast-state system (fallback when API overlay is off) */}
+      {!newsOverlay?.active && state?.newsActive && !state.breakActive && !state.adActive && (() => {
         const newsPos = isMobile ? state.mobileNewsPosition : state.newsPosition;
         const np: NewsProps = {
           text: state.newsText,
