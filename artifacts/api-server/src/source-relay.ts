@@ -112,6 +112,26 @@ function spawnCollect(
 const BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000, 60_000];
 
 /**
+ * How many HTTP 403 errors must appear in yt-dlp stderr (within a single
+ * spawn session) before we classify them as "signed HLS URLs have expired"
+ * and immediately kill + re-extract.
+ *
+ * yt-dlp logs one WARNING per retry attempt on the same stale segment URL.
+ * A threshold of 3 catches the pattern within seconds while avoiding false
+ * positives from a single transient 403 that resolves on the next retry.
+ */
+const HTTP_403_THRESHOLD = 3;
+
+/**
+ * Delay (ms) before re-spawning after an HTTP 403 URL-expiry kill.
+ *
+ * This is intentionally short (not exponential backoff) because the source is
+ * still live — we are simply fetching a fresh signed URL, not recovering from
+ * a genuine outage.  A 500 ms pause is enough for the network stack to settle.
+ */
+const HTTP_403_RETRY_DELAY_MS = 500;
+
+/**
  * Recovery deadline (ms): if the relay has not produced its first frame within
  * this window after a reconnect starts, the stall watchdog in stream-manager
  * treats it as a genuine failure and performs a controlled FFmpeg restart.
@@ -122,6 +142,18 @@ const RECOVERY_DEADLINE_MS = 90_000;
  * How many consecutive failures trigger a "source may be offline" warning.
  */
 const WARN_AFTER_FAILURES = 5;
+
+/**
+ * How many consecutive immediate-403 restarts (none of which produced any
+ * data) before we escalate to normal _scheduleRetry() backoff.
+ *
+ * A genuine URL-expiry 403 resolves on the next spawn (data flows within
+ * seconds of re-extraction).  If this many fast-path restarts pass without
+ * a single byte arriving the 403 is not URL expiry — it is an auth/geo/
+ * private-stream error that exponential backoff + the failure budget must
+ * handle.  Setting this to 5 gives ~2.5 s of fast attempts before escalating.
+ */
+const MAX_CONSECUTIVE_403_RESTARTS = 5;
 
 /**
  * Default maximum consecutive network/source failures before the relay
@@ -312,6 +344,10 @@ export class SourceRelay {
   private lastRecoveredAt: number | null = null;
   private readonly createdAt = Date.now();
   private readonly maxConsecutiveFailures: number;
+  // Counts consecutive immediate-403 restarts that produced no data. Reset to
+  // 0 whenever data flows. When this reaches MAX_CONSECUTIVE_403_RESTARTS the
+  // 403 is not URL expiry — escalate to normal backoff + failure budget.
+  private _consecutive403Restarts = 0;
 
   constructor(opts: SourceRelayOptions) {
     this.streamId = opts.streamId;
@@ -742,6 +778,14 @@ export class SourceRelay {
         "-f", formatSelector,
         "--hls-use-mpegts",
         "--socket-timeout", "30",
+        // Pass browser-compatible headers so YouTube CDN accepts HLS segment
+        // requests.  yt-dlp forwards these to its internal segment downloader.
+        // Referer and Origin satisfy YouTube's CDN hotlink-protection checks;
+        // the User-Agent prevents bot-detection headers from triggering extra
+        // challenge layers on segment URLs.
+        "--add-header", "Referer:https://www.youtube.com/",
+        "--add-header", "Origin:https://www.youtube.com",
+        "--add-header", "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "-o", "-",
         this.pageUrl,
       ],
@@ -935,6 +979,15 @@ export class SourceRelay {
     let sessionBytes = 0;
     const spawnedAt = Date.now();
 
+    // ── Per-spawn HTTP 403 detection state ────────────────────────────────────
+    // Tracks repeated HTTP 403 errors from yt-dlp stderr so we can detect when
+    // YouTube HLS signed segment URLs have expired mid-stream and immediately
+    // kill + re-extract instead of waiting for yt-dlp to exhaust its own retries
+    // on a stale URL it can never succeed with.
+    let http403Count = 0;
+    let http403FirstAt = 0;
+    let http403RestartScheduled = false;
+
     // ── Startup watchdog ─────────────────────────────────────────────────────
     // RACE FIX: null this.proc BEFORE calling _scheduleRetry() so the exit
     // handler (triggered by _kill()) sees this.proc !== thisProc and bails out
@@ -974,6 +1027,10 @@ export class SourceRelay {
         gotData = true;
         clearTimeout(startupWatchdog);
         this.consecutiveFailures = 0;
+        // Data is flowing — this was a genuine URL-expiry recovery (or a clean
+        // first spawn). Reset the 403-restart guardrail so the fast-path stays
+        // available for the next expiry cycle without hitting the escalation cap.
+        this._consecutive403Restarts = 0;
         this.lastFrameAt = Date.now();
 
         // ── Frame-based recovery confirmation ────────────────────────────────
@@ -1061,6 +1118,91 @@ export class SourceRelay {
           this._warn(`[relay:${cmd}] ${t}`);
         } else {
           logger.debug({ streamId: this.streamId, src: cmd }, t);
+        }
+
+        // ── HTTP 403 detection (YouTube HLS signed URL expiry) ───────────────
+        // yt-dlp logs "WARNING: [youtube] HTTP Error 403" when a CDN segment
+        // URL has expired. It retries the SAME stale URL internally — we need
+        // to kill the process and force fresh URL extraction from scratch.
+        //
+        // We only act on this for YouTube sources because TikTok and X Space
+        // 403s have different root causes and are handled by normal backoff.
+        if (
+          isYouTubeSource &&
+          !http403RestartScheduled &&
+          /HTTP Error 403|HTTP 403|403: Forbidden/i.test(t)
+        ) {
+          const now = Date.now();
+          if (http403Count === 0) http403FirstAt = now;
+          http403Count++;
+
+          // Classify the failure phase from the log line for clearer diagnostics.
+          // Extraction phase: yt-dlp is still resolving the manifest URL.
+          // Playlist phase:   yt-dlp is fetching the m3u8 index.
+          // Segment phase:    yt-dlp is downloading .ts / .m4s fragments (most common).
+          const phase =
+            /\[youtube\].*download|extractor/i.test(t)  ? "extraction" :
+            /manifest|playlist|\.m3u8/i.test(t)         ? "playlist"   :
+            /fragment|\.ts\b|\.m4s\b|segment/i.test(t)  ? "segment"    :
+            gotData                                       ? "segment"    :
+                                                           "extraction";
+
+          this._warn(
+            `[relay:yt-dlp] HTTP 403 #${http403Count} (phase=${phase}, ` +
+            `${Math.round((now - http403FirstAt) / 1000)}s since first 403) — ` +
+            `HLS signed URL may have expired`,
+          );
+
+          if (http403Count >= HTTP_403_THRESHOLD) {
+            http403RestartScheduled = true;
+
+            // ── Cloud / CI IP-restriction detection ──────────────────────────
+            // YouTube frequently range-blocks cloud provider IP addresses at the
+            // segment level.  When running in CI / cloud, a 403 restart loop is
+            // expected and a distinct warning helps operators distinguish "URL
+            // expired" (fixable by re-extraction) from "IP blocked" (requires a
+            // residential IP or proxy).  We still continue retrying — if the IP
+            // is blocked, consecutive failures will eventually hit maxConsecutive-
+            // Failures and escalate; we do NOT treat it as permanent here.
+            const inCi = !!(
+              process.env.GITHUB_ACTIONS ||
+              process.env.CI ||
+              process.env.CLOUD_RUN_SERVICE ||
+              process.env.AWS_LAMBDA_FUNCTION_NAME ||
+              process.env.KUBERNETES_SERVICE_HOST
+            );
+            if (inCi) {
+              this._warn(
+                `[relay] HTTP 403 in cloud/CI environment ` +
+                `(${process.env.GITHUB_ACTIONS ? "GitHub Actions" : "CI/cloud"} detected) — ` +
+                `YouTube frequently range-blocks cloud provider IP addresses. ` +
+                `Segment-level 403s from a cloud IP may not be fixable by re-extraction alone. ` +
+                `Consider a residential proxy, VPN with home IP, or a non-cloud host.`,
+              );
+            }
+
+            this._warn(
+              `[relay] ${http403Count} HTTP 403 errors in ` +
+              `${Math.round((now - http403FirstAt) / 1000)}s — ` +
+              `terminating stale yt-dlp session and forcing fresh HLS URL extraction (no backoff)`,
+            );
+
+            if (this.proc === thisProc && !this.stopped) {
+              // Null proc BEFORE kill so the exit handler sees proc !== thisProc
+              // and bails without scheduling a competing _scheduleRetry().
+              this.proc = null;
+              if (this._currentProc === thisProc) {
+                this._currentProc = null;
+                this._stdinDraining = false;
+              }
+              this._kill(thisProc);
+              // Bypass exponential backoff — the source is still live, we just
+              // need a fresh signed URL. _scheduleImmediate403Retry() does NOT
+              // increment consecutiveFailures so a URL-expiry cycle cannot drain
+              // the retry budget.
+              this._scheduleImmediate403Retry();
+            }
+          }
         }
       }
     });
@@ -1205,6 +1347,77 @@ export class SourceRelay {
         });
       }
     }, delayMs);
+  }
+
+  // ── Immediate 403 retry (YouTube HLS URL expiry) ──────────────────────────
+
+  /**
+   * Schedule an immediate re-spawn to force fresh HLS URL extraction.
+   *
+   * Called when repeated HTTP 403 errors on HLS segments indicate that
+   * YouTube's signed CDN URLs have expired mid-stream.  This is fundamentally
+   * different from a genuine network failure:
+   *
+   *  - The source stream IS still live.
+   *  - yt-dlp simply needs a new session to obtain fresh signed URLs.
+   *  - Applying exponential backoff would delay re-extraction by 1–60 s for
+   *    no benefit — the fresh URLs are available immediately after a new
+   *    yt-dlp session re-extracts the manifest.
+   *
+   * Key differences vs _scheduleRetry():
+   *  ✗ Does NOT increment consecutiveFailures — URL expiry is not a source
+   *    failure, and accumulating failures would drain the retry budget.
+   *  ✓ Uses HTTP_403_RETRY_DELAY_MS (500 ms) instead of exponential backoff.
+   *  ✓ Increments totalRestarts for observability.
+   *  ✓ Still respects stopped / permanentlyFailed guards.
+   */
+  private _scheduleImmediate403Retry(): void {
+    if (this.stopped || this.permanentlyFailed) return;
+
+    // Cancel any existing retry timer — if a competing path (startup watchdog,
+    // exit handler) already scheduled one, replace it with the 403 fast-path.
+    if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
+
+    this._consecutive403Restarts++;
+
+    // ── Guardrail: escalate persistent 403s to normal backoff ────────────────
+    // A genuine signed-URL expiry resolves within the next spawn: data flows,
+    // and _consecutive403Restarts resets to 0 in the stdout handler.
+    // If we reach MAX_CONSECUTIVE_403_RESTARTS restarts without any data, the
+    // 403 is not URL-expiry (could be geo-block, auth failure, private stream).
+    // Hand off to _scheduleRetry() so it increments consecutiveFailures and
+    // the failure budget drives eventual escalation to "failed".
+    if (this._consecutive403Restarts > MAX_CONSECUTIVE_403_RESTARTS) {
+      this._warn(
+        `[relay] ${this._consecutive403Restarts} consecutive 403 restarts without data — ` +
+        `not a URL-expiry issue. Escalating to normal backoff (failure budget applies).`,
+      );
+      this._scheduleRetry();
+      return;
+    }
+
+    this.totalRestarts++;
+    // NOTE: consecutiveFailures intentionally NOT incremented here.
+    // URL expiry is a transient CDN state, not a source connectivity failure.
+
+    this.reconnectStartedAt = Date.now();
+    this.recoveryDeadline = this.reconnectStartedAt + RECOVERY_DEADLINE_MS;
+    this._setStatus("reconnecting");
+
+    this._log(
+      `[relay] Immediate re-extraction scheduled in ${HTTP_403_RETRY_DELAY_MS}ms ` +
+      `(403 URL-expiry recovery — consecutiveFailures=${this.consecutiveFailures} unchanged)`,
+    );
+
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      if (!this.stopped && !this.permanentlyFailed) {
+        this._spawn().catch((err) => {
+          this._warn(`[relay] Unexpected spawn error after 403 recovery: ${err?.message ?? err}`);
+          this._scheduleRetry();
+        });
+      }
+    }, HTTP_403_RETRY_DELAY_MS);
   }
 
   // ── Health monitoring ───────────────────────────────────────────────────────
