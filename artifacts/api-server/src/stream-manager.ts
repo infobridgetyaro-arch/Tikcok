@@ -2561,45 +2561,54 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
           else if (evt.type === "status") {
             const s = evt.status;
             if (s === "reconnecting") {
+              activeStreams.get(streamId)?.uiRenderer?.setSourceUnavailable(true);
               sendLog(
                 streamId,
                 `[relay] Source disconnected — reconnecting` +
                 ` (attempt #${evt.totalRestarts ?? 0}, consecutive: ${evt.consecutiveFailures ?? 0})`,
               );
             } else if (s === "recovering") {
+              activeStreams.get(streamId)?.uiRenderer?.setSourceUnavailable(true);
               sendLog(streamId, `[relay] New source process started — waiting for first frame...`);
-            } else if (s === "running" && evt.recoveryMs != null) {
-              sendLog(
-                streamId,
-                `[relay] Recovered in ${(evt.recoveryMs / 1000).toFixed(1)}s` +
-                ` — RTMP session preserved, no FFmpeg restart`,
-              );
-              // Clear stale FPS/bitrate/drop samples accumulated during the
-              // stall period. Without this the health scorer keeps a 15–30 s
-              // window of near-zero values and fires "degraded" even though
-              // the source is live again — the "false information" the user saw.
-              scorerResetMetricWindows(streamId);
+            } else if (s === "running") {
+              activeStreams.get(streamId)?.uiRenderer?.setSourceUnavailable(false);
+              if (evt.recoveryMs != null) {
+                sendLog(
+                  streamId,
+                  `[relay] Recovered in ${(evt.recoveryMs / 1000).toFixed(1)}s` +
+                  ` — RTMP session preserved, no FFmpeg restart`,
+                );
+                // Clear stale FPS/bitrate/drop samples accumulated during the
+                // stall period. Without this the health scorer keeps a 15–30 s
+                // window of near-zero values and fires "degraded" even though
+                // the source is live again — the "false information" the user saw.
+                scorerResetMetricWindows(streamId);
+              }
             } else if (s === "failed") {
+              activeStreams.get(streamId)?.uiRenderer?.setSourceUnavailable(true);
               sendLog(
                 streamId,
-                `[relay] Source ended — gradient background active. FFmpeg keeps streaming. ` +
-                `Click Stop only when you want to end the broadcast.`,
+                `[relay] Source ended — keeping the broadcast pipeline alive while the ` +
+                `source remains unavailable. Click Stop only when you want to end the broadcast.`,
               );
-              // Signal EOF on stdin so FFmpeg's source input ends cleanly.
-              // eof_action=pass on the [_base][_src] overlay then shows the
-              // gradient background while FFmpeg keeps streaming to the RTMP target.
-              // We do NOT call stopStream here — only the Stop button should do that.
-              try { (ffmpegProc.stdin as NodeJS.WritableStream | null)?.end(); } catch {}
+              // SourceRelay deliberately keeps this pipe open across source
+              // restarts. Do not call end() here: stdin is the live-source
+              // transport, and closing it turns a recoverable source failure
+              // into an FFmpeg process shutdown. The always-running lavfi,
+              // gradient, UI, mic, and volume inputs keep the encoder clock alive
+              // until the relay recovers or the operator presses Stop.
             }
           } else if (evt.type === "fatal" && evt.message) {
+            activeStreams.get(streamId)?.uiRenderer?.setSourceUnavailable(true);
             sendLog(
               streamId,
-              `[relay] Source error: ${evt.message} — gradient background active. ` +
-              `FFmpeg keeps streaming. Click Stop to end the broadcast.`,
+              `[relay] Source error: ${evt.message} — keeping the broadcast ` +
+              `pipeline alive while the source remains unavailable. Click Stop to end the broadcast.`,
             );
-            // Close stdin so FFmpeg sees EOF on the source input. The gradient
-            // layer takes over via eof_action=pass. FFmpeg is NOT stopped.
-            try { (ffmpegProc.stdin as NodeJS.WritableStream | null)?.end(); } catch {}
+            // Do not close FFmpeg stdin here. SourceRelay owns the source
+            // process and is designed to reconnect without closing this shared
+            // transport. Closing it makes the main FFmpeg process exit and
+            // handleProcessExit then tears down the RTMP session.
           } else if (evt.type === "health" && evt.kbps !== undefined && evt.kbps > 0) {
             // Persist newly resolved quality back to the module-level cache
             // so the next hardKillAndRestart can skip the probe too.

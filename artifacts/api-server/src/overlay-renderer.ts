@@ -563,6 +563,12 @@ export class OverlayRenderer {
   // External frame: when set, replaces canvas rendering (used for break video decoder)
   private externalFrame: Buffer | null = null;
 
+  // When the live source is unavailable but the main FFmpeg process is still
+  // running, the UI pipe must cover the last decoded source frame with the
+  // configured video-output gradient. This is separate from the bg pipe because
+  // the bg pipe sits behind a source frame that may be frozen during reconnect.
+  private sourceUnavailable = false;
+
   // QR code matrix cache
   private qrMatrix: boolean[][] | null = null;
   private cachedQrUrl = "";
@@ -862,6 +868,15 @@ export class OverlayRenderer {
    */
   setExternalFrame(frame: Buffer | null): void {
     this.externalFrame = frame;
+  }
+
+  /**
+   * Cover a stalled/frozen live source with the configured output gradient
+   * without closing or restarting the FFmpeg process. The source relay clears
+   * this as soon as the first recovered source chunk arrives.
+   */
+  setSourceUnavailable(unavailable: boolean): void {
+    this.sourceUnavailable = unavailable;
   }
 
   /**
@@ -1219,6 +1234,19 @@ export class OverlayRenderer {
     const t = this.elapsed();
     const wantBreak = this.state.breakActive ? 1 : 0;
     const nonBreak = 1 - this.alphas.break;
+
+    // A source reconnect does not close FFmpeg's pipe, so eof_action=pass cannot
+    // activate while the decoder is waiting for the next source packet. Render
+    // the output gradient on the UI layer during that interval; subsequent UI
+    // elements remain visible above it. Break mode owns the full-frame treatment
+    // and must remain visually dominant.
+    if (
+      this.sourceUnavailable &&
+      !this.state.breakActive &&
+      this.state.videoOutputGradientActive
+    ) {
+      this.withPanelAlpha(1, () => this.drawVideoUnderlay());
+    }
 
     // ── Per-message 10-second TTL: evict expired chat burn messages every frame ──
     // This guarantees the overlay always clears within 10 s even if the server

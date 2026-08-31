@@ -24,9 +24,10 @@ Full-stack live streaming control room from https://github.com/infobridgetyaro-a
 
 **Redis is optional:** Falls back to in-memory single-node mode if `REDIS_URL` is absent.
 
-**Preview registration:** After a conversation-to-project import, the BintuNet artifact metadata may not appear in the managed artifact list; the controller can still run through the project workflow with `PORT=21227` and `BASE_PATH=/`.
+**Preview registration:** The BintuNet artifact is now registered and its managed `artifacts/bintunet: web` workflow owns the controller port. Do not add a second project-level workflow for the same port.
 
 ## Why
 
 - `tsx watch` avoids the build step during development, making iteration faster.
 - WS paths must be explicit in artifact.toml because the shared proxy only forwards listed paths.
+- Managed artifact workflows must be used once the imported frontend is registered; a leftover project workflow creates a port collision rather than a frontend code failure.
