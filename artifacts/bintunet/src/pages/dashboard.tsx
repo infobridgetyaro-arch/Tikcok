@@ -475,7 +475,6 @@ export default function Dashboard() {
       youtubeStreamKey: "",
       facebookRtmpUrl: "",
       tiktokStreamKey: "",
-      telegramServerUrl: "",
       telegramStreamKey: "",
       youtubeChannelId: "",
       ratio: "mobile",

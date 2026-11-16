@@ -194,9 +194,7 @@ function ChannelIdInput({ streamId, value, disabled, onResolved }: {
 }
 
 function canStart(stream: StreamConfig): boolean {
-  const hasTelegramSettings = !!(stream.telegramServerUrl || stream.telegramStreamKey);
-  const hasTelegramOutput = !!(stream.telegramServerUrl && stream.telegramStreamKey);
-  if (hasTelegramSettings && !hasTelegramOutput) return false;
+  const hasTelegramOutput = !!stream.telegramStreamKey?.trim();
   const hasOutput = !!(stream.youtubeStreamKey || stream.facebookRtmpUrl || stream.instagramStreamKey || stream.tiktokStreamKey || hasTelegramOutput);
   if (stream.sourceType === "youtube") return !!(stream.youtubeSourceUrl) && hasOutput;
   if (stream.sourceType === "facebook") return !!(stream.facebookSourceUrl) && hasOutput;
@@ -1282,21 +1280,6 @@ export function StreamCard({
                       <Input id={`tiktok-key-${stream.id}`} placeholder="TikTok Live Studio stream key" type="password" value={stream.tiktokStreamKey} onChange={(e) => onUpdate(stream.id, { tiktokStreamKey: e.target.value })} disabled={isActive} className="h-8 text-sm" data-testid={`input-tiktok-key-${stream.id}`} />
                     </div>
                     <div className="space-y-1">
-                      <Label htmlFor={`telegram-server-${stream.id}`} className="text-xs flex items-center gap-1.5">
-                        <SiTelegram className="w-3 h-3 text-sky-400" />Telegram Server URL <span className="text-muted-foreground font-normal text-[10px]">(opt.)</span>
-                      </Label>
-                      <Input
-                        id={`telegram-server-${stream.id}`}
-                        type="url"
-                        placeholder="rtmps://dc4-1.rtmp.t.me/s/"
-                        value={stream.telegramServerUrl ?? ""}
-                        onChange={(e) => onUpdate(stream.id, { telegramServerUrl: e.target.value })}
-                        disabled={isActive}
-                        className="h-8 text-sm"
-                        data-testid={`input-telegram-server-${stream.id}`}
-                      />
-                    </div>
-                    <div className="space-y-1">
                       <Label htmlFor={`telegram-key-${stream.id}`} className="text-xs flex items-center gap-1.5">
                         <SiTelegram className="w-3 h-3 text-sky-400" />Telegram Stream Key <span className="text-muted-foreground font-normal text-[10px]">(opt.)</span>
                       </Label>
@@ -1312,7 +1295,7 @@ export function StreamCard({
                         data-testid={`input-telegram-key-${stream.id}`}
                       />
                       <p className="text-[10px] text-muted-foreground">
-                        In Telegram, copy both values from the channel’s Stream settings. The key stays masked here.
+                        Paste only the key from Telegram’s channel Stream settings. The server URL is configured automatically.
                       </p>
                     </div>
                   </div>

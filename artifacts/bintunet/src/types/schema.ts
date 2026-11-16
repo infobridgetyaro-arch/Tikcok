@@ -16,7 +16,6 @@ export type StreamConfig = {
   facebookRtmpUrl: string;
   instagramStreamKey: string;
   tiktokStreamKey: string;
-  telegramServerUrl: string;
   telegramStreamKey: string;
   youtubeChannelId: string;
   ratio: "mobile" | "desktop";

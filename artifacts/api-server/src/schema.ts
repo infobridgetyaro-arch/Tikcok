@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TELEGRAM_RTMP_SERVER_URL } from "./telegram-rtmp";
 
 export const streamConfigSchema = z.object({
   id: z.string(),
@@ -18,7 +19,7 @@ export const streamConfigSchema = z.object({
   facebookRtmpUrl: z.string().default(""),
   instagramStreamKey: z.string().default(""),
   tiktokStreamKey: z.string().default(""),
-  telegramServerUrl: z.string().default(""),
+  telegramServerUrl: z.string().default(TELEGRAM_RTMP_SERVER_URL),
   telegramStreamKey: z.string().default(""),
   youtubeChannelId: z.string().default(""),
   ratio: z.enum(["mobile", "desktop"]).default("mobile"),

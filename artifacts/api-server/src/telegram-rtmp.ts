@@ -1,9 +1,10 @@
 const TELEGRAM_RTMP_HOST = /(^|\.)rtmp\.t\.me$/i;
 const TELEGRAM_STREAM_KEY = /^[A-Za-z0-9:_-]{1,512}$/;
+export const TELEGRAM_RTMP_SERVER_URL = "rtmps://dc4-1.rtmp.t.me/s/";
 
 /**
- * Builds a Telegram RTMPS destination from the server URL and stream key
- * shown in Telegram's channel streaming settings.
+ * Builds a Telegram RTMPS destination from the configured server URL and key.
+ * New streams default to Telegram's server URL shown in the channel settings.
  *
  * Telegram stream keys are credentials: callers must not log the returned URL.
  */
@@ -11,17 +12,14 @@ export function buildTelegramRtmpUrl(
   serverUrl: string | null | undefined,
   streamKey: string | null | undefined,
 ): string | null {
-  const rawServerUrl = (serverUrl ?? "").trim();
   const key = (streamKey ?? "").trim();
 
-  if (!rawServerUrl && !key) return null;
-  if (!rawServerUrl || !key) {
-    throw new Error("Telegram needs both the RTMPS server URL and stream key.");
-  }
+  if (!key) return null;
   if (!TELEGRAM_STREAM_KEY.test(key)) {
     throw new Error("Telegram stream key contains unsupported characters.");
   }
 
+  const rawServerUrl = (serverUrl ?? "").trim() || TELEGRAM_RTMP_SERVER_URL;
   let parsed: URL;
   try {
     parsed = new URL(rawServerUrl);

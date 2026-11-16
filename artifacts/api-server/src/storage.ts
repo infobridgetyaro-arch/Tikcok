@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import type { StreamConfig, InsertStream } from "./schema";
+import { TELEGRAM_RTMP_SERVER_URL } from "./telegram-rtmp";
 
 export interface IStorage {
   getStreams(): StreamConfig[];
@@ -70,7 +71,7 @@ export class MemStorage implements IStorage {
       facebookRtmpUrl: data.facebookRtmpUrl || "",
       instagramStreamKey: data.instagramStreamKey || "",
       tiktokStreamKey: data.tiktokStreamKey || "",
-      telegramServerUrl: data.telegramServerUrl || "",
+      telegramServerUrl: data.telegramServerUrl || TELEGRAM_RTMP_SERVER_URL,
       telegramStreamKey: data.telegramStreamKey || "",
       youtubeChannelId: data.youtubeChannelId || "",
       ratio: data.ratio || "mobile",
