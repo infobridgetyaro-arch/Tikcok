@@ -11,6 +11,7 @@ import fs from "fs";
 import multer from "multer";
 import { storage } from "./storage";
 import { insertStreamSchema } from "./schema";
+import { buildTelegramRtmpUrl } from "./telegram-rtmp";
 import {
   startStream,
   stopStream,
@@ -866,6 +867,12 @@ export async function registerBintunetRoutes(
       const stream = storage.getStream(id);
       if (!stream) {
         res.status(404).json({ message: "Stream not found" });
+        return;
+      }
+      try {
+        buildTelegramRtmpUrl(stream.telegramServerUrl, stream.telegramStreamKey);
+      } catch (e: any) {
+        res.status(400).json({ message: e.message });
         return;
       }
 

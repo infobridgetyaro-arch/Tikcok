@@ -18,6 +18,8 @@ export const streamConfigSchema = z.object({
   facebookRtmpUrl: z.string().default(""),
   instagramStreamKey: z.string().default(""),
   tiktokStreamKey: z.string().default(""),
+  telegramServerUrl: z.string().default(""),
+  telegramStreamKey: z.string().default(""),
   youtubeChannelId: z.string().default(""),
   ratio: z.enum(["mobile", "desktop"]).default("mobile"),
   quality: z.enum(["best", "720p", "480p"]).default("best"),

@@ -13,6 +13,7 @@ import { startHlsEncoder, stopHlsEncoder } from "./hls-encoder";
 import { SourceRelay } from "./source-relay";
 
 import { normaliseFacebookUrl } from "./source/source-manager";
+import { buildTelegramRtmpUrl } from "./telegram-rtmp";
 // ── New engine modules ────────────────────────────────────────────────────────
 import { eventBus } from "./engine/event-bus";
 import {
@@ -2266,6 +2267,10 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
   if (!stream) throw new Error("Stream not found");
 
   const sourceType = stream.sourceType || "tiktok";
+  const telegramRtmpUrl = buildTelegramRtmpUrl(
+    stream.telegramServerUrl,
+    stream.telegramStreamKey,
+  );
 
   if (sourceType === "tiktok" && !stream.tiktokUsername)
     throw new Error("TikTok username is required");
@@ -2279,8 +2284,8 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
     throw new Error("No video file uploaded. Upload a video file before starting the stream.");
   if (sourceType === "link" && !(stream as any).linkSourceUrl)
     throw new Error("Video link URL is required");
-  if (!stream.youtubeStreamKey && !stream.facebookRtmpUrl && !stream.instagramStreamKey && !stream.tiktokStreamKey)
-    throw new Error("At least one output (YouTube, Facebook, Instagram, or TikTok) is required");
+  if (!stream.youtubeStreamKey && !stream.facebookRtmpUrl && !stream.instagramStreamKey && !stream.tiktokStreamKey && !telegramRtmpUrl)
+    throw new Error("At least one output (YouTube, Facebook, Instagram, TikTok, or Telegram) is required");
 
   stopStream(streamId, !wasManuallyStoppped /* keepAqmState: preserve quality state on auto-reconnect */);
   // stopStream() marks the stream as manually stopped so its cleanup timers abort.
@@ -2415,6 +2420,10 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
     if (stream.tiktokStreamKey) {
       outputs.push(`rtmp://push.tiktokv.com/live/${stream.tiktokStreamKey}`);
       sendLog(streamId, `Output: TikTok`);
+    }
+    if (telegramRtmpUrl) {
+      outputs.push(telegramRtmpUrl);
+      sendLog(streamId, "Output: Telegram");
     }
 
     const ffmpegArgs = buildFFmpegArgs(stream, inputUrl, outputs, resolvedType, aqmOverride);
@@ -2683,7 +2692,9 @@ export async function startStream(streamId: string, reuseUrl = false, keepStatus
       lastOutputAt = Date.now();
       const lines = errData.toString().split("\n").filter(Boolean);
       lines.forEach((line) => {
-        const trimmed = line.trim();
+        const trimmed = stream.telegramStreamKey
+          ? line.trim().split(stream.telegramStreamKey).join("[Telegram stream key redacted]")
+          : line.trim();
 
         if (trimmed.startsWith("frame=") || trimmed.startsWith("size=")) {
           const frameMatch = trimmed.match(/frame=\s*(\d+)/);

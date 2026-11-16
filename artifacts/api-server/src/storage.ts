@@ -70,6 +70,8 @@ export class MemStorage implements IStorage {
       facebookRtmpUrl: data.facebookRtmpUrl || "",
       instagramStreamKey: data.instagramStreamKey || "",
       tiktokStreamKey: data.tiktokStreamKey || "",
+      telegramServerUrl: data.telegramServerUrl || "",
+      telegramStreamKey: data.telegramStreamKey || "",
       youtubeChannelId: data.youtubeChannelId || "",
       ratio: data.ratio || "mobile",
       quality: data.quality || "best",

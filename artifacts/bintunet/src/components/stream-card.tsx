@@ -14,7 +14,7 @@ import {
   Lock, Unlock, ShieldAlert, Wifi, Usb, Radio, Upload, Film,
   RefreshCw, X as XIcon, RepeatIcon, ChevronDown, ChevronUp, Info, Image,
 } from "lucide-react";
-import { SiTiktok, SiX } from "react-icons/si";
+import { SiTiktok, SiX, SiTelegram } from "react-icons/si";
 import type { StreamConfig } from "@/types/schema";
 import { LivePreview } from "./live-preview";
 import { StatsWidget } from "./stats-widget";
@@ -194,7 +194,10 @@ function ChannelIdInput({ streamId, value, disabled, onResolved }: {
 }
 
 function canStart(stream: StreamConfig): boolean {
-  const hasOutput = !!(stream.youtubeStreamKey || stream.facebookRtmpUrl || stream.instagramStreamKey || stream.tiktokStreamKey);
+  const hasTelegramSettings = !!(stream.telegramServerUrl || stream.telegramStreamKey);
+  const hasTelegramOutput = !!(stream.telegramServerUrl && stream.telegramStreamKey);
+  if (hasTelegramSettings && !hasTelegramOutput) return false;
+  const hasOutput = !!(stream.youtubeStreamKey || stream.facebookRtmpUrl || stream.instagramStreamKey || stream.tiktokStreamKey || hasTelegramOutput);
   if (stream.sourceType === "youtube") return !!(stream.youtubeSourceUrl) && hasOutput;
   if (stream.sourceType === "facebook") return !!(stream.facebookSourceUrl) && hasOutput;
   if (stream.sourceType === "camera") return !!(stream.cameraDevice) && hasOutput;
@@ -1277,6 +1280,40 @@ export function StreamCard({
                     <div className="space-y-1">
                       <Label htmlFor={`tiktok-key-${stream.id}`} className="text-xs flex items-center gap-1.5"><SiTiktok className="w-3 h-3 text-pink-400" />TikTok Key <span className="text-muted-foreground font-normal text-[10px]">(opt.)</span></Label>
                       <Input id={`tiktok-key-${stream.id}`} placeholder="TikTok Live Studio stream key" type="password" value={stream.tiktokStreamKey} onChange={(e) => onUpdate(stream.id, { tiktokStreamKey: e.target.value })} disabled={isActive} className="h-8 text-sm" data-testid={`input-tiktok-key-${stream.id}`} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor={`telegram-server-${stream.id}`} className="text-xs flex items-center gap-1.5">
+                        <SiTelegram className="w-3 h-3 text-sky-400" />Telegram Server URL <span className="text-muted-foreground font-normal text-[10px]">(opt.)</span>
+                      </Label>
+                      <Input
+                        id={`telegram-server-${stream.id}`}
+                        type="url"
+                        placeholder="rtmps://dc4-1.rtmp.t.me/s/"
+                        value={stream.telegramServerUrl ?? ""}
+                        onChange={(e) => onUpdate(stream.id, { telegramServerUrl: e.target.value })}
+                        disabled={isActive}
+                        className="h-8 text-sm"
+                        data-testid={`input-telegram-server-${stream.id}`}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor={`telegram-key-${stream.id}`} className="text-xs flex items-center gap-1.5">
+                        <SiTelegram className="w-3 h-3 text-sky-400" />Telegram Stream Key <span className="text-muted-foreground font-normal text-[10px]">(opt.)</span>
+                      </Label>
+                      <Input
+                        id={`telegram-key-${stream.id}`}
+                        type="password"
+                        autoComplete="new-password"
+                        placeholder="Paste the key from Telegram"
+                        value={stream.telegramStreamKey ?? ""}
+                        onChange={(e) => onUpdate(stream.id, { telegramStreamKey: e.target.value })}
+                        disabled={isActive}
+                        className="h-8 text-sm"
+                        data-testid={`input-telegram-key-${stream.id}`}
+                      />
+                      <p className="text-[10px] text-muted-foreground">
+                        In Telegram, copy both values from the channel’s Stream settings. The key stays masked here.
+                      </p>
                     </div>
                   </div>
                 </div>

@@ -14,6 +14,7 @@
 import { logger } from "../lib/logger";
 import { eventBus } from "../engine/event-bus";
 import type { StreamConfig } from "../schema";
+import { buildTelegramRtmpUrl } from "../telegram-rtmp";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -55,6 +56,17 @@ export function buildOutputList(stream: StreamConfig): OutputDestination[] {
     outputs.push({
       label: "TikTok",
       rtmpUrl: `rtmp://push.tiktokv.com/live/${stream.tiktokStreamKey}`,
+      failedAt: null, recoveredAt: null, failCount: 0,
+    });
+  }
+  const telegramRtmpUrl = buildTelegramRtmpUrl(
+    stream.telegramServerUrl,
+    stream.telegramStreamKey,
+  );
+  if (telegramRtmpUrl) {
+    outputs.push({
+      label: "Telegram",
+      rtmpUrl: telegramRtmpUrl,
       failedAt: null, recoveredAt: null, failCount: 0,
     });
   }
